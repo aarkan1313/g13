@@ -74,10 +74,10 @@ func _ready() -> void:
 	var terrain_y := amplitude * 1.2          # approx mid altitude of the surface
 	var cam := Camera3D.new()
 	cam.far = total * 8.0
+	# Free-fly inspection rig so the gate is launch-and-fly (WASD + right-drag).
+	cam.set_script(load("res://scripts/fly_camera.gd"))
 	add_child(cam)
-	# High angled view so the 3x3 page layout (checkerboard) is legible and the
-	# whole block is framed — this is the seam-verification shot. Aimed at the
-	# real terrain altitude, not y=0.
+	# Start framed on the block from a high corner; fly from there to inspect seams.
 	cam.global_position = Vector3(total * 0.55, terrain_y + total * 0.75, total * 0.55)
 	cam.look_at(Vector3(0.0, terrain_y, 0.0), Vector3.UP)
 	cam.make_current()
