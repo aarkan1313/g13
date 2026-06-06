@@ -16,7 +16,10 @@ M1.2 [x] GPU page produced + read back; determinism/seed/continuity/seam tests P
 M1.3 [x] page renders on screen — smooth, non-blocky, seed-driven; human visual PASS 2026-06-06
 M1.4 [~] edge-readback test PASS (bit-identical E/S seams + teeth check); 3x3 visual PARKED-FOR-VISUAL   <- CURRENT (see DRIFT_LOG)
 M1.4 [ ] NxN page block, zero seams (visual + edge-readback test)
-M1.5 [ ] bounded page pool + clipmap rings + read-only view; stream, no black, no leak
+M1.5 [ ] bounded page pool + clipmap rings + read-only view; stream, no black, no leak   <- CURRENT
+  M1.5a [x] Rust PagePool: caches by (level,gx,gz), bounded new-per-frame; pool-driven static ring renders (test PASS)
+  M1.5b [ ] camera-following streaming (request ahead, evict behind, pins)
+  M1.5c [ ] clipmap rings + never-black coverage + display pins
 M1.6 [ ] LOD to horizon at frame budget, frame-time test passes
 M1.7 [ ] near-page collision, character doesn't fall through
 M1.8 [ ] MILESTONE GATE — full definition of done, tag m1-complete
