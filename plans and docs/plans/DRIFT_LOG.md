@@ -4,6 +4,19 @@ The human reads this FIRST every session. The agent appends here whenever it blo
 
 ---
 
+## [2026-06-06] — M2 REPLANNED (DEM-spectral); M2.3 distillation tool DONE (gate PASS)
+TYPE: (major replan + a completed step; all green) — read this to understand the M2 pivot.
+WHY THE PIVOT: M2.3/M2.3b tried to make believable terrain SHAPE from hand-tuned procedural noise. It failed (~10 iterations: "Perlin oatmeal" -> "mesa cliffs") — the exact attempt #1-12 trap. The human flew it repeatedly and called it bad; correctly pushed to stop wasting time on a noise primitive that can't make landforms, and to USE THE DEMS. Brainstormed a replan (spec: docs/superpowers/specs/2026-06-06-m2-dem-spectral-terrain-design.md): distill each DEM archetype's terrain FINGERPRINT offline, synthesize procedural terrain SHAPED to it. Reverted the field to the M2.2 state (kept climate M2.1 + biome-selection M2.2 — those work). Roadmap docs updated; M2.3b spec superseded.
+NEW M2 SEQUENCE: M2.3 distill tool (DONE) -> M2.4 spectral-shaped field -> M2.5 border blend -> M2.6 perf pass (LAST). Erosion (M6) unchanged.
+M2.3 DONE: rust/dem_distill — a SEPARATE offline Rust binary (workspace member, NOT in wg13.dll, so the runtime never opens a .tif). Reads the 135 labeled DEM tiles, per archetype computes a radial amplitude spectrum (Hann + 2D FFT, 8 log bands), slope_p95 (cos-lat corrected), and a ridge-character scalar; writes wg-13/data/dem_fingerprints.json (3.5 KB, committed). Built TDD in 9 gated tasks (archetype map, sidecar, analyze, fingerprint, pipeline, gate, docs).
+BUG FOUND + FIXED BY THE FIRST RUN (evidence-driven): 12 temperate/tundra tiles were skipped — their sidecars are an abbreviated schema WITHOUT width/height. Made those Optional (dims come from the .tif itself, ground truth). Re-run: read 135, skipped 0, all 12 archetypes.
+GATE PASS (rust/dem_distill/tests/fingerprints_sane.rs): all spectra normalized, slopes/ridge in range; mountain slope_p95 0.888 >> grassland 0.181 (4.9x) — real-Earth believability, the signal hand-noise never had. Slope ranking reads true (mountain/glacial/temperate steep; wetland/grassland flat). 10/10 dem_distill tests pass; runtime (wg13) unaffected.
+KNOWN for M2.4: the ridge_character metric is weak/compressed (~0.001-0.013, poor discrimination) — DON'T fix it in a vacuum; tune it against real rendered terrain in M2.4 (the lesson from the noise thrashing). The strong, trustworthy signals today are the SPECTRUM and slope_p95.
+CODEBASE STATE: green; M2.3 committed.
+WHAT I DID NOT DO: Did not put any .tif read in the runtime (offline bin only). Did not start M2.4. Did not over-tune ridge_character without a consumer to validate against.
+
+---
+
 ## [2026-06-06] — M2.3 per-biome height shaping implemented — test gate PASS, visual PARKED
 TYPE: PARKED-FOR-VISUAL (output-provable core self-certified; 16/16 gates green)
 WHAT: per-biome height shaping. height = SHARED base landform (the low BASE_OCTAVES of the fBM, identical everywhere -> continuous across borders) + biome.detail_amp * detail_landform(world, biome.detail_rough). Mountains = high amp + rough; plains = ~0 amp.

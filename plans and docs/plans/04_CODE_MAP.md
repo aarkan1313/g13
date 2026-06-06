@@ -32,8 +32,25 @@ rust/gdext/src/
                     dispatch (FIELD_CHANNELS=4, interleaved) and returns a
                     deinterleaved FieldPage{heights,temp,moisture,biome}. heights is
                     byte-identical to the M1 single-channel output (M1.7 intact).
-                    Pushes the biome table (binding 2, BIOME_STRIDE=8: centroid +
-                    M2.3 detail_amp/detail_rough) via set_biome_centroids.
+                    Pushes the biome centroid table (binding 2, BIOME_STRIDE=4:
+                    temp_c/moist_c/alt_c/_pad) via set_biome_centroids. (M2.4 will
+                    add the per-archetype spectral params here.)
+
+rust/dem_distill/                OFFLINE tool (M2.3) — separate workspace member, a
+                    [[bin]], NOT linked into wg13.dll (the runtime never opens a
+                    .tif, 03_DEM_CATALOG hard rule). Reads the 135 labeled DEM tiles
+                    and emits wg-13/data/dem_fingerprints.json (~3.5 KB). Modules:
+  src/archetype.rs  filename -> 1 of 12 archetypes (+ folds). Pure, unit-tested.
+  src/sidecar.rs    parse .tif.json (bounds required; width/height OPTIONAL — dims
+                    come from the .tif).
+  src/analyze.rs    cos(lat) metre spacing; slope_p95; radial amplitude spectrum
+                    (Hann + 2D FFT via rustfft, 8 log bands, normalized); ridge
+                    character (mean |Laplacian|/range). Unit-tested on synthetic data.
+  src/fingerprint.rs  per-archetype Accum -> Fingerprint{spectrum,slope_p95,
+                    ridge_character}; serialize to JSON.
+  src/main.rs       walk dir -> read+analyze each tile -> aggregate -> write JSON.
+  tests/fingerprints_sane.rs  M2.3 GATE: output sane + mountain steeper than grassland.
+                    Run: cargo run --release -p dem_distill -- <opentopo_dir> <out.json>
 
 wg-13/                          (the Godot project, res://)
   project.godot                 Vulkan; main_scene = scenes/demo.tscn.
@@ -111,12 +128,15 @@ wg-13/                          (the Godot project, res://)
     m1_9b_eager_spread_check.gd never-black holds when mid-coarse eager is bounded+starved (every fine cell covered by some resident level; coarsest floor complete) — earns M1.9.3b
     m2_1_climate_check.gd       (M2.1) climate determinism + range [0,1] + low-freq smoothness (anti-confetti) + latitude gradient, on the real GPU readback
     m2_2_biome_check.gd         (M2.2) biome determinism + valid ids [0,N) + contiguity (low adjacent-differ, no confetti) + global variety + seed sensitivity
-    m2_3_shaping_check.gd       (M2.3) per-biome shaping: determinism + rugged biome is the roughest AND >= 2.2x the flattest + no border cliff (max adjacent step bounded)
+    (M2.3's gate is Rust-side: rust/dem_distill/tests/fingerprints_sane.rs — not a Godot gate. The abandoned m2_3/m2_3b hand-noise gates were removed in the DEM-spectral replan.)
     hud_smoke_check.gd          (smoke) perf HUD loads, finds the view, all sections show sane values matching the pool, toggles work
     tour_smoke_check.gd         (smoke) auto-tour starts OFF, drives the real fly-cam, advances steps, pause restores control, resume works
+  data/
+    dem_fingerprints.json       (M2.3 OUTPUT, committed, ~3.5 KB) per-archetype spectrum + slope_p95 + ridge_character. M2.4's field reads this. Produced by rust/dem_distill.
   captures/                     SCREENSHOT TOOLS (evidence, not gates).
     stream_capture.gd           fly the world_view, save _captures/streamed.png
     climate_capture.gd          (M2.1) high wide vantage, save _captures/climate_{normal,temperature,moisture}.png — evidence for the parked visual gate
+    shape_capture.gd            LOW-altitude shape captures (for M2.4's visual gate — mountains rugged vs plains flat)
   _captures/                    PNG output — gitignored scratch (regenerable).
 
 run.ps1                         Launcher: agent runs the windowed scene on the user's
@@ -163,4 +183,4 @@ Fly the live world: `.\run.ps1` (agent launches a windowed instance on the user'
 | m1_9b_eager_spread_check.gd | M1.9.3b | bounding mid-coarse eager stays never-black: every fine cell covered by some resident level; coarsest floor complete |
 | m2_1_climate_check.gd | M2.1 | climate determinism (same page+seed → bit-identical); range [0,1]; low-freq/smooth (anti-confetti); latitude gradient real |
 | m2_2_biome_check.gd | M2.2 | biome determinism; valid integer ids [0,N); contiguity (low adjacent-differ); global variety; seed sensitivity |
-| m2_3_shaping_check.gd | M2.3 | per-biome shaping determinism; rugged biome is roughest AND ≥2.2x flattest; no border cliff |
+| dem_distill/tests/fingerprints_sane.rs | M2.3 | (Rust, offline) fingerprints sane (spectra normalized, slopes/ridge in range); mountain slope_p95 >> grassland |
