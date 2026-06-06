@@ -11,7 +11,7 @@ S.5 [x] docs set GPU-first: GPU field is source of truth (00 §2.1/§3/§4); M1 
 S.6 [x] WG10 reclassified as reference-only (00 §3.1) — rebuild clean, copy no files
 
 ## Milestone 1 — Contiguous infinite land (GPU-first)
-M1.1 [ ] gdext skeleton loads, hot reload works   <- CURRENT
+M1.1 [~] gdext skeleton loads (headless PASS), hot reload PARKED-FOR-VISUAL   <- CURRENT (see DRIFT_LOG)
 M1.2 [ ] one GPU page produced + read back; determinism + continuity tests pass
 M1.3 [ ] single page renders on screen (smooth, non-blocky)
 M1.4 [ ] NxN page block, zero seams (visual + edge-readback test)

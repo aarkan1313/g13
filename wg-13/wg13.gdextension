@@ -1,0 +1,14 @@
+; WG13 GDExtension manifest. Tells Godot where the compiled Rust library is.
+; Build with the local target dir (see 01_TOOLCHAIN.md §3 — this box has a
+; global CARGO_TARGET_DIR set for another project, so our build command pins
+; CARGO_TARGET_DIR to rust/target). Paths below are relative to res:// (wg-13/),
+; so res://../rust/target/... resolves to D:\world gen 13\rust\target\...
+
+[configuration]
+entry_symbol = "gdext_rust_init"
+compatibility_minimum = 4.2
+reloadable = true
+
+[libraries]
+windows.debug.x86_64 = "res://../rust/target/debug/wg13.dll"
+windows.release.x86_64 = "res://../rust/target/release/wg13.dll"

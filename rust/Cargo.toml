@@ -1,0 +1,15 @@
+# WG13 Rust workspace.
+# Per 00_ARCHITECTURE.md §4: Rust owns the runtime (scheduling, residency,
+# view, facts, tests) and drives the GPU field. It never re-implements the
+# world math on the CPU — that lives in wg-13/shaders/ GLSL (the source of truth).
+[workspace]
+resolver = "2"
+members = ["gdext"]
+
+[profile.dev]
+# Faster iterate-rebuild loop for the hot-reload tuning workflow.
+opt-level = 1
+
+[profile.release]
+opt-level = 3
+lto = "thin"

@@ -1,0 +1,15 @@
+[package]
+name = "wg13"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+# cdylib: the dynamic library Godot loads at runtime via wg13.gdextension.
+crate-type = ["cdylib"]
+
+[dependencies]
+# gdext (godot-rust). 0.5.x is the current line (0.5.3, May 2026), production-usable
+# with hot reload. The .gdextension sets compatibility_minimum = 4.2, so this extension
+# loads on Godot 4.6.2. Version pinned here per 01_TOOLCHAIN.md open item.
+godot = "0.5"

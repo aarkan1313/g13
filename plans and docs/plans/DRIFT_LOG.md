@@ -4,4 +4,18 @@ The human reads this FIRST every session. The agent appends here whenever it blo
 
 ---
 
-(no entries yet — project not started)
+## [2026-06-06] — M1.1
+TYPE: PARKED-FOR-VISUAL
+WHAT I WAS DOING: Building the M1.1 skeleton — gdext crate + WorldRoot node + .gdextension + demo scene; proving the Rust↔Godot bridge and hot reload.
+WHAT HAPPENED: Bridge works end-to-end. The testable half PASSES: a headless run (`--headless --quit-after 30`) prints `WG13 WorldRoot ready — Rust bridge live (M1.1).`, confirming the extension loads, `WorldRoot` registers, and `_ready` fires. The remaining half of the gate — **hot reload by eye** (edit string → rebuild → see new string without restarting the editor) — is visual and cannot be self-certified. Parking for it.
+TWO FINDINGS WORTH KNOWING (now in 01_TOOLCHAIN.md §1/§3):
+  1. A global `CARGO_TARGET_DIR=D:\cargo-target-kalshi` env var (another project's) overrides `.cargo/config.toml` and sends our build out of the tree. Build commands now pin `CARGO_TARGET_DIR=rust/target`.
+  2. A fresh project has no `.godot/extension_list.cfg`, so a plain game run fails with `Cannot get class 'WorldRoot'`. Fixed by an editor import scan: `--headless --editor --import`. Documented as a required first-time step.
+HOW TO RESOLVE THIS GATE (human, at desk):
+  - Open the project in the Godot 4.6.2 editor: `& $env:GODOT --path "D:\world gen 13\wg-13"` (or just launch the editor and open it).
+  - Run the project (F5). Confirm `WG13 WorldRoot ready — Rust bridge live (M1.1).` appears in the Output/console.
+  - With the editor still open, change that string in `rust/gdext/src/lib.rs`, rebuild (`$env:CARGO_TARGET_DIR="D:\world gen 13\rust\target"; cargo build --manifest-path "D:\world gen 13\rust\Cargo.toml"`), run again, and confirm the NEW string appears WITHOUT having restarted the editor. That is the hot-reload pass.
+EXACT ERROR / STATE: none — green and compiling.
+MY HYPOTHESIS: gate should pass; gdext `reloadable = true` is set and 0.5.3 supports hot reload.
+CODEBASE STATE: green at the M1.1 commit (see git log).
+WHAT I DID NOT DO: Did not start M1.2. Did not self-certify the visual gate. Did not change the contract.
