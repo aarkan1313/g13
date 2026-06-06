@@ -4,6 +4,20 @@ The human reads this FIRST every session. The agent appends here whenever it blo
 
 ---
 
+## [2026-06-06] — M2.4 terrain REDESIGNED to WG10 composition (after 3 abandoned synthesis attempts); 3-recipe scope; HANDOFF refreshed
+TYPE: (major redesign + roadmap update; planning, no runtime code this entry) — the key session-transition note.
+THE ARC: terrain SHAPE was attempted 3 ways this session, all ABANDONED after live flyovers looked bad:
+  1. M2.3 hand-tuned per-biome noise (detail-on-shared-base) -> "Perlin oatmeal."
+  2. M2.3b domain-warped ridged macro + multifractal -> "mesa cliffs" / still oatmeal.
+  3. M2.4 DEM-spectral octave-sum (weight octaves by the measured amplitude spectrum) -> UNIFORM terrain: spiky at fine octave scale, gentle-rolling-everywhere when remapped to the DEM frequency range; mountains indistinguishable from plains.
+ROOT CAUSE (burned in): a GLOBAL noise/octave-sum applies the SAME statistical texture everywhere — it cannot place a DISCRETE mountain range with valleys between. No amount of spectrum/amplitude tuning fixes that; it's structural. (~12 iterations confirmed.)
+THE FIX (user prompted "review what wg10 did"): WG10 — the prior attempt — made real mountains via LAYERED COMPOSITION (WG10_MOUNTAIN_DEEP_DIVE lines ~221-233): base + range_envelope x ridge_detail - valley_carve. A blurred low-freq ENVELOPE concentrates relief into ranges; valley masks carve between. That envelope is the missing ingredient. Adopt the TECHNIQUE, write our own clean code (00 §3.1 reference-not-copy).
+DESIGN (brainstormed, spec written): a shared composition MACHINE (domain warp, region envelope, ridged fbm, valley carve, blend) + per-biome RECIPE functions in one field_height.glsl, DEM-fingerprint-tuned, biome-selected, border-blended (one dispatch, contract intact). The user framed it right: each biome is its OWN structured recipe (mountain=ranges, desert=dunes, karst=towers) — genuinely a multi-recipe project, built ONE gated recipe at a time. DECISION (user): PROVE WITH 3 (mountain -> grassland -> desert), then schedule the rest. Spec: docs/superpowers/specs/2026-06-06-m2-terrain-composition-machine-design.md.
+KEPT through all the churn: M2.1 climate, M2.2 biome selection, M2.3 distill tool + fingerprints, the runtime fingerprint loader + per-biome GPU table (BIOME_STRIDE=16, carries slope_p95+spectrum — the recipes read these), the spawn_clearance 3->8 fix (steep terrain), the m2_4 gate checks. Field shader reverted to M2.2 synthesis pending the recipe rewrite.
+PROCESS LESSON the user drove home: terrain is VISUAL — iterate with low-altitude captures + the user's eyes EARLY, not metrics. Gates passed on oatmeal AND on uniform-rolling; the green gate lied about quality every time. Land the LOOK first. captures/shape_capture.gd flies low over a mountain region for exactly this.
+CODEBASE STATE: green (M2.2 field + M2.3 tool committed; M2.4 synthesis reverted; docs + 2 specs committed). Tree clean.
+WHAT I DID NOT DO: did not start M2.4a code (planning/spec only — next session: writing-plans then execute). Did not copy WG10 code. Did not keep iterating the failed octave-sum.
+
 ## [2026-06-06] — M2 REPLANNED (DEM-spectral); M2.3 distillation tool DONE (gate PASS)
 TYPE: (major replan + a completed step; all green) — read this to understand the M2 pivot.
 WHY THE PIVOT: M2.3/M2.3b tried to make believable terrain SHAPE from hand-tuned procedural noise. It failed (~10 iterations: "Perlin oatmeal" -> "mesa cliffs") — the exact attempt #1-12 trap. The human flew it repeatedly and called it bad; correctly pushed to stop wasting time on a noise primitive that can't make landforms, and to USE THE DEMS. Brainstormed a replan (spec: docs/superpowers/specs/2026-06-06-m2-dem-spectral-terrain-design.md): distill each DEM archetype's terrain FINGERPRINT offline, synthesize procedural terrain SHAPED to it. Reverted the field to the M2.2 state (kept climate M2.1 + biome-selection M2.2 — those work). Roadmap docs updated; M2.3b spec superseded.

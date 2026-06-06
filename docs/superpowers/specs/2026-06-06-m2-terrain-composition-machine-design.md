@@ -86,10 +86,15 @@ plains (low slope_p95, envelope off) stay flat.
   not uniform); no cliffs (max step bounded). GATE (visual, human): fly low over a
   mountain region — reads as real ranges and valleys, not oatmeal/uniform. **This
   is the make-or-break visual.**
-- **M2.4b … M2.4l** — the other 11 recipes (grassland, savanna, desert, badlands,
-  karst, volcanic, glacial, coast, wetland, rainforest, temperate, tundra — folding
-  to the 10 biome ids / 12 archetypes as appropriate), each its OWN gated step:
-  build recipe → DEM-tune → flythrough-accept → commit. One at a time.
+- **PROVE-WITH-3 (decided 2026-06-06):** build only **3 recipes first** —
+  **mountain (M2.4a), grassland (M2.4b), desert (M2.4c)** — the clearest landform
+  contrast (rugged ranges / flat plains / dunes). Get all three beautiful +
+  flythrough-accepted to PROVE the machine + recipe pattern works end-to-end before
+  committing to the rest. Other biomes use the fallback recipe meanwhile.
+- **M2.4d … (later, only after the 3 prove out)** — the remaining recipes
+  (savanna, badlands, karst, volcanic, glacial, coast, wetland, rainforest,
+  temperate, tundra), each its OWN gated step: build → DEM-tune → flythrough-accept
+  → commit. One at a time. Not scheduled until the pattern is proven.
 - **M2.5** — border blending: refine the recipe-blend if the natural blend needs it.
 - **M2.6** — performance pass (LAST; profile the real composed field, M1.9-style).
 - **M2.x** — milestone gate, tag `m2-complete`.
