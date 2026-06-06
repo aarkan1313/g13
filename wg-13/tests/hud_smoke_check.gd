@@ -21,6 +21,12 @@ func _init() -> void:
 	else:
 		print("PASS: HUD found the view")
 
+	# 1b. readable backing panel exists behind the label.
+	if hud._panel == null or not (hud._label.get_parent() is PanelContainer):
+		_fail("HUD label has no backing PanelContainer (readability panel missing)")
+	else:
+		print("PASS: HUD has a backing panel behind the text")
+
 	# 2. text builds and contains all enabled sections with sane numbers.
 	var txt: String = hud._build_text(8.0)   # 8ms -> 125fps sample
 	print("HUD TEXT:\n", txt)

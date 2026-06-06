@@ -20,23 +20,36 @@ extends CanvasLayer
 @export var show_profiler: bool = true      # M1.9 per-system frame breakdown (key 5)
 
 var _label: Label
+var _panel: PanelContainer
 var _view: Node3D
 var _samples := PackedFloat32Array()        # recent frame delta ms (ring)
 var _accum := 0.0                           # time since last label refresh
 
 func _ready() -> void:
 	layer = 100                             # draw over the 3D scene
+	# A small dark translucent panel BEHIND the text so it stays readable over
+	# bright/varied terrain (the label alone washed out on light ground). The
+	# PanelContainer hugs the label, so the backing is only as big as the text.
+	var panel := PanelContainer.new()
+	panel.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	panel.offset_right = -8.0
+	panel.offset_top = 8.0
+	panel.grow_horizontal = Control.GROW_DIRECTION_BEGIN   # extend left from the right edge
+	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE       # never eat input
+	var bg := StyleBoxFlat.new()
+	bg.bg_color = Color(0.0, 0.0, 0.0, 0.45)               # subtle dark wash
+	bg.set_content_margin_all(8.0)
+	bg.set_corner_radius_all(4)
+	panel.add_theme_stylebox_override("panel", bg)
+	add_child(panel)
+
 	_label = Label.new()
 	_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	_label.add_theme_color_override("font_color", Color(0.85, 0.95, 1.0))
 	_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.85))
 	_label.add_theme_constant_override("outline_size", 4)
-	# Anchor top-right.
-	_label.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	_label.offset_left = -360.0
-	_label.offset_top = 8.0
-	_label.offset_right = -8.0
-	add_child(_label)
+	panel.add_child(_label)
+	_panel = panel
 	_find_view()
 
 func _find_view() -> void:
