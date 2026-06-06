@@ -12,8 +12,9 @@ var _root: Node3D
 var _f := 0
 var _shot := 0
 # A few low vantages over different world regions to catch varied biomes/relief.
+# Spot 0 = a mountain-majority region (found via _probe_findmtn); spots 1-2 vary.
 const SPOTS := [
-	[Vector3(0.0, 700.0, 0.0), Vector3(1500.0, 200.0, -1500.0)],
+	[Vector3(-32000.0, 900.0, -16000.0), Vector3(-30500.0, 300.0, -17500.0)],
 	[Vector3(40000.0, 900.0, 0.0), Vector3(41500.0, 250.0, -1500.0)],
 	[Vector3(0.0, 1200.0, 40000.0), Vector3(1500.0, 400.0, 38500.0)],
 ]

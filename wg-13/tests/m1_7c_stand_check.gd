@@ -33,20 +33,21 @@ func _init() -> void:
 		_fail("no collision bodies built after warmup (need vulkan + M1.7b)")
 		_finish(rootn); return
 
-	# Place the fly-cam (and thus the drop point) over the origin page, well above
-	# the terrain, then enter WALK so the capsule falls onto the surface there.
+	# Place the fly-cam over the origin page centre. The capsule's _enter_walk snaps
+	# itself to (terrain_height + spawn_clearance) at that XZ, so the drop is short
+	# regardless of the cam's altitude (no tunneling). Cam Y just needs to be a sane
+	# vantage over the page.
 	var span: float = (view.page_res - 1) * view.spacing
 	var drop_xz := Vector3(span * 0.5, 0.0, span * 0.5)   # centre of page (0,0)
 	var fly_cam: Camera3D = view._cam
 	fly_cam.global_position = Vector3(drop_xz.x, view.amplitude * 2.0, drop_xz.z)
-	player._enter_walk()                                   # snaps capsule under the fly-cam, gravity on
+	player._enter_walk()                                   # snaps capsule just above resident terrain
 
 	# Sample the resident terrain height at the drop column (from the SAME pool
 	# heights collision uses) so we know where the floor should be.
 	var heights: PackedFloat32Array = view._pool.get_page_heights(0, 0, 0)
 	if heights.size() != view.page_res * view.page_res:
 		_fail("origin page heights not resident for the expected floor calc"); _finish(rootn); return
-	# Cell nearest the drop XZ within page (0,0): index from world->cell.
 	var cx: int = clampi(int(round(drop_xz.x / view.spacing)), 0, view.page_res - 1)
 	var cz: int = clampi(int(round(drop_xz.z / view.spacing)), 0, view.page_res - 1)
 	var floor_h: float = heights[cz * view.page_res + cx]
@@ -73,9 +74,12 @@ func _init() -> void:
 
 	# --- 2. came to rest ON the surface (capsule centre ~ floor + half height) ---
 	# CharacterBody3D capsule rests with its centre about (height/2 + radius?) above
-	# the contact; allow a generous band so this isn't brittle to capsule maths.
+	# the contact; allow a generous band so this isn't brittle to capsule maths AND
+	# to the gap between floor_h (nearest-cell) and the HeightMapShape's INTERPOLATED
+	# surface (a few metres on steep M2.4 terrain). The check is "stands on the
+	# surface", not "matches nearest-cell to the cm".
 	var expected_rest: float = floor_h + player.capsule_height * 0.5
-	if abs(settled_y - expected_rest) > 4.0:
+	if abs(settled_y - expected_rest) > 7.0:
 		_fail("capsule did not settle on the surface: y=%.1f, expected ~%.1f (floor %.1f)" % [
 			settled_y, expected_rest, floor_h])
 	else:

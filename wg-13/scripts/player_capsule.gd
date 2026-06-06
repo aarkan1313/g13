@@ -23,7 +23,12 @@ extends CharacterBody3D
 @export var eye_height: float = 1.6        # camera offset above the capsule centre
 @export var capsule_height: float = 2.0
 @export var capsule_radius: float = 0.4
-@export var spawn_clearance: float = 3.0   # metres above terrain to drop in (small = no tunneling speed)
+# Metres above terrain to drop in. Must exceed the gap between page_terrain_height
+# (nearest-cell) and the HeightMapShape's INTERPOLATED collision surface — on steep
+# (M2.4 spectral) terrain that gap can be a few metres, so a too-small clearance
+# spawns the capsule UNDER the collision and it falls through. 8 m clears that and
+# is still a short, no-tunnel drop.
+@export var spawn_clearance: float = 8.0
 
 var _view: Node3D                           # the world_view (for terrain-height lookup)
 var _fly_cam: Camera3D                      # the world_view's free-fly camera
