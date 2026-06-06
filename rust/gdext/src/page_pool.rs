@@ -56,12 +56,18 @@ pub struct PagePool {
     cfg: FieldConfig,
 
     cache: HashMap<PageKey, Gd<ImageTexture>>,
+    /// Pages currently displayed — must NOT be evicted out from under the mesh
+    /// (00 §3 never-black discipline). Rebuilt each frame by the view.
+    pinned: std::collections::HashSet<PageKey>,
     /// Bounded production: at most this many NEW pages produced per frame.
     max_new_per_frame: i32,
     produced_this_frame: i32,
     /// Counters for tests/diagnostics.
     total_produced: i64,
     cache_hits: i64,
+    evicted: i64,
+    /// Set true if an eviction of a pinned page was ever attempted (test guard).
+    pin_violation: bool,
 }
 
 #[godot_api]
@@ -74,10 +80,13 @@ impl IRefCounted for PagePool {
             pipeline: Rid::Invalid,
             cfg: FieldConfig::default(),
             cache: HashMap::new(),
+            pinned: std::collections::HashSet::new(),
             max_new_per_frame: 4,
             produced_this_frame: 0,
             total_produced: 0,
             cache_hits: 0,
+            evicted: 0,
+            pin_violation: false,
         }
     }
 }
@@ -128,10 +137,53 @@ impl PagePool {
         (self.cfg.page_res as f32 - 1.0) * self.cfg.spacing
     }
 
-    /// Reset the per-frame production budget. Call once at the top of each frame.
+    /// Reset the per-frame production budget and clear display pins. Call once
+    /// at the top of each frame; the view then re-pins everything it displays.
     #[func]
     fn begin_frame(&mut self) {
         self.produced_this_frame = 0;
+        self.pinned.clear();
+    }
+
+    /// Mark a page as displayed this frame (cannot be evicted). The view calls
+    /// this for every page it currently has a mesh for.
+    #[func]
+    fn pin_page(&mut self, level: i64, gx: i64, gz: i64) {
+        self.pinned.insert(PageKey { level: level as i32, gx: gx as i32, gz: gz as i32 });
+    }
+
+    /// Evict cached pages whose grid distance from (center_gx, center_gz) at the
+    /// given level exceeds `keep_radius` (Chebyshev). Pinned pages are NEVER
+    /// evicted (never-black discipline). Returns how many were evicted.
+    #[func]
+    fn evict_outside(&mut self, level: i64, center_gx: i64, center_gz: i64, keep_radius: i64) -> i64 {
+        let level = level as i32;
+        let cgx = center_gx as i32;
+        let cgz = center_gz as i32;
+        let r = keep_radius as i32;
+        let pinned = &self.pinned;
+        let mut removed = 0i64;
+        let mut violated = false;
+        self.cache.retain(|k, _| {
+            if k.level != level {
+                return true; // only manage the requested level here
+            }
+            let cheb = (k.gx - cgx).abs().max((k.gz - cgz).abs());
+            if cheb <= r {
+                return true; // within keep radius
+            }
+            if pinned.contains(k) {
+                violated = true; // asked to drop a displayed page — refuse, flag it
+                return true;
+            }
+            removed += 1;
+            false
+        });
+        if violated {
+            self.pin_violation = true;
+        }
+        self.evicted += removed;
+        removed
     }
 
     /// Request a page. Returns its texture if resident, or if we can afford to
@@ -221,11 +273,22 @@ impl PagePool {
         Some(result)
     }
 
+    /// Grid index of the level-0 page containing a world X (or Z) coordinate.
+    /// Uses the shared-boundary-cell span so it matches page_origin/keys.
+    #[func]
+    fn world_to_page_index(&self, world_coord: f32) -> i64 {
+        let span = self.page_span();
+        (world_coord / span).floor() as i64
+    }
+
     // --- diagnostics / test introspection ---
     #[func] fn resident_count(&self) -> i64 { self.cache.len() as i64 }
     #[func] fn total_produced(&self) -> i64 { self.total_produced }
     #[func] fn cache_hits(&self) -> i64 { self.cache_hits }
     #[func] fn produced_this_frame(&self) -> i64 { self.produced_this_frame as i64 }
+    #[func] fn evicted_count(&self) -> i64 { self.evicted }
+    #[func] fn pinned_count(&self) -> i64 { self.pinned.len() as i64 }
+    #[func] fn had_pin_violation(&self) -> bool { self.pin_violation }
 }
 
 fn load_glsl(path: &GString) -> GString {
