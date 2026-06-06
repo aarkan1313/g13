@@ -38,9 +38,14 @@ wg-13/                          (the Godot project, res://)
     m1_4_seam_check.gd          adjacent-page edge equality + teeth check
     m1_5a_pool_check.gd         pool caching + bounded-per-frame + budget reset
     m1_5b_stream_check.gd       streaming invariants: pins honored, eviction, flat memory
+    m1_5c_coverage_check.gd     never-black: coarse blanket covers starved fine cells
+    m1_5c_overlap_check.gd      annulus: no visible coarse overlaps covered fine (no z-fight)
   captures/                     SCREENSHOT TOOLS (evidence, not gates).
     stream_capture.gd           fly the world_view, save _captures/streamed.png
   _captures/                    PNG output — gitignored scratch (regenerable).
+
+run.ps1                         Launcher: agent runs the windowed scene on the user's
+                                desktop via a PS Job (.\run.ps1 / .\run.ps1 -Stop).
 ```
 
 ## Conventions (follow these going forward)
@@ -65,7 +70,7 @@ Build first (note the local target-dir override, `01_TOOLCHAIN.md §1`):
 $env:CARGO_TARGET_DIR = "D:\world gen 13\rust\target"
 cargo build --manifest-path "D:\world gen 13\rust\Cargo.toml"
 ```
-Fly the live world: just launch `& $g --rendering-driver vulkan --path "D:\world gen 13\wg-13"` (or F5 in the editor).
+Fly the live world: `.\run.ps1` (agent launches a windowed instance on the user's desktop via a PS Job; `.\run.ps1 -Stop` to close). The editor is only for inspector tuning or when a Rust rebuild needs the DLL lock released.
 
 ## Gate ↔ milestone
 
@@ -74,4 +79,7 @@ Fly the live world: just launch `& $g --rendering-driver vulkan --path "D:\world
 | m1_2_field_check.gd | M1.2 | same seed→identical page; different seed differs; continuity |
 | m1_4_seam_check.gd | M1.4 | adjacent E/S edges bit-identical; wrong stride doesn't (teeth) |
 | m1_5a_pool_check.gd | M1.5a | cache hit on repeat; ≤ max-new/frame; budget resets |
+| m1_5b_stream_check.gd | M1.5b | no pinned page evicted; eviction happens; residency bounded |
+| m1_5c_coverage_check.gd | M1.5c | never-black: coarse covers fine cells starved by tight budget |
+| m1_5c_overlap_check.gd | M1.5c | annulus: no visible coarse page overlaps a fully-covered fine area |
 | m1_5b_stream_check.gd | M1.5b | no pinned page evicted; eviction happens; residency bounded |
