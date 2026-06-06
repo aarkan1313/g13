@@ -10,6 +10,8 @@ mod archetype;
 mod sidecar;
 #[allow(dead_code)] // wired into the pipeline in Task 7
 mod analyze;
+#[allow(dead_code)] // wired into the pipeline in Task 7
+mod fingerprint;
 
 use std::process::ExitCode;
 
