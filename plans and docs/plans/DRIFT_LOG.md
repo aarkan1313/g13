@@ -4,6 +4,10 @@ The human reads this FIRST every session. The agent appends here whenever it blo
 
 ---
 
+## [2026-06-06] — Far-distance visual items confirmed (both deferred)
+TYPE: (observation logged, no code change)
+Human flying the live world reported two far-distance visual items: (1) SLIGHT LOD detail-step at clipmap ring boundaries (already a known deferred geomorph item), and (2) the MAIN one — terrain POPPING IN at the loaded-world frontier instead of dissolving into the depth fog. #2 was NOT distinctly logged before (it's separate from the geomorph step and the startup hitch). Added #2 as its own item in HANDOFF "Known deferred items". User agreed both are fine to fix later. Neither blocks M1 (gate is no-black/no-cracks; both hold — these are far-edge LOD/fog softness). Not fixing piecemeal (would be slop).
+
 ## [2026-06-06] — M1.7c LIVE WALK PASS + controls polish
 TYPE: PARKED-FOR-VISUAL -> PASS (human), then demo-control tweaks
 HUMAN VISUAL PASS: after the input-bleed + spawn-at-terrain fix, the user re-flew the live world, dropped in (G), and confirmed: "i didnt fall through, i think you fixed it." M1.7c fall-through gate satisfied — the capsule stands on the streamed terrain and does not fall through, including the Shift case that first exposed it. The fix (walk/fly mutually exclusive + spawn just above resident terrain) is the real resolution.

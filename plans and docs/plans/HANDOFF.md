@@ -26,7 +26,8 @@ Then, only if you need them: `00_ARCHITECTURE.md` (the rules), `04_CODE_MAP.md` 
 - **Then M2** (biomes + DEM stats; 135 labeled DEMs already inventoried in `03_DEM_CATALOG.md`).
 
 ## 4. Known deferred items (don't "rediscover" these as bugs)
-- **LOD transition seams** between clipmap levels (faint shading/detail steps as you fly) — roadmap-deferred **geomorph** polish. Not a crack, not z-fighting. Don't fix piecemeal (that's slop); it's a dedicated later pass.
+- **LOD transition seams** between clipmap levels (faint shading/detail steps as you fly) — roadmap-deferred **geomorph** polish. Not a crack, not z-fighting. Don't fix piecemeal (that's slop); it's a dedicated later pass. (Human confirmed 2026-06-06: still slightly present — fine to fix later.)
+- **Far-edge streaming pop-in** (human-spotted 2026-06-06): at the loaded-world frontier, new pages can be seen *appearing* rather than dissolving into the depth fog as you fly outward. Distinct from the LOD detail-step (#above) and from the startup hitch (#below) — this is the *moving streaming frontier* showing through. Likely fog-vs-reach tuning (the coarsest edge isn't fully hidden) and/or pages produced inside the visible, non-fogged range under motion. Deferred polish (same family as async-load / fog tuning); M1's gate is "no black, no cracks" — both hold, this is far-edge LOD softness. Fix later, not piecemeal.
 - **~150 ms one-time startup hitch** while the 6-level clipmap + GPU pipeline warm up — a *load* transient, not movement stutter. Proper fix is async page production / loading screen, later.
 - **`show_page_tint`** debug checkerboard exists on `world_view` (default off).
 
