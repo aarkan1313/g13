@@ -4,6 +4,15 @@ The human reads this FIRST every session. The agent appends here whenever it blo
 
 ---
 
+## [2026-06-06] — M1.7b (near-page collision build) PASS
+TYPE: (test gate passed, self-certified)
+WHAT: world_view now builds collision for NEAR fine (level-0) pages only, radius 1 (3x3 around camera). Per frame: read the page's heights on the MAIN thread (cheap CoW handle from get_page_heights), pass the array INTO a WorkerThreadPool task that packs a HeightMapShape3D + StaticBody3D off-tree (touches no pool, no active tree), then call_deferred add_child on the main thread. Bodies free when pages leave radius+evict_margin (hysteresis). collision_radius (1) <= keep (4), so collision pages are already pinned by the mesh pass -> heights can't be evicted under a live body.
+TRANSFORM (verified Godot facts applied): HeightMapShape3D grid is 1 unit/vertex and centered on the body origin, so body.position = page CENTRE (same formula as the mesh) and body.scale = (spacing,1,spacing). map_data is row-major width*depth (X=width,Z=depth) = our field's z*res+x, dropped in untransposed.
+GATE m1_7b_collision_check.gd PASS: drives the REAL view through 40 frames (exercises the async WorkerThreadPool + deferred attach). Body exists for the page under the camera; shape.map_data BIT-IDENTICAL to pool.get_page_heights (pool->collision end-to-end, no drift); dims 128x128; position = page centre (254,254); scale = (4,1,4) = cell_spacing; all bodies are HeightMapShape3D; 9 collision bodies for 294 displayed meshes (near-pages-only proven, not one-per-mesh). The transform values that decide float-vs-sink are output-proven, de-risking the M1.7c visual gate.
+GDScript-only (no Rust rebuild). One parse-error fixed (typed an untyped-property inference) before PASS.
+CODEBASE STATE: green at the M1.7b commit.
+WHAT I DID NOT DO: Did not add the character yet (M1.7c). Did not build collision off a second field path (reads the cached pool heights). Did not block a render frame on the build (off-thread).
+
 ## [2026-06-06] — M1.7 design + M1.7a (heights retention) PASS
 TYPE: (design decision + test gate passed, self-certified)
 CONTEXT: User set the MINIMUM TARGET HARDWARE = RTX 3070+ (dev box stays RTX 5090 laptop). Recorded in 01_TOOLCHAIN §6/§7 (open item resolved) + project memory. Frame-budget gates must now hold on a 3070; the 5090 number is a dev baseline. M1.6's steady-state (2.4ms, ~7x under budget) is expected to clear 60fps on a 3070, but anything landing NEAR budget on the 5090 must be re-checked against the 3070 margin (margin discipline — we can't measure a 3070 from here).

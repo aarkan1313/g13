@@ -33,7 +33,11 @@ wg-13/                          (the Godot project, res://)
   scripts/
     world_view.gd               LIVE view: owns PagePool, multi-level clipmap,
                                 camera-following streaming, never-black layering.
-                                This is what demo.tscn runs.
+                                Also builds NEAR (level-0) collision (M1.7):
+                                WorkerThreadPool packs a HeightMapShape3D from the
+                                pool's resident heights off-thread -> deferred
+                                add_child; bodies evict with the ring. This is
+                                what demo.tscn runs.
     fly_camera.gd               Reusable WASD + right-drag inspection camera.
   scenes/
     demo.tscn                   The launch target: WorldRoot + world_view. F5 = fly.
@@ -45,6 +49,7 @@ wg-13/                          (the Godot project, res://)
     m1_5c_coverage_check.gd     never-black: coarse blanket covers starved fine cells
     m1_5c_overlap_check.gd      annulus: no visible coarse overlaps covered fine (no z-fight)
     m1_7a_heights_check.gd      get_page_heights == texture bytes (same source), matches FieldCompute, empty if non-resident
+    m1_7b_collision_check.gd    drives the real view: level-0 collision body exists, shape map_data == pool heights, page-centre transform + cell_spacing scale, near-pages-only count
   captures/                     SCREENSHOT TOOLS (evidence, not gates).
     stream_capture.gd           fly the world_view, save _captures/streamed.png
   _captures/                    PNG output — gitignored scratch (regenerable).
@@ -88,4 +93,5 @@ Fly the live world: `.\run.ps1` (agent launches a windowed instance on the user'
 | m1_5c_coverage_check.gd | M1.5c | never-black: coarse covers fine cells starved by tight budget |
 | m1_5c_overlap_check.gd | M1.5c | annulus: no visible coarse page overlaps a fully-covered fine area |
 | m1_7a_heights_check.gd | M1.7a | get_page_heights returns the same array behind the texture; matches FieldCompute; empty when non-resident |
+| m1_7b_collision_check.gd | M1.7b | real view builds level-0 collision; shape map_data == pool heights; page-centre transform + cell_spacing scale; near-pages-only count |
 | m1_5b_stream_check.gd | M1.5b | no pinned page evicted; eviction happens; residency bounded |

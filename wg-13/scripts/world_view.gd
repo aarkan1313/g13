@@ -28,11 +28,21 @@ const FLY := "res://scripts/fly_camera.gd"
 @export var evict_margin: int = 1          # hysteresis: keep_radius = ring_radius + margin
 @export var max_new_per_frame: int = 4
 @export var show_page_tint: bool = false   # debug checkerboard marking page edges (off = clean look)
+# M1.7: collision for NEAR fine (level-0) pages only — you stand on the fine
+# surface, not the coarse horizon blanket. radius 1 = the 3x3 fine block around
+# the camera, so the page you're on plus every neighbor you could step onto is
+# collidable before you reach it (no edge fall-through) without building dozens
+# of bodies. Built async off the main thread (00 §2.2 collision is a renderer
+# concern); kept cheap for the RTX 3070 minimum target.
+@export var collision_radius: int = 1       # level-0 pages each side around camera with collision
 
 var _pool: RefCounted
 var _ring_shader: Resource
 var _instances := {}                       # "L:gx:gz" -> MeshInstance3D
 var _cam: Camera3D
+# M1.7 collision state (level-0 pages only). "gx:gz" keys.
+var _collisions := {}                       # "gx:gz" -> StaticBody3D (resident collision body)
+var _collision_building := {}               # "gx:gz" -> true while a WorkerThreadPool task is in flight
 
 func _ready() -> void:
 	_pool = ClassDB.instantiate("PagePool")
@@ -101,6 +111,79 @@ func _process(_dt: float) -> void:
 		_pool.evict_outside(level, ccx, ccz, keep)
 
 	_update_annulus_visibility()
+	_update_collision(cam_x, cam_z, base_span)
+
+# M1.7 — collision for NEAR fine (level-0) pages. Each frame: build bodies for
+# in-radius level-0 pages whose heights are resident (async, off the main thread
+# via WorkerThreadPool), and free bodies for pages that left the radius. The
+# heights are read on the MAIN thread (a cheap CoW handle from the pool) and
+# passed INTO the worker, so the worker touches only a plain array + local node
+# construction (never the pool or the active tree) — then call_deferred adds the
+# finished StaticBody3D on the main thread (the documented Godot pattern).
+# collision_radius (1) <= keep (ring_radius+evict_margin), so every collision
+# page is already pinned by the mesh pass -> its heights can't be evicted from
+# under a live body.
+func _update_collision(cam_x: float, cam_z: float, base_span: float) -> void:
+	var ccx: int = int(floor(cam_x / base_span))
+	var ccz: int = int(floor(cam_z / base_span))
+
+	# 1. free bodies that left the radius (small margin = mesh-like hysteresis).
+	var drop_radius: int = collision_radius + evict_margin
+	for key in _collisions.keys():
+		var p: PackedStringArray = key.split(":")
+		var cheb: int = maxi(absi(int(p[0]) - ccx), absi(int(p[1]) - ccz))
+		if cheb > drop_radius:
+			_collisions[key].queue_free()
+			_collisions.erase(key)
+
+	# 2. build bodies for in-radius level-0 pages that have none yet.
+	for gz in range(ccz - collision_radius, ccz + collision_radius + 1):
+		for gx in range(ccx - collision_radius, ccx + collision_radius + 1):
+			var key := "%d:%d" % [gx, gz]
+			if _collisions.has(key) or _collision_building.has(key):
+				continue
+			# Heights must be resident (the fine page must be produced first).
+			var heights: PackedFloat32Array = _pool.get_page_heights(0, gx, gz)
+			if heights.size() != page_res * page_res:
+				continue                       # not produced yet; try again next frame
+			_collision_building[key] = true
+			# Off-thread: pack the HeightMapShape3D + body from the plain array.
+			WorkerThreadPool.add_task(_build_collision_body.bind(key, gx, gz, heights))
+
+# Worker-thread task: build the shape + body from a plain height array (no pool,
+# no tree access). HeightMapShape3D vertices are spaced 1 unit on X/Z and the
+# grid is centered on the body origin (verified), so we scale by cell_spacing
+# and position the body at the page CENTRE (same formula the mesh uses). map_data
+# is row-major width*depth with X=width,Z=depth, matching the field's z*res+x.
+func _build_collision_body(key: String, gx: int, gz: int, heights: PackedFloat32Array) -> void:
+	var shape := HeightMapShape3D.new()
+	shape.map_width = page_res
+	shape.map_depth = page_res
+	shape.map_data = heights
+
+	var col := CollisionShape3D.new()
+	col.shape = shape
+
+	var body := StaticBody3D.new()
+	body.add_child(col)                        # building off-tree is fine; only add_child INTO the active tree must defer
+	var span: float = (page_res - 1) * spacing # level-0 world span (cell_spacing = spacing)
+	body.position = Vector3(gx * span + span * 0.5, 0.0, gz * span + span * 0.5)
+	# 1-unit grid -> scale X/Z to cell_spacing; Y stays 1 (heights are world units).
+	body.scale = Vector3(spacing, 1.0, spacing)
+
+	call_deferred("_attach_collision_body", key, body)
+
+# Main-thread: attach the finished body. If the camera moved out of range during
+# the build, the body is still attached here and the NEXT frame's eviction pass
+# (step 1) frees it once it's tracked and outside drop_radius — self-heals in one
+# frame, no leak. The has()-check just guards against a double-add.
+func _attach_collision_body(key: String, body: StaticBody3D) -> void:
+	_collision_building.erase(key)
+	if not _collisions.has(key):
+		add_child(body)
+		_collisions[key] = body
+	else:
+		body.queue_free()                      # already built (shouldn't happen, but no double-add)
 
 # Annulus rule (no overlap -> no z-fighting): a coarse page is VISIBLE only where
 # the finer level does NOT fully cover it. A coarse page (L, cgx, cgz) covers the
