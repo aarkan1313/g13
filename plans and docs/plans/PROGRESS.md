@@ -29,9 +29,11 @@ M1.8 [x] MILESTONE GATE — full DoD met: 9/9 structural gates + frame-time gate
 ## M1.9 — Performance hardening (foundation pass, before M2)
 A careful, EVIDENCE-FIRST pass: make the foundational infra as efficient as it can be WITHOUT sacrificing features/quality ("build it right once"). Optimize workload-INDEPENDENT things (per-frame waste, allocations, reuse, the streaming hitch); DEFER workload-dependent tuning (LOD radii, texture/scatter batching) to when real M2+ content exists. Measure before cutting.
 M1.9.1 [x] instrument per-system frame breakdown — pool produce_us (GPU dispatch+readback), view _process us, mesh-build us; HUD profiler section (key 5). Smoke + 10 gates green. (measure before cutting)
-M1.9.2 [ ] root-cause + fix the fast-motion streaming spikes (p99/max jumps when moving fast)   <- CURRENT
-M1.9.3 [ ] sweep workload-independent inefficiencies (per-frame GDScript, allocations, mesh/material reuse)
-M1.9.x [ ] perf gate: smooth under motion, no per-frame waste, all M1 gates still green
+M1.9.2 [x] captured + root-caused the fast-motion spike with the profiler — it was per-page mesh/material ALLOC on the eager burst (NOT the GPU, as first assumed). Evidence-driven.
+M1.9.3a [x] mesh/material pooling (shared per-level mesh + instance free-list) — worst frame 35->17ms, mesh build 19->0.8ms. 12 gates green.
+M1.9.3b [x] spread the eager burst: mid-coarse bounded (max_eager_per_frame), coarsest unbounded (never-black floor). Worst frame 17->11ms, 0/300 over budget. Never-black PROVEN by new m1_9b_eager_spread_check. 13 gates green.
+M1.9.3c [ ] cut per-frame string-key churn (parse-free single-pass) for extra 3070 headroom   <- CURRENT
+M1.9.x [ ] perf gate: live HUD verify under motion, all gates green, push
 
 ## Milestone 2 — Untextured biomes + DEM-informed shape
 M2.1 [ ] temperature & moisture debug-color fields

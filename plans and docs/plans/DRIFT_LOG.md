@@ -4,6 +4,20 @@ The human reads this FIRST every session. The agent appends here whenever it blo
 
 ---
 
+## [2026-06-06] — M1.9.3b eager-burst spread — worst frame 17 -> 11 ms, 0/300 over budget (never-black PROVEN)
+TYPE: (perf fix touching never-black, proven safe; 13/13 gates green)
+THE CAREFUL ONE (a prior naive eager-cap broke never-black — see M1.6 entry — so this needed a real argument, not a cap). Three production modes in the pool now:
+  - COARSEST level: unbounded eager (request_page_eager) — the never-black FLOOR, always complete.
+  - MID-coarse (0<level<coarsest): BOUNDED eager (request_page_eager_bounded, max_eager_per_frame, default 8) — spread over frames.
+  - FINE (0): bounded as before.
+WHY SPREADING MID-COARSE IS NEVER-BLACK-SAFE (the argument): _update_annulus_visibility hides a coarse page only when its ENTIRE finer footprint is displayed; if a mid-coarse page is missing, the coarser page beneath stays visible and covers that ground. So a missing mid-coarse page falls back to a COARSER blanket (blurrier for a frame), never to black — down to the unbounded coarsest floor. The old failure capped the floor too; this keeps it.
+PROVEN, not assumed: new gate m1_9b_eager_spread_check (4 levels, mid-coarse starved to 3/frame) asserts every fine cell is still covered by SOME resident level AND the coarsest ring is complete (49/49). PASS.
+RE-CAPTURED (same 2400 u/s flight): worst frame 35.40 (before) -> 17.15 (after 3a) -> 10.97ms (after 3b). FRAMES OVER 16.6 BUDGET: 0/300. prod dropped ~9.3 -> ~4.5ms (8 eager/frame, not 28-at-once).
+max_eager_per_frame is an @export (view) + set_max_eager_per_frame (pool) — the lever to lower the worst frame further on weaker GPUs (relevant to the RTX 3070 min target: 11ms*~3x is near/over 60fps budget at sustained MAX boost — an extreme case; tune this down there if needed).
+VERIFY: all 13 gates (incl. coverage + the new spread gate + overlap + frame-time + smokes) PASS.
+CODEBASE STATE: green at the M1.9.3b commit.
+WHAT I DID NOT DO: Did not cap the coarsest floor (that's what broke never-black before). Did not claim safe without the new proving gate. Did not change the field/contract.
+
 ## [2026-06-06] — M1.9.3a mesh/material pooling — worst frame 35 -> 17 ms (verified)
 TYPE: (perf fix, evidence-verified; 12/12 gates green)
 FIX (targets the M1.9.2 finding exactly): stop allocating per page. (1) ONE shared PlaneMesh per level (identical geometry for every page at a level) -> referenced, not re-newed. (2) A free-list of MeshInstance3D+material: evicted instances are hidden and recycled (re-point height_tex, reposition) instead of queue_free + new. Steady state and the eager burst now allocate nothing.

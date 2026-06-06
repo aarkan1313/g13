@@ -77,6 +77,7 @@ wg-13/                          (the Godot project, res://)
     m1_7a_heights_check.gd      get_page_heights == texture bytes (same source), matches FieldCompute, empty if non-resident
     m1_7b_collision_check.gd    drives the real view: level-0 collision body exists, shape map_data == pool heights, page-centre transform + cell_spacing scale, near-pages-only count
     m1_7c_stand_check.gd        loads demo.tscn, drops the capsule in WALK, asserts it doesn't fall through + is_on_floor on the terrain (output-provable core of the visual gate)
+    m1_9b_eager_spread_check.gd never-black holds when mid-coarse eager is bounded+starved (every fine cell covered by some resident level; coarsest floor complete) — earns M1.9.3b
     hud_smoke_check.gd          (smoke) perf HUD loads, finds the view, all sections show sane values matching the pool, toggles work
     tour_smoke_check.gd         (smoke) auto-tour starts OFF, drives the real fly-cam, advances steps, pause restores control, resume works
   captures/                     SCREENSHOT TOOLS (evidence, not gates).
@@ -124,4 +125,5 @@ Fly the live world: `.\run.ps1` (agent launches a windowed instance on the user'
 | m1_7a_heights_check.gd | M1.7a | get_page_heights returns the same array behind the texture; matches FieldCompute; empty when non-resident |
 | m1_7b_collision_check.gd | M1.7b | real view builds level-0 collision; shape map_data == pool heights; page-centre transform + cell_spacing scale; near-pages-only count |
 | m1_7c_stand_check.gd | M1.7c | capsule dropped in demo.tscn doesn't fall through and is_on_floor on the terrain (output-provable core; live walk is the human visual gate) |
+| m1_9b_eager_spread_check.gd | M1.9.3b | bounding mid-coarse eager stays never-black: every fine cell covered by some resident level; coarsest floor complete |
 | m1_5b_stream_check.gd | M1.5b | no pinned page evicted; eviction happens; residency bounded |

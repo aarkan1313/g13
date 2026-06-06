@@ -36,6 +36,14 @@ struct ResidentPage {
     heights: PackedFloat32Array,
 }
 
+/// How a page request is budgeted this frame (M1.9.3b).
+#[derive(Clone, Copy)]
+enum RequestMode {
+    Fine,            // finest level — bounded by max_new_per_frame
+    EagerBounded,    // mid-coarse — bounded by max_eager_per_frame, falls back to coarser
+    EagerUnbounded,  // coarsest — never gated (the never-black floor)
+}
+
 /// fBM + page geometry config. Mirrors the GLSL Params block (page_pool dispatches
 /// the same field_height.glsl the M1.2/M1.3 path used).
 #[derive(Clone, Copy)]
@@ -70,6 +78,14 @@ pub struct PagePool {
     max_new_per_frame: i32,
     produced_this_frame: i32,
     eager_this_frame: i32,  // diagnostics: eager pages produced this frame
+    /// M1.9.3b: per-frame cap for MID-coarse eager production (levels between
+    /// fine and coarsest). The COARSEST level stays unbounded (the never-black
+    /// backstop); mid-coarse can be spread over frames because a missing
+    /// mid-coarse page falls back to the coarser blanket beneath it (NOT to
+    /// black). This bounds the fast-motion eager burst without starving the
+    /// floor. <= 0 means "unbounded" (spreading off).
+    max_eager_per_frame: i32,
+    eager_bounded_this_frame: i32,
     /// M1.9 profiling: wall-time spent in produce() this frame (GPU dispatch +
     /// blocking readback). This is the prime suspect for the fast-motion frame
     /// spike — each production blocks on rd.sync(). Reset in begin_frame().
@@ -94,6 +110,8 @@ impl IRefCounted for PagePool {
             max_new_per_frame: 4,
             produced_this_frame: 0,
             eager_this_frame: 0,
+            max_eager_per_frame: 8,   // mid-coarse pages/frame; coarsest is exempt
+            eager_bounded_this_frame: 0,
             produce_us_this_frame: 0,
             total_produced: 0,
             cache_hits: 0,
@@ -123,6 +141,13 @@ impl PagePool {
         self.max_new_per_frame = max_new_per_frame as i32;
     }
 
+    /// M1.9.3b: per-frame cap for MID-coarse eager pages (the coarsest level
+    /// stays unbounded). <= 0 disables spreading (unbounded mid-coarse too).
+    #[func]
+    fn set_max_eager_per_frame(&mut self, n: i64) {
+        self.max_eager_per_frame = n as i32;
+    }
+
     /// World span one page covers (shared-boundary-cell convention, 00 §5.1).
     #[func]
     fn page_span(&self) -> f32 {
@@ -135,6 +160,7 @@ impl PagePool {
     fn begin_frame(&mut self) {
         self.produced_this_frame = 0;
         self.eager_this_frame = 0;
+        self.eager_bounded_this_frame = 0;
         self.produce_us_this_frame = 0;
         self.pinned.clear();
     }
@@ -185,36 +211,62 @@ impl PagePool {
     /// (caller falls back to coarse coverage). Use for the expensive FINE level.
     #[func]
     fn request_page(&mut self, level: i64, gx: i64, gz: i64) -> Option<Gd<ImageTexture>> {
-        self.request(level, gx, gz, false)
+        self.request(level, gx, gz, RequestMode::Fine)
     }
 
-    /// Request a page EAGERLY, bypassing the per-frame budget. Use for the cheap
-    /// COARSE blanket levels, which must ALWAYS be complete so a missing fine
-    /// page never reveals black (00 §3 never-black). Coarse pages are few and
-    /// cheap, so producing them unbounded does not cause stutter; the budget
-    /// exists to cap the expensive fine detail, not the blanket.
+    /// Request a page EAGERLY, UNBOUNDED. Use for the COARSEST level — the
+    /// never-black backstop, which must ALWAYS be complete so a hole in finer
+    /// levels never reveals black (00 §3). The coarsest level is few pages (each
+    /// covers huge ground) so unbounded production here doesn't stutter.
     #[func]
     fn request_page_eager(&mut self, level: i64, gx: i64, gz: i64) -> Option<Gd<ImageTexture>> {
-        self.request(level, gx, gz, true)
+        self.request(level, gx, gz, RequestMode::EagerUnbounded)
     }
 
-    fn request(&mut self, level: i64, gx: i64, gz: i64, eager: bool) -> Option<Gd<ImageTexture>> {
+    /// Request a MID-coarse page eagerly but BOUNDED by max_eager_per_frame
+    /// (M1.9.3b). Spreading these over frames is safe: a missing mid-coarse page
+    /// falls back to the COARSER blanket beneath it (the annulus logic keeps the
+    /// coarser page visible until the finer footprint is complete), so the worst
+    /// case is "blurrier for a frame", never black. Caller uses this for levels
+    /// strictly between fine (0) and coarsest. Returns null when over the eager
+    /// budget this frame (caller leaves the coarser page showing → never-black).
+    #[func]
+    fn request_page_eager_bounded(&mut self, level: i64, gx: i64, gz: i64) -> Option<Gd<ImageTexture>> {
+        self.request(level, gx, gz, RequestMode::EagerBounded)
+    }
+
+    fn request(&mut self, level: i64, gx: i64, gz: i64, mode: RequestMode) -> Option<Gd<ImageTexture>> {
         let key = PageKey { level: level as i32, gx: gx as i32, gz: gz as i32 };
         if let Some(page) = self.cache.get(&key) {
             self.cache_hits += 1;
             return Some(page.texture.clone());
         }
-        // Coarse blanket (eager) is UNBOUNDED: it must be complete in the frame
-        // it's requested so never-black holds (the coverage gate fills it in one
-        // begin_frame). Only the expensive FINE level is per-frame bounded.
-        // (An eager per-frame cap was tried to smooth startup; it broke
-        // never-black AND made startup worse — the startup spike is one-time
-        // engine/shader init, not the eager page burst. Reverted.)
-        if !eager && self.produced_this_frame >= self.max_new_per_frame {
-            return None; // fine over budget this frame; caller falls back to coarse
+        // Budget gate per mode. Coarsest (EagerUnbounded) is never gated — it's
+        // the never-black floor. Fine and mid-coarse are spread over frames; when
+        // over budget the caller falls back to the coarser blanket (never black).
+        match mode {
+            RequestMode::Fine => {
+                if self.produced_this_frame >= self.max_new_per_frame {
+                    return None;
+                }
+            }
+            RequestMode::EagerBounded => {
+                if self.max_eager_per_frame > 0
+                    && self.eager_bounded_this_frame >= self.max_eager_per_frame {
+                    return None;
+                }
+            }
+            RequestMode::EagerUnbounded => {}
         }
         let page = self.produce(key)?;
-        if eager { self.eager_this_frame += 1; } else { self.produced_this_frame += 1; }
+        match mode {
+            RequestMode::Fine => self.produced_this_frame += 1,
+            RequestMode::EagerBounded => {
+                self.eager_bounded_this_frame += 1;
+                self.eager_this_frame += 1;
+            }
+            RequestMode::EagerUnbounded => self.eager_this_frame += 1,
+        }
         self.total_produced += 1;
         let tex = page.texture.clone();
         self.cache.insert(key, page);

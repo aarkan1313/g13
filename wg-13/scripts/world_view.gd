@@ -27,6 +27,9 @@ const FLY := "res://scripts/fly_camera.gd"
 @export var ring_radius: int = 3           # pages each side, per level, around camera
 @export var evict_margin: int = 1          # hysteresis: keep_radius = ring_radius + margin
 @export var max_new_per_frame: int = 4
+# M1.9.3b: mid-coarse eager pages produced per frame (coarsest level exempt =
+# never-black floor). Spreads the fast-motion burst across frames. Tune live.
+@export var max_eager_per_frame: int = 8
 @export var show_page_tint: bool = false   # debug checkerboard marking page edges (off = clean look)
 # M1.7: collision for NEAR fine (level-0) pages only — you stand on the fine
 # surface, not the coarse horizon blanket. radius 1 = the 3x3 fine block around
@@ -66,6 +69,7 @@ func _ready() -> void:
 	if not _pool.initialize(SHADER):
 		push_error("M1.5: PagePool.initialize failed (need --rendering-driver vulkan)."); return
 	_pool.configure(page_res, spacing, seed_val, octaves, base_freq, amplitude, max_new_per_frame)
+	_pool.set_max_eager_per_frame(max_eager_per_frame)
 	_ring_shader = load(RING)
 	_spawn_camera()
 	var span: float = _pool.page_span()
@@ -84,12 +88,14 @@ func _process(_dt: float) -> void:
 	var cam_x: float = _cam.global_position.x
 	var cam_z: float = _cam.global_position.z
 
-	# Request coarsest first. COARSE levels (>0) are produced EAGERLY (unbounded):
-	# they're cheap, few, and are the never-black blanket, so they must always be
-	# complete. Only the FINEST level (0) is bounded per frame — that's the
-	# expensive detail whose burst would stutter. (00 §3; budget caps detail, not
-	# the blanket.)
-	for level in range(num_levels - 1, -1, -1):
+	# Request coarsest first. Three production modes (M1.9.3b):
+	#  - COARSEST level: unbounded eager — the never-black FLOOR, always complete.
+	#  - MID-coarse (0 < level < coarsest): bounded eager — spread over frames;
+	#    a missing one falls back to the coarser blanket beneath (never black),
+	#    which kills the fast-motion burst (was up to 28 coarse pages in 1 frame).
+	#  - FINE (0): bounded — the expensive detail, capped per frame as before.
+	var coarsest := num_levels - 1
+	for level in range(coarsest, -1, -1):
 		var span: float = base_span * pow(2.0, level)
 		var ccx: int = int(floor(cam_x / span))
 		var ccz: int = int(floor(cam_z / span))
@@ -98,10 +104,15 @@ func _process(_dt: float) -> void:
 				var key := "%d:%d:%d" % [level, gx, gz]
 				if _instances.has(key):
 					continue
-				var tex = (_pool.request_page_eager(level, gx, gz) if level > 0
-					else _pool.request_page(level, gx, gz))
+				var tex
+				if level == coarsest:
+					tex = _pool.request_page_eager(level, gx, gz)          # floor
+				elif level > 0:
+					tex = _pool.request_page_eager_bounded(level, gx, gz)  # spread
+				else:
+					tex = _pool.request_page(level, gx, gz)                # fine
 				if tex == null:
-					continue                  # fine over budget; coarse blanket covers it
+					continue                  # over budget; coarser blanket covers it
 				_instances[key] = _make_page_instance(tex, level, gx, gz, span)
 
 	# Per level: drop stale meshes -> pin remaining -> evict pool pages outside keep.
