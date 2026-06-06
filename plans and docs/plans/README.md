@@ -19,7 +19,7 @@ Attempt #13. The previous twelve failed on **architecture tangle** and **plan dr
 ## The things to never forget
 1. **Field is the "what," Renderer is the "how it looks." They never know each other's internals.** (00 §2)
 2. **Every step ends in a gate. Unsupervised work crosses test gates and PARKS at visual gates.** (02 §2)
-3. **Quality is the LAST pillar. Survivability is the first.** A live, troubleshootable project beats a beautiful dead one. (00 §1)
+3. **Quality is the #1 pillar — and Quality means "do it right, no slop."** Not "chase visuals at any cost": shipping polish on a foundation that can't stream IS slop. Survivability/Modularity/Performance are HOW quality survives and reaches AAA. (00 §1)
 4. **Build it right once — never build what you'll replace.** Pick the most-performant, long-term-correct approach (Rust + GPU here) the first time; throwaway prototypes balloon the project. Incremental ≠ throwaway. (00 §1.1)
 
 ## Confirmed technical baseline (verified 2026-06-06 on this machine)

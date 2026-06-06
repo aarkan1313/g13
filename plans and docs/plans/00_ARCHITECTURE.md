@@ -22,19 +22,21 @@ Therefore this architecture is built around **one structural rule** (Section 2) 
 
 When two pillars conflict, the higher one wins. Write this order down; an agent will face these conflicts constantly.
 
-1. **Survivability** — the codebase must remain buildable, runnable, and troubleshootable at all times. A feature that risks the whole project is deferred, not attempted. This pillar is NEW and it is #1 specifically because it is the thing that has failed before.
-2. **Modularity** — the generator must be drop-in reusable across future games by tuning parameters and swapping assets, never by rewriting core code.
-3. **Performance** — 60 FPS on midrange PC, no stutter on movement.
-4. **Quality** — AAA-grade visuals, no Minecraft blockiness, no "cloudy Perlin nebula."
+1. **Quality — "do it right, no slop."** The end product is AAA-grade: no Minecraft blockiness, no "cloudy Perlin nebula," no visible defects shipped, no half-measures. Crucially, Quality here is NOT "chase visuals at any cost" — it means **build to a high standard and finish things properly.** Throwaway code is slop. A broken build is slop. A visible artifact you shrugged off is slop. Quality is the north star; the pillars below are *how you reach it durably*.
+2. **Survivability** — the codebase must remain buildable, runnable, and troubleshootable at all times. This is not in tension with Quality — **a dead project ships zero quality.** Survivability is how quality survives long enough to exist. A feature that risks the whole project is sequenced, not skipped: you still build it right, you just don't take it all on at once.
+3. **Modularity** — the generator must be drop-in reusable across future games by tuning parameters and swapping assets, never by rewriting core code. (High quality that can't be reused is quality you build once and throw away — slop at the project scale.)
+4. **Performance** — 60 FPS on the target machine, no stutter on movement. (At AAA scale, bad performance *is* low quality — so this serves Quality too.)
 
-Note that Quality is LAST. This is deliberate. Every previous attempt chased quality and sacrificed survivability. Quality is meaningless if the project is dead.
+**How to read this (it resolves the attempt #1–12 trap):** past attempts died chasing *visual polish on an unproven foundation* — that is NOT what "Quality #1" means here. "Do it right" forbids exactly that: shipping pretty terrain on a base that can't stream is slop, not quality. So Quality-first and Survivability are aligned, not opposed. When tempted to add visual polish before the foundation holds, that temptation is the *low-quality* move (it creates the half-built tangle), and the higher-quality move is to finish the foundation first. The pillars rarely truly conflict once you read Quality as "do it right" rather than "make it pretty now."
+
+**The genuine-conflict tiebreak:** if doing something to a high visual standard *right now* would actually risk the buildable/troubleshootable project (not just defer prettiness), you sequence it — build the foundation right, then build the quality on top, both done properly. You never ship slop to protect the schedule, and you never risk the project to ship polish early. "Do it right" + "keep it alive" together.
 
 ### 1.1 The "build it right once" rule (governs HOW we satisfy the pillars)
 
 **Never build something you intend to replace.** If a more-performant, longer-term-correct approach is known, build *that* the first time — do not build a throwaway prototype "to move fast" and port it later.
 
 Why this is a rule, not a preference:
-- Throwaway code *feels* faster but **balloons the project**: you write it, then write it again, and the half-migrated state between the two is exactly the un-troubleshootable tangle that killed past attempts. So this rule **serves Survivability (#1) and Modularity (#2)** — it is not "chase Quality first."
+- Throwaway code *feels* faster but **balloons the project**: you write it, then write it again, and the half-migrated state between the two is exactly the un-troubleshootable tangle that killed past attempts. **Throwaway code is slop, so this rule IS Quality (#1) — "do it right once" is the same as "no slop"** — and it also serves Survivability (#2) and Modularity (#3).
 - It is the same reasoning that made us go **GPU-first** instead of CPU-then-rewrite (`§3`), and that keeps the field as **one GLSL implementation** instead of CPU+GPU (`§4`).
 
 What it concretely means:

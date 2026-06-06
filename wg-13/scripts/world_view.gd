@@ -24,7 +24,7 @@ const FLY := "res://scripts/fly_camera.gd"
 @export var ring_radius: int = 3           # pages each side, per level, around camera
 @export var evict_margin: int = 1          # hysteresis: keep_radius = ring_radius + margin
 @export var max_new_per_frame: int = 4
-@export var show_page_tint: bool = true    # debug checkerboard marking page edges
+@export var show_page_tint: bool = false   # debug checkerboard marking page edges (off = clean look)
 
 var _pool: RefCounted
 var _ring_shader: Resource

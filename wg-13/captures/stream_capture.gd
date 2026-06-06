@@ -16,6 +16,7 @@ func _init() -> void:
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path("res://_captures"))
 	var root := Node3D.new()
 	root.set_script(VIEW)
+	root.set("show_page_tint", false)   # clean look: no debug checkerboard
 	get_root().add_child(root)
 
 func _process(_dt: float) -> bool:
