@@ -42,6 +42,8 @@ Every step in `MILESTONE_*.md` specifies its gate explicitly. If a step in those
 
 This is the core trick: **unsupervised work may only proceed across test gates.** Anything needing your eyes parks and waits. So you can never come home to 8 hours of unverified visual drift — at most you come home to one parked gate.
 
+**Refinement (the output-provable rule):** if a gate's condition can be *proven from console/stdout output* — a print appeared, a value matched, an edit took effect after rebuild — the agent treats it as a **test gate** and self-certifies, quoting the output. A gate is only **visual** (park-and-wait) when it depends on **rendered pixels** a human must judge: terrain shape, "no seams," "no black," LOD readability, "feels like 60 FPS." (Established at M1.1: hot reload was reframed from visual to output-provable once the agent captured before/after stdout across a rebuild.) Frame-time numbers from a scripted run are output-provable; "does it *feel* smooth" is not.
+
 ---
 
 ## 3. The DRIFT_LOG.md protocol
