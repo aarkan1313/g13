@@ -4,6 +4,8 @@
 
 **Goal:** Replace the flat M1 `fbm` height with a **composition machine** — an uplift/ruggedness field that PLACES structure (flat lowlands most places, hills, distinct mountain ranges with valleys between) composed from ridged + smooth relief and valley carving, with **hand-set character constants** — and prove it *looks* like believable varied terrain via low-altitude captures + walking, BEFORE wiring DEM data (that's M2.4).
 
+**Status 2026-06-06:** COMPLETE. Test guardrail PASS and human visual PASS after the AABB cull fix; M2.4 is next for DEM character tuning.
+
 **Architecture:** One GPU dispatch, one shader (`field_height.glsl`). The machine writes `height`; M2.1 climate + M2.2 biome are unchanged (biome stays a stats-based skin; height never feeds biome — biome uses `macro_altitude`). Height channel stays R32F for collision (M1.7). Structure comes from the **uplift field** (the thing a global octave-sum lacks); character is hand-set this step, DEM-tuned next step. No Rust change (machine is GLSL-internal, reuses existing params).
 
 **Tech Stack:** GLSL compute, Godot 4.6.2-mono GPU readback (`--rendering-driver vulkan`), the `FieldCompute` oracle (`produce_page`/`produce_biome_page`), a ground-aware low-capture tool, `run.ps1` for the live walk-through.
@@ -44,11 +46,11 @@ The **uplift × ridges** is the structural fix: `uplift` is a LOW-frequency fiel
 
 **Files:** Modify `wg-13/shaders/field_height.glsl`
 
-- [ ] **Step 1: Re-read the insertion region**
+- [x] **Step 1: Re-read the insertion region**
 
 Read `field_height.glsl` lines 104-115 (`fbm`) and 198-220 (`main`) so the exact text is in context. Confirm `value_noise`, `hash_u`, `fade` exist above (reused — DRY, no re-defining noise).
 
-- [ ] **Step 2: Add the primitives** (insert right after `fbm()` at ~line 115)
+- [x] **Step 2: Add the primitives** (insert right after `fbm()` at ~line 115)
 
 ```glsl
 // --- M2.3 composition machine: shared terrain primitives --------------------
@@ -110,7 +112,7 @@ float valley_carve(float uplift, float depth) {
 }
 ```
 
-- [ ] **Step 3: Add `composition_height()`** (after the primitives)
+- [x] **Step 3: Add `composition_height()`** (after the primitives)
 
 ```glsl
 // M2.3 general terrain: ONE composition machine for the whole world. Structure
@@ -148,7 +150,7 @@ float composition_height(vec2 world_xz, uint seed) {
 }
 ```
 
-- [ ] **Step 4: Swap the height line in `main()`**
+- [x] **Step 4: Swap the height line in `main()`**
 
 Replace:
 ```glsl
@@ -162,7 +164,7 @@ with:
     float h = composition_height(world_xz, uint(seed));
 ```
 
-- [ ] **Step 5: Compile is proven by the Task 3 gate** (GLSL-only change, no `cargo build`). A compile error makes `FieldCompute.initialize`/`dispatch_page` fail. Do NOT commit until Task 3 + the visual gate.
+- [x] **Step 5: Compile is proven by the Task 3 gate** (GLSL-only change, no `cargo build`). A compile error makes `FieldCompute.initialize`/`dispatch_page` fail. Do NOT commit until Task 3 + the visual gate.
 
 ---
 
@@ -172,7 +174,7 @@ with:
 
 The three guardrail checks: **determinism**, **structure-not-uniform** (relief spread across a wide region — flat lowland pages AND tall range pages → big spread; the failed octave-sum had ~0 spread), **no cliffs** (bounded adjacent step).
 
-- [ ] **Step 1: Write the gate**
+- [x] **Step 1: Write the gate**
 
 ```gdscript
 extends SceneTree
@@ -257,21 +259,21 @@ func _finish() -> void:
 
 **Files:** none
 
-- [ ] **Step 1: Run the M2.3 gate**
+- [x] **Step 1: Run the M2.3 gate**
 
 ```powershell
 & "C:\Godot\v4.6.2\Godot_v4.6.2-stable_mono_win64\Godot_v4.6.2-stable_mono_win64_console.exe" --rendering-driver vulkan --path "wg-13" --script "res://tests/m2_3_composition_check.gd"
 ```
 Expected: `PASS: determinism`, `PASS: structure — wide relief spread ...`, `PASS: no cliff ...`, `M2.3 RESULT: PASS`.
 
-- [ ] **Step 2: If FAIL, debug systematically (do NOT stack fixes)**
+- [x] **Step 2: If FAIL, debug systematically (do NOT stack fixes)**
 - `init failed` → shader compile error: re-read Task 1 edits, brace/paren balance, every helper exists. Fix the ONE error.
 - `determinism` → a primitive missed a seed. Fix.
 - `structure spread too low` → uplift isn't placing discrete relief (UPLIFT_LO/HI window wrong, UPLIFT_FREQ wrong, or RELIEF_AMP too small vs base/detail). This is the CORE risk — it will also show in captures. Tune Task 1 constants, re-run.
 - `cliff` → RIDGE_GAIN/RELIEF_AMP too high for the spacing, or carve making a wall. Reduce.
 - After 3 honest attempts without green, STOP + log to DRIFT_LOG (02_WORKFLOW §1.4); leave code compiling.
 
-- [ ] **Step 3: No-regression — M2.1 climate + M2.2 biome must still PASS** (height is additive; never feeds biome/climate selection)
+- [x] **Step 3: No-regression — M2.1 climate + M2.2 biome must still PASS** (height is additive; never feeds biome/climate selection)
 
 ```powershell
 & "C:\Godot\v4.6.2\Godot_v4.6.2-stable_mono_win64\Godot_v4.6.2-stable_mono_win64_console.exe" --rendering-driver vulkan --path "wg-13" --script "res://tests/m2_1_climate_check.gd"
@@ -287,7 +289,7 @@ Expected: both `... RESULT: PASS`. NOTE: M2.1 climate's alt-cool reads the compo
 
 The restored capture tool uses fixed camera altitudes (y≈300-900) tuned for ~240m terrain. The new terrain is taller → a fixed-y eye sits INSIDE a peak (torn undersides in the capture, not real terrain). Fix: sample field height at each spot via `FieldCompute`, place the eye a fixed amount above local ground.
 
-- [ ] **Step 1: Rewrite the capture tool ground-aware**
+- [x] **Step 1: Rewrite the capture tool ground-aware**
 
 ```gdscript
 extends SceneTree
@@ -376,15 +378,15 @@ func _process(_dt: float) -> bool:
 
 **Files:** `wg-13/shaders/field_height.glsl` (tuning constants only), `wg-13/_captures/*.png` (gitignored)
 
-- [ ] **Step 1: Capture low**
+- [x] **Step 1: Capture low**
 ```powershell
 & "C:\Godot\v4.6.2\Godot_v4.6.2-stable_mono_win64\Godot_v4.6.2-stable_mono_win64_console.exe" --rendering-driver vulkan --path "wg-13" --script "res://captures/shape_capture.gd"
 ```
 Expect `SPOT ...: ground ... -> eye y ...` then `CAPTURE 0/1/2 saved`.
 
-- [ ] **Step 2: LOOK (Read the PNGs)** — Read `wg-13/_captures/shape_low0.png`, `shape_low1.png`, `shape_low2.png`. Judge honestly: does the world read as **believable varied terrain** — mostly gentle lowlands, some hills, distinct ranges with valleys between — NOT oatmeal, NOT uniform, NOT all-mountains? Describe what you actually see. Do not rationalize a bad picture.
+- [x] **Step 2: LOOK (Read the PNGs)** — Read `wg-13/_captures/shape_low0.png`, `shape_low1.png`, `shape_low2.png`. Judge honestly: does the world read as **believable varied terrain** — mostly gentle lowlands, some hills, distinct ranges with valleys between — NOT oatmeal, NOT uniform, NOT all-mountains? Describe what you actually see. Do not rationalize a bad picture.
 
-- [ ] **Step 3: Tune the hand-set knobs (tuning, not building)** — adjust ONLY the `const` knobs in `composition_height`:
+- [x] **Step 3: Tune the hand-set knobs (tuning, not building)** — adjust ONLY the `const` knobs in `composition_height`:
   - Too much of the world is mountainous → raise `UPLIFT_LO`/`UPLIFT_HI` (more lowland).
   - Ranges too small/frequent → lower `UPLIFT_FREQ` (bigger regions).
   - Not tall/dramatic enough → raise `RELIEF_AMP`. Too jagged/spiky → lower `RIDGE_GAIN` or `RELIEF_AMP`.
@@ -393,9 +395,9 @@ Expect `SPOT ...: ground ... -> eye y ...` then `CAPTURE 0/1/2 saved`.
   - Lowlands too flat/too bumpy → adjust `BASE_AMP`/`DETAIL_AMP`.
   Change few knobs per iteration (cause→effect legible). Re-run Task 3 gate after any change affecting cliffs/determinism.
 
-- [ ] **Step 4: Iterate Steps 1-3 until the captures read as believable varied terrain.** Note landed knob values.
+- [x] **Step 4: Iterate Steps 1-3 until the captures read as believable varied terrain.** Note landed knob values.
 
-- [ ] **Step 5: PARK for the human visual gate (cannot self-certify)** —
+- [x] **Step 5: PARK for the human visual gate (cannot self-certify)** —
   1. Bring project to green (Task 3 gate green).
   2. Launch live: `& "D:\world gen 13\run.ps1"`. Tell the human: fly + **WALK** it (G = walk), judge whether terrain reads as believable + varied (lowlands, hills, ranges/valleys). Walking is the truest test.
   3. Write a `PARKED-FOR-VISUAL` DRIFT_LOG entry: captures + landed knobs + "believe satisfied, awaiting human, did NOT proceed to M2.4."
@@ -407,11 +409,11 @@ Expect `SPOT ...: ground ... -> eye y ...` then `CAPTURE 0/1/2 saved`.
 
 **Files:** `PROGRESS.md`, `04_CODE_MAP.md`, `DRIFT_LOG.md`, `HANDOFF.md`
 
-- [ ] **Step 1: PROGRESS.md** — mark `M2.3 [x]` (test guardrail green + human visual PASS, date), move `<- CURRENT` to `M2.4`.
-- [ ] **Step 2: 04_CODE_MAP.md** — document the composition machine (primitives + uplift + composition_height) and the renamed `m2_3_composition_check.gd` + the ground-aware capture tool + how to run them.
-- [ ] **Step 3: DRIFT_LOG.md** — resolution entry: M2.3 visual PASS by human [date], landed knobs, the structural lesson confirmed (uplift places structure where octave-sum couldn't).
-- [ ] **Step 4: HANDOFF.md §3** — current state: M2.3 done (general terrain proven), next step M2.4 (DEM character integration); note landed knobs as the reference M2.4 tunes against.
-- [ ] **Step 5: Commit** (ASCII message via temp file, `git commit -F` — HANDOFF §5):
+- [x] **Step 1: PROGRESS.md** — mark `M2.3 [x]` (test guardrail green + human visual PASS, date), move `<- CURRENT` to `M2.4`.
+- [x] **Step 2: 04_CODE_MAP.md** — document the composition machine (primitives + uplift + composition_height) and the renamed `m2_3_composition_check.gd` + the ground-aware capture tool + how to run them.
+- [x] **Step 3: DRIFT_LOG.md** — resolution entry: M2.3 visual PASS by human [date], landed knobs, the structural lesson confirmed (uplift places structure where octave-sum couldn't).
+- [x] **Step 4: HANDOFF.md §3** — current state: M2.3 done (general terrain proven), next step M2.4 (DEM character integration); note landed knobs as the reference M2.4 tunes against.
+- [x] **Step 5: Commit** (ASCII message via temp file, `git commit -F` — HANDOFF §5):
 ```powershell
 Set-Content -Path "$env:TEMP\m23_msg.txt" -Encoding ascii -Value @"
 [M2.3] composition machine: uplift places structure (lowlands/hills/ranges+valleys); human visual PASS
@@ -425,7 +427,7 @@ character = M2.4. Capture tool made ground-aware for tall terrain.
 git add -A
 git commit -F "$env:TEMP\m23_msg.txt"
 ```
-- [ ] **Step 6: Verify** — `git log -1 --stat` shows shader + gate + capture + docs; `git status` clean; push (`git push origin main`).
+- [x] **Step 6: Verify** — `git log -1 --stat` shows shader + gate + capture + docs; `git status` clean; push (`git push origin main`).
 
 ---
 

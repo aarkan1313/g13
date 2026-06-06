@@ -37,8 +37,12 @@ wg-13/                          (the Godot project, res://)
   project.godot                 Vulkan; main_scene = scenes/demo.tscn.
   wg13.gdextension              points at rust/target/{debug,release}/wg13.dll.
   shaders/
-    field_height.glsl           THE FIELD (compute): world-space fBM height page
-                                + M2.1 climate (temp + moisture) + M2.2 biome id
+    field_height.glsl           THE FIELD (compute): world-space terrain page.
+                                M2.3 height = one composition machine (domain warp,
+                                uplift_field places ranges/hills vs lowlands,
+                                ridged/value relief, valley_carve, composition_height;
+                                hand-set character, DEM-tuned in M2.4). Also carries
+                                M2.1 climate (temp + moisture) + M2.2 biome id
                                 (nearest-centroid over temp/moist/macro-altitude),
                                 ALL in the SAME dispatch. Output [h,t,m,biome]/cell
                                 interleaved. macro_altitude = a continental low-freq
@@ -55,9 +59,12 @@ wg-13/                          (the Godot project, res://)
   scripts/
     world_view.gd               LIVE view: owns PagePool, multi-level clipmap,
                                 camera-following streaming, never-black layering.
-                                M2.1: V cycles view_mode (normal/temperature/
-                                moisture), pushed to all page materials; binds each
-                                page's climate textures from the pool.
+                                M2.1/M2.2: V cycles view_mode (normal/temperature/
+                                moisture/biome), pushed to all page materials; binds
+                                each page's climate + biome textures from the pool.
+                                M2.3: custom_aabb covers shader-displaced terrain
+                                (+/-4000m) so tall terrain is not frustum-culled;
+                                streaming/collision track the active controller.
                                 Also builds NEAR (level-0) collision (M1.7):
                                 WorkerThreadPool packs a HeightMapShape3D from the
                                 pool's resident heights off-thread -> deferred
@@ -66,7 +73,8 @@ wg-13/                          (the Godot project, res://)
     fly_camera.gd               Reusable WASD + right-drag inspection camera.
     player_capsule.gd           DEMO test character (M1.7c): CharacterBody3D
                                 capsule. F = fly, G = walk (drop + gravity + WASD).
-                                Walk: Space = jump, Shift = sprint. (Fly: Space =
+                                Walk: Space = jump, Shift = sprint, CapsLock = turbo.
+                                (Fly: Space =
                                 rise, C = descend, Shift = boost — fly_camera.gd.)
                                 Walk/fly are mutually exclusive (no input bleed);
                                 spawns just above resident terrain (no fresh-page
@@ -92,7 +100,8 @@ wg-13/                          (the Godot project, res://)
                                 rise, C descend, Shift boost, wheel speed. Walk
                                 (press G; F back to fly): WASD, Space jump, Shift
                                 sprint. HUD: H toggle, 1-5 sections. Tour: T toggle.
-                                M2.1: V cycles view mode (normal/temp/moisture).
+                                M2.1/M2.2: V cycles view mode
+                                (normal/temp/moisture/biome).
   tests/                        GATES (PASS/FAIL, exit code). See "Running gates".
     m1_2_field_check.gd         determinism + continuity (GPU readback)
     m1_4_seam_check.gd          adjacent-page edge equality + teeth check
@@ -106,11 +115,13 @@ wg-13/                          (the Godot project, res://)
     m1_9b_eager_spread_check.gd never-black holds when mid-coarse eager is bounded+starved (every fine cell covered by some resident level; coarsest floor complete) — earns M1.9.3b
     m2_1_climate_check.gd       (M2.1) climate determinism + range [0,1] + low-freq smoothness (anti-confetti) + latitude gradient, on the real GPU readback
     m2_2_biome_check.gd         (M2.2) biome determinism + valid ids [0,N) + contiguity (low adjacent-differ, no confetti) + global variety + seed sensitivity
+    m2_3_composition_check.gd   (M2.3) composition-machine guardrail: determinism + structure-not-uniform relief spread + no-cliff max step
     hud_smoke_check.gd          (smoke) perf HUD loads, finds the view, all sections show sane values matching the pool, toggles work
     tour_smoke_check.gd         (smoke) auto-tour starts OFF, drives the real fly-cam, advances steps, pause restores control, resume works
   captures/                     SCREENSHOT TOOLS (evidence, not gates).
     stream_capture.gd           fly the world_view, save _captures/streamed.png
     climate_capture.gd          (M2.1) high wide vantage, save _captures/climate_{normal,temperature,moisture}.png — evidence for the parked visual gate
+    shape_capture.gd            (M2.3) ground-aware terrain shape captures for tall composed terrain
   _captures/                    PNG output — gitignored scratch (regenerable).
 
 run.ps1                         Launcher: agent runs the windowed scene on the user's
@@ -157,3 +168,4 @@ Fly the live world: `.\run.ps1` (agent launches a windowed instance on the user'
 | m1_9b_eager_spread_check.gd | M1.9.3b | bounding mid-coarse eager stays never-black: every fine cell covered by some resident level; coarsest floor complete |
 | m2_1_climate_check.gd | M2.1 | climate determinism (same page+seed → bit-identical); range [0,1]; low-freq/smooth (anti-confetti); latitude gradient real |
 | m2_2_biome_check.gd | M2.2 | biome determinism; valid integer ids [0,N); contiguity (low adjacent-differ); global variety; seed sensitivity |
+| m2_3_composition_check.gd | M2.3 | composition-machine determinism; relief spread proves lowlands+ranges are not uniform; no-cliff max step guardrail |

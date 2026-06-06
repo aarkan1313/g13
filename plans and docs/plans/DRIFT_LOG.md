@@ -4,6 +4,15 @@ The human reads this FIRST every session. The agent appends here whenever it blo
 
 ---
 
+## [2026-06-06] - M2.3 composition machine VISUAL PASS (human) + next is DEM character
+TYPE: PARKED-FOR-VISUAL -> PASS (human)
+HUMAN VERDICT: after relaunching the AABB-fixed build, user flew the live world and confirmed the terrain shape: "terrain looks really good"; "this scene is in a good spot" for an early mountain/plain world. This resolves the M2.3 visual gate.
+WHAT M2.3 MEANS: general terrain structure is now proven. The world shape comes from ONE composition machine: low-frequency uplift places where ranges/hills stand up, ridged/value relief gives mass, and valley carve separates ranges from lowlands. This is not DEM character yet and not per-biome shape. It is the hand-set macro structure pass that M2.4 will tune from DEM fingerprints.
+BIOME STATUS: yes, biomes already exist from M2.2 as a field-owned classifier / color skin (V -> biome mode). They are not yet driving per-biome terrain shape. Current terrain can visually read like mountain/plain regions, but that is from the composition/uplift field, not a mountain-biome recipe.
+VERIFY: fresh gates re-run before this visual close: m2_3_composition_check PASS (determinism, relief spread 0.81, no-cliff max step 5.1m), m2_1_climate_check PASS, m2_2_biome_check PASS, m1_7c_stand_check PASS. The AABB cull fix remains human-confirmed: terrain no longer disappears at camera angles.
+NEXT: M2.4 DEM CHARACTER integration. Wire the restored DEM fingerprints into the composition machine as continuous character tuning (relief/slope/ridge/scale), keeping biomes as the M2.2 skin/classifier. Do not start per-biome shape recipes yet; those remain later, one biome at a time.
+CODEBASE STATE: green; M2.3 code checkpoint was 4a4b29d, followed by this visual-pass docs close.
+
 ## [2026-06-06] — THE REAL BUG: "ground disappears / clipping under terrain" was a FRUSTUM-CULL AABB, not collision (lesson)
 TYPE: ROOT-CAUSE FOUND + FIXED (after a long wrong-layer detour — read this so you don't repeat it).
 SYMPTOM CHAIN: after M2.3 made tall terrain, walking felt like "falling through / clipping into / collision is too low." I spent a long time in the CHARACTER CONTROLLER (player_capsule): added turbo, then bandaided fall-through (REVERTED), then anti-tunnel substepping, momentum, climb-any-slope, taller capsule. Some of that was real (turbo DID tunnel — substepping fixed it; collision DID follow the frozen fly-cam not the walking capsule — set_track_target fixed it). BUT the core "see under the ground" symptom was NONE of those.
