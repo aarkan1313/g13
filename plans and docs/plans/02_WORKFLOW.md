@@ -113,3 +113,33 @@ You said you like to *tune* (sliders, params) and that's where it feels good. Tu
 - **Tuning** changes only `WorldConfig` values (seed, noise params, etc.) at the desk, live, via hot reload. Tuning NEVER requires a code change — if it does, that's a building task and goes through the gate process.
 
 Keep these separate. Tuning is your reward loop; don't let it quietly turn into unlogged building.
+
+---
+
+## 8. The working method (the proven loop — keep it through the whole roadmap)
+
+This is the rhythm that's working. It is the standing way to build WG13, milestone after milestone, and beyond. Do not abandon it once things feel comfortable — comfort is when drift starts.
+
+**Per step, in order:**
+1. **Explain** the change in plain language first (what/why), so the human can follow without reading code.
+2. **Implement** one gated step — small, focused, building toward the right target (never a throwaway prototype, `00 §1.1`).
+3. **Verify with evidence** — a real test gate (PASS/FAIL from stdout) or a measurement. NEVER claim "done/works/passing" without the command output that proves it. If it's a visual gate, capture and/or launch live, and PARK for the human.
+4. **Record** — update `PROGRESS.md`, `DRIFT_LOG.md`, `04_CODE_MAP.md`, and the relevant plan doc *as part of the step*, not afterward. Docs must always match reality.
+5. **Commit at green**, then **continue**.
+
+**Debugging is always systematic.** Root-cause before fixing (read the error, reproduce, gather evidence, form one hypothesis, test minimally). **If a fix doesn't work, REVERT it — never stack a second fix on a failed one.** Question the measurement before trusting a number. (This project has already caught a wrong measurement and a counter-productive fix this way; that rigor is the standard, not the exception.)
+
+**Decisions.** Apply the pillars (`00 §1`) yourself and state the decision — don't bounce pillar calls back to the human. Surface only *genuine forks* (real design choices with real tradeoffs); for conventional/derivable choices, pick the obvious one and say what you did.
+
+**Launching for the human.** The agent runs `run.ps1` (a PowerShell Job → a visible window on the interactive session) so the human can fly the world without opening the editor. The editor is only for inspector tuning or when a Rust rebuild needs the DLL lock released.
+
+---
+
+## 9. This is an ENGINE, not a game (modularity is non-negotiable)
+
+WG13 is a reusable world-generator **engine**, meant to drop into future games by editing config and swapping assets — never by rewriting core (`00 §6`). Every step must respect this:
+
+- **No game-specific content in core.** No hardcoded biomes, place names, story locations, creature lists, or one-game tuning baked into Rust/GLSL. Those are **data** (`WorldConfig` entries, asset folders), added as rows, not code paths.
+- **If a feature can only be added by editing core logic, it's designed wrong** — push the variability into data.
+- **Test the seam:** could this generator drop into a *different* game by changing only config + assets? If a change would break that, it's a modularity violation — STOP and reconsider.
+- Quality (`#1`) includes this: an engine that can't be reused is quality built once and thrown away — slop at the project scale.
