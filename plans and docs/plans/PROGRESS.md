@@ -19,7 +19,7 @@ M1.4 [ ] NxN page block, zero seams (visual + edge-readback test)
 M1.5 [~] bounded pool + clipmap rings + read-only view; sub-steps all test-PASS; full 5-min live fly PARKED-FOR-VISUAL   <- CURRENT
   M1.5a [x] Rust PagePool: caches by (level,gx,gz), bounded new-per-frame; pool-driven static ring renders (test PASS)
   M1.5b [x] camera-following streaming: ring recenters, evicts behind, pins displayed; flat memory (test PASS)
-  M1.5c [x] multi-level clipmap + never-black: coarse blanket EAGER (always complete), fine BOUNDED (no stutter); coverage test PASS even with fine fully starved
+  M1.5c [x] annulus clipmap: coarse blanket EAGER, fine BOUNDED; coarse HIDDEN where fine covers (no overlap -> no z-fight) yet shown over holes (never-black). coverage + overlap tests PASS
 M1.6 [ ] LOD to horizon at frame budget, frame-time test passes
 M1.7 [ ] near-page collision, character doesn't fall through
 M1.8 [ ] MILESTONE GATE — full definition of done, tag m1-complete

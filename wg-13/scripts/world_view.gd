@@ -95,6 +95,34 @@ func _process(_dt: float) -> void:
 		# 3. evict pool pages outside keep radius at this level
 		_pool.evict_outside(level, ccx, ccz, keep)
 
+	_update_annulus_visibility()
+
+# Annulus rule (no overlap -> no z-fighting): a coarse page is VISIBLE only where
+# the finer level does NOT fully cover it. A coarse page (L, cgx, cgz) covers the
+# 2x2 footprint of level L-1 pages (2cgx..+1, 2cgz..+1); if ALL of those finer
+# pages are currently displayed, hide the coarse page (fine has it); otherwise
+# show it (it's the blanket filling a not-yet-loaded hole -> never black).
+func _update_annulus_visibility() -> void:
+	# Build a fast lookup of which pages are displayed, per level.
+	var displayed := {}                        # "L:gx:gz" -> true
+	for key in _instances.keys():
+		displayed[key] = true
+	for key in _instances.keys():
+		var p: PackedStringArray = key.split(":")
+		var level := int(p[0])
+		if level == 0:
+			_instances[key].visible = true     # finest is always shown
+			continue
+		var cgx := int(p[1])
+		var cgz := int(p[2])
+		# Is the entire finer (level-1) footprint displayed?
+		var finer_covers := true
+		for dz in range(2):
+			for dx in range(2):
+				if not displayed.has("%d:%d:%d" % [level - 1, 2 * cgx + dx, 2 * cgz + dz]):
+					finer_covers = false
+		_instances[key].visible = not finer_covers
+
 func _make_page_instance(tex, level: int, gx: int, gz: int, span: float) -> MeshInstance3D:
 	var plane := PlaneMesh.new()
 	plane.size = Vector2(span, span)
@@ -109,15 +137,13 @@ func _make_page_instance(tex, level: int, gx: int, gz: int, span: float) -> Mesh
 	mat.set_shader_parameter("cell_spacing", spacing * pow(2.0, level))
 	mat.set_shader_parameter("page_tint",
 		(1.0 if (gx + gz) % 2 == 0 else 0.82) if show_page_tint else 1.0)
-	# Never-black layering: finer levels draw on top of coarser. Fine = higher
-	# priority; coarse gets a tiny downward bias so fine wins z-fighting where both
-	# exist, and coarse shows through only where fine is absent.
-	mat.render_priority = level * -1            # level 0 highest, coarser lower
+	# No overlap (annulus): coarse pages are hidden where fine fully covers (see
+	# _update_annulus_visibility), so levels never render the same ground -> no
+	# z-fighting. No Y bias / render_priority hacks needed.
 	var mi := MeshInstance3D.new()
 	mi.mesh = plane
 	mi.material_override = mat
-	var y_bias := -float(level) * 0.5           # coarse sits just under fine
-	mi.position = Vector3(gx * span + span * 0.5, y_bias, gz * span + span * 0.5)
+	mi.position = Vector3(gx * span + span * 0.5, 0.0, gz * span + span * 0.5)
 	mi.custom_aabb = AABB(Vector3(-span, -amplitude, -span),
 		Vector3(2.0 * span, 4.0 * amplitude, 2.0 * span))
 	add_child(mi)

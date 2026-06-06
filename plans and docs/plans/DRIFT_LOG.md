@@ -89,3 +89,16 @@ RESULT: m1_5c_coverage_check PASS — with a deliberately tight budget that prod
 M1.5 milestone now awaits its FULL live visual gate (human): fly 5+ min, confirm no black ever (incl. fast motion), no stutter crossing page boundaries, memory flat. Launch: `& $env:GODOT --rendering-driver vulkan --path "D:\world gen 13\wg-13"` (F5), WASD + right-drag, Shift to boost — try to outrun the streamer and confirm you see blurry-coarse, never black.
 CODEBASE STATE: green at the M1.5c commit.
 WHAT I DID NOT DO: Did not start M1.6. Did not change the contract.
+
+## [2026-06-06] — M1.5c z-fighting fixed (annulus clipmap)
+TYPE: bug fix (systematic debugging) — human spotted it in live fly
+SYMPTOM: human flying the live world saw blotchy patches + ghost contours on near terrain (screenshot). Read as "detail shifts/changes of the same area."
+ROOT CAUSE (not guessed — traced): world_view drew the coarse blanket AND fine pages over the same ground, separated by only a 0.5m Y bias, relying on render_priority. render_priority does NOT stop opaque depth-fighting, and 0.5m is nothing at 240m terrain scale → Z-FIGHTING. The design ("draw both, bias") was the wrong mechanism, not a wrong constant.
+DECISION (via pillars): annulus clipmap — each level draws only the region the finer level doesn't cover; no two levels overlap → no z-fight by construction. All four pillars + build-it-right-once point here, and it's exactly M1.6's 30km LOD structure (built once). Documented in MILESTONE_1 M1.5.
+FIX (GDScript only, no Rust rebuild): _update_annulus_visibility() hides a coarse page wherever its full finer-level footprint is displayed; shows it over not-yet-loaded holes (never-black preserved). Removed the y_bias/render_priority hacks. Did the coverage decision in the VIEW (it owns display), not the pool — reverted a premature has_page pool method.
+VERIFY: new m1_5c_overlap_check.gd PASS (no visible coarse page overlaps a fully-covered fine area; annulus = 25 fine + 21 coarse ring). Coverage (never-black) test still PASS. All 6 gates green. Capture: blotches gone, surface clean.
+TEST DISCIPLINE NOTE: first overlap-test run "failed" counting INSTANCED (not visible) coarse pages — fixed the test to count .visible meshes (a hidden mesh can't z-fight). Did not declare victory on the wrong measurement.
+FINDING (01_TOOLCHAIN §3): the open Godot editor locks wg13.dll; cargo build fails until it's closed. GDScript/shader changes need no rebuild.
+NOTE on the whitish wash the human also asked about: that's the placeholder height-tint shader saturating high + no textures yet (M3). Cosmetic placeholder, legibility improvement optional/deferred.
+CODEBASE STATE: green at this commit.
+WHAT I DID NOT DO: Did not start M1.6. Did not change the contract.

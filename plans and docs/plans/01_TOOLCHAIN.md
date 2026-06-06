@@ -82,6 +82,8 @@ After this, `wg-13/.godot/extension_list.cfg` lists `res://wg13.gdextension` and
 ```
 Expect `WG13 WorldRoot ready` in stdout. This is testable unsupervised; it confirms load+register+`_ready`, but it is NOT the hot-reload gate (that needs eyes).
 
+> **Gotcha (editor locks the DLL):** while the Godot editor has the project open, it holds `wg13.dll` loaded, and `cargo build` fails with `Access is denied (os error 5) ... failed to remove wg13.dll`. Close the editor (or all Godot windows) before rebuilding Rust. GDScript/shader-only changes don't need a rebuild, so those can be iterated with the editor open. (Hot reload swaps the lib *within* a session; a fresh `cargo build` that must overwrite the file needs the lock released.)
+
 ### Hot reload (the tuning loop — M1.1 visual gate)
 gdext supports hot reload (`reloadable = true` in the manifest). The loop: edit Rust → `cargo build` (with the target-dir env set) → Godot picks up the rebuilt `.dll` without an editor restart. **M1.1's visual gate is verifying exactly this at the desk:** with the editor open, change the `godot_print!` string, rebuild, and confirm the new string appears on the next run without restarting the editor.
 
