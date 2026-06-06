@@ -43,6 +43,13 @@ var _cam: Camera3D
 # M1.7 collision state (level-0 pages only). "gx:gz" keys.
 var _collisions := {}                       # "gx:gz" -> StaticBody3D (resident collision body)
 var _collision_building := {}               # "gx:gz" -> true while a WorkerThreadPool task is in flight
+# M1.9 profiling (read by the perf HUD). Microseconds spent in this view's
+# per-frame work, split so we can attribute the fast-motion spike: total
+# _process, and just the mesh/material instance creation. The pool exposes its
+# own produce_us separately. Cheap: two Time.get_ticks_usec() reads.
+var prof_process_us := 0
+var prof_mesh_us := 0
+var _mesh_us_accum := 0                      # accumulates across _make_page_instance calls this frame
 
 func _ready() -> void:
 	_pool = ClassDB.instantiate("PagePool")
@@ -61,6 +68,8 @@ func _ready() -> void:
 func _process(_dt: float) -> void:
 	if _cam == null:
 		return
+	var _t_start := Time.get_ticks_usec()
+	_mesh_us_accum = 0
 	_pool.begin_frame()
 	var base_span: float = _pool.page_span()
 	var keep: int = ring_radius + evict_margin
@@ -112,6 +121,10 @@ func _process(_dt: float) -> void:
 
 	_update_annulus_visibility()
 	_update_collision(cam_x, cam_z, base_span)
+
+	# M1.9 profiling: record this frame's view-side cost for the HUD.
+	prof_mesh_us = _mesh_us_accum
+	prof_process_us = Time.get_ticks_usec() - _t_start
 
 # Resident terrain height (world Y) at a world XZ, read from the SAME level-0
 # pool heights the collision uses (00 §2.2 one source). Returns NAN if that page
@@ -231,6 +244,7 @@ func _update_annulus_visibility() -> void:
 		_instances[key].visible = not finer_covers
 
 func _make_page_instance(tex, level: int, gx: int, gz: int, span: float) -> MeshInstance3D:
+	var _t := Time.get_ticks_usec()
 	var plane := PlaneMesh.new()
 	plane.size = Vector2(span, span)
 	plane.subdivide_width = mini(page_res - 1, 160)
@@ -254,6 +268,7 @@ func _make_page_instance(tex, level: int, gx: int, gz: int, span: float) -> Mesh
 	mi.custom_aabb = AABB(Vector3(-span, -amplitude, -span),
 		Vector3(2.0 * span, 4.0 * amplitude, 2.0 * span))
 	add_child(mi)
+	_mesh_us_accum += Time.get_ticks_usec() - _t   # M1.9 profiling: per-frame mesh-build cost
 	return mi
 
 func _spawn_camera() -> void:

@@ -70,6 +70,10 @@ pub struct PagePool {
     max_new_per_frame: i32,
     produced_this_frame: i32,
     eager_this_frame: i32,  // diagnostics: eager pages produced this frame
+    /// M1.9 profiling: wall-time spent in produce() this frame (GPU dispatch +
+    /// blocking readback). This is the prime suspect for the fast-motion frame
+    /// spike — each production blocks on rd.sync(). Reset in begin_frame().
+    produce_us_this_frame: i64,
     /// Counters for tests/diagnostics.
     total_produced: i64,
     cache_hits: i64,
@@ -90,6 +94,7 @@ impl IRefCounted for PagePool {
             max_new_per_frame: 4,
             produced_this_frame: 0,
             eager_this_frame: 0,
+            produce_us_this_frame: 0,
             total_produced: 0,
             cache_hits: 0,
             evicted: 0,
@@ -130,6 +135,7 @@ impl PagePool {
     fn begin_frame(&mut self) {
         self.produced_this_frame = 0;
         self.eager_this_frame = 0;
+        self.produce_us_this_frame = 0;
         self.pinned.clear();
     }
 
@@ -237,6 +243,7 @@ impl PagePool {
     /// stride AND spacing by 2^level, so a coarse page covers more world at the
     /// same resolution (the clipmap blanket).
     fn produce(&mut self, key: PageKey) -> Option<ResidentPage> {
+        let t0 = std::time::Instant::now();
         let scale = (1 << key.level.max(0)) as f32;
         let span = self.page_span() * scale;
         let params = PageParams {
@@ -249,7 +256,10 @@ impl PagePool {
             base_freq: self.cfg.base_freq,
             amplitude: self.cfg.amplitude,
         };
+        // Profiled region: GPU dispatch + blocking readback (rd.sync) — the
+        // suspected fast-motion spike source. Accumulated per frame (M1.9.1).
         let heights = self.gpu.as_mut()?.dispatch_page(params)?;
+        self.produce_us_this_frame += t0.elapsed().as_micros() as i64;
         let res = self.cfg.page_res as i32;
         let bytes = heights.to_byte_array();
         let img = Image::create_from_data(res, res, false, Format::RF, &bytes)?;
@@ -270,7 +280,12 @@ impl PagePool {
     #[func] fn total_produced(&self) -> i64 { self.total_produced }
     #[func] fn cache_hits(&self) -> i64 { self.cache_hits }
     #[func] fn produced_this_frame(&self) -> i64 { self.produced_this_frame as i64 }
+    #[func] fn eager_this_frame(&self) -> i64 { self.eager_this_frame as i64 }
     #[func] fn evicted_count(&self) -> i64 { self.evicted }
     #[func] fn pinned_count(&self) -> i64 { self.pinned.len() as i64 }
     #[func] fn had_pin_violation(&self) -> bool { self.pin_violation }
+    /// M1.9 profiling: microseconds spent producing pages this frame (GPU
+    /// dispatch + blocking readback). The HUD reads this to attribute the
+    /// fast-motion spike. Reset each begin_frame().
+    #[func] fn produce_us_this_frame(&self) -> i64 { self.produce_us_this_frame }
 }

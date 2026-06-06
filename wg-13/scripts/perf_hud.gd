@@ -12,11 +12,12 @@ extends CanvasLayer
 @export var window_frames: int = 240        # ring-buffer size for p99/max (~4s @ 60fps)
 @export var budget_ms: float = 16.6         # 60 FPS budget; frame row goes amber over it
 
-# Per-section toggles (also flippable live with number keys 1-4).
+# Per-section toggles (also flippable live with number keys 1-5).
 @export var show_frame: bool = true
 @export var show_streaming: bool = true
 @export var show_position: bool = true
 @export var show_memory: bool = true
+@export var show_profiler: bool = true      # M1.9 per-system frame breakdown (key 5)
 
 var _label: Label
 var _view: Node3D
@@ -70,6 +71,7 @@ func _input(event: InputEvent) -> void:
 			KEY_2: show_streaming = not show_streaming
 			KEY_3: show_position = not show_position
 			KEY_4: show_memory = not show_memory
+			KEY_5: show_profiler = not show_profiler
 
 func _build_text(cur_ms: float) -> String:
 	var lines := PackedStringArray()
@@ -89,6 +91,21 @@ func _build_text(cur_ms: float) -> String:
 			bodies = _view._collisions.size()
 		lines.append("pages %d  bodies %d" % [pool.resident_count(), bodies])
 		lines.append("made %d  evict %d" % [pool.total_produced(), pool.evicted_count()])
+
+	if show_profiler and _view != null and _view._pool != null:
+		var pool = _view._pool
+		# Per-system frame cost (the M1.9 evidence). produce = GPU dispatch +
+		# blocking readback in Rust; proc/mesh = this view's GDScript per frame.
+		var prod_ms: float = pool.produce_us_this_frame() / 1000.0
+		var proc_ms: float = 0.0
+		var mesh_ms: float = 0.0
+		if "prof_process_us" in _view:
+			proc_ms = _view.prof_process_us / 1000.0
+		if "prof_mesh_us" in _view:
+			mesh_ms = _view.prof_mesh_us / 1000.0
+		lines.append("prod %.2f ms (%d fine/%d eager)" % [
+			prod_ms, pool.produced_this_frame(), pool.eager_this_frame()])
+		lines.append("view %.2f ms  mesh %.2f ms" % [proc_ms, mesh_ms])
 
 	if show_position and _view != null and _view._cam != null:
 		var p: Vector3 = _view._cam.global_position

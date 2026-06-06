@@ -50,9 +50,10 @@ wg-13/                          (the Godot project, res://)
     perf_hud.gd                 DEMO dev tool: top-right perf/diagnostics HUD.
                                 True per-frame delta -> fps/ms + p99/max (amber
                                 over budget); streaming (pages/bodies/made/evict),
-                                position, memory/VRAM. Label rebuilt at update_hz
-                                (~5/s), not per frame -> no perf cost. H = toggle
-                                all; 1-4 = toggle sections. Reads the scene, never writes.
+                                M1.9 profiler (prod ms + fine/eager churn, view ms,
+                                mesh ms), position, memory/VRAM. Label rebuilt at
+                                update_hz (~5/s), not per frame -> no perf cost.
+                                H = toggle all; 1-5 = toggle sections. Read-only.
     auto_tour.gd                DEMO dev tool: data-driven auto-tour. `tour` is a
                                 list of {action,...,secs} step dicts (edit rows to
                                 change it); each action is a small fn. Drives the

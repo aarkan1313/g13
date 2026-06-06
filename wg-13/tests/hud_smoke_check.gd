@@ -32,8 +32,18 @@ func _init() -> void:
 		_fail("position row missing")
 	elif not ("mem" in txt and "vram" in txt):
 		_fail("memory row missing")
+	elif not ("prod" in txt and "view" in txt and "mesh" in txt):
+		_fail("profiler row missing (per-system frame breakdown)")
 	else:
-		print("PASS: all four HUD sections present with values")
+		print("PASS: all HUD sections present (frame/streaming/profiler/position/memory)")
+
+	# profiler getters are wired (pool produce_us + view prof_*).
+	if not hud._view._pool.has_method("produce_us_this_frame"):
+		_fail("pool missing produce_us_this_frame() getter")
+	elif not ("prof_process_us" in hud._view):
+		_fail("view missing prof_process_us")
+	else:
+		print("PASS: profiler instrumentation wired (pool produce_us + view prof_*)")
 
 	# 3. page count in the text matches the pool (not a fabricated number).
 	var pool = hud._view._pool

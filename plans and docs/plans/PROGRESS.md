@@ -28,8 +28,8 @@ M1.8 [x] MILESTONE GATE — full DoD met: 9/9 structural gates + frame-time gate
 
 ## M1.9 — Performance hardening (foundation pass, before M2)
 A careful, EVIDENCE-FIRST pass: make the foundational infra as efficient as it can be WITHOUT sacrificing features/quality ("build it right once"). Optimize workload-INDEPENDENT things (per-frame waste, allocations, reuse, the streaming hitch); DEFER workload-dependent tuning (LOD radii, texture/scatter batching) to when real M2+ content exists. Measure before cutting.
-M1.9.1 [ ] instrument per-system frame breakdown (GPU dispatch / mesh build / pool / GDScript ms) — the profiler   <- CURRENT
-M1.9.2 [ ] root-cause + fix the fast-motion streaming spikes (p99/max jumps when moving fast)
+M1.9.1 [x] instrument per-system frame breakdown — pool produce_us (GPU dispatch+readback), view _process us, mesh-build us; HUD profiler section (key 5). Smoke + 10 gates green. (measure before cutting)
+M1.9.2 [ ] root-cause + fix the fast-motion streaming spikes (p99/max jumps when moving fast)   <- CURRENT
 M1.9.3 [ ] sweep workload-independent inefficiencies (per-frame GDScript, allocations, mesh/material reuse)
 M1.9.x [ ] perf gate: smooth under motion, no per-frame waste, all M1 gates still green
 

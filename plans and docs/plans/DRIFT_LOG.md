@@ -4,6 +4,17 @@ The human reads this FIRST every session. The agent appends here whenever it blo
 
 ---
 
+## [2026-06-06] — M1.9.1 profiler instrumentation (measure before cutting)
+TYPE: (instrumentation; smoke + 10 gates green)
+First M1.9 step is MEASUREMENT, not optimization (Survivability: don't cut on a guess). Added per-system frame timing so the fast-motion spike becomes attributable:
+  - Rust PagePool: produce_us_this_frame (wall-time in produce() = GPU dispatch + blocking rd.sync readback — the PRIME SUSPECT for the spike), reset each begin_frame; getters produce_us_this_frame() + eager_this_frame(). Timed with std::time::Instant (negligible).
+  - world_view.gd: prof_process_us (whole _process) + prof_mesh_us (just _make_page_instance: PlaneMesh+ShaderMaterial+MeshInstance3D alloc/add_child — an M1.9.3 reuse target). Timed with Time.get_ticks_usec().
+  - perf_hud.gd: new profiler section (key 5) — "prod X ms (N fine/M eager)" + "view X ms  mesh X ms". So when you boost across boundaries you SEE whether the spike is GPU production (prod) or GDScript mesh-build (mesh) or general view work (view).
+EARLY READ (settled frame, camera still): prod 0ms / mesh 0ms (no pages produced) and view ~2.1ms (steady per-frame ring logic). The spike will show under motion; that's M1.9.2's capture.
+VERIFY: hud_smoke_check extended (profiler row + getters wired) PASS; all 10 gates (9 structural + frame-time) PASS — instrumentation didn't regress or measurably cost. One untyped-inference parse error fixed (typed prod_ms).
+CODEBASE STATE: green at the M1.9.1 commit.
+WHAT I DID NOT DO: Did not optimize anything yet (next: capture the spike live, then fix with evidence). Did not change the field/renderer contract.
+
 ## [2026-06-06] — M1.8 MILESTONE GATE PASS — m1-complete tagged
 TYPE: (milestone gate met, tagged)
 M1 Definition of Done verified in two halves: (1) OUTPUT-PROVABLE/MEASURED — all 9 structural gates green (determinism, seams, pool bounding, streaming invariants, never-black coverage, annulus no-overlap, collision heights/build/stand) PLUS the m1_6 frame-time gate (steady-state ~2.5ms, p99 2.78ms << 16.6 budget). (2) VISUAL — human flew the live world via the auto-tour (cruise/boost/pan/ascend/orbit/walk-drop) with the perf HUD up and signed off: continuous to horizon, no seams, no black even outrunning the streamer, no fall-through on the walk step, memory flat. Known-deferred far-edge items (LOD detail-step + streaming pop-in) are within M1's "no popping that reads as broken" allowance.
