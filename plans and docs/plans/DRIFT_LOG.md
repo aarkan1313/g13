@@ -4,6 +4,13 @@ The human reads this FIRST every session. The agent appends here whenever it blo
 
 ---
 
+## [2026-06-06] — M2.2 VISUAL GATE PASS (human)
+TYPE: PARKED-FOR-VISUAL -> PASS (human)
+Human flew the live world, V to biome mode, and confirmed: large contiguous biome regions with sensible geography — a tundra/rock ridge along the high ground, a snow cap on the highest peak, forest (green) and grassland/savanna (yellow) filling the lowlands in big connected zones. Reads as regions, not confetti. HUD: 240 fps / 4.17 ms, prod 0.00 ms (biomes free). M2.2 gate ("large contiguous color regions, no confetti") SATISFIED.
+Noted (not a bug; M2.4's job): the lowland green/yellow boundary mottles where two near-centroid biomes interleave, and all borders are hard nearest-neighbor edges. M2.4 (border blending) is the dedicated step for both.
+NEXT: M2.3 — per-biome height shaping (mountains mountainous, plains flat), reading the biome id the field now carries.
+CODEBASE STATE: green at the M2.2 commit (78477d4).
+
 ## [2026-06-06] — M2.2 biome assignment implemented — test gate PASS, visual gate PARKED
 TYPE: PARKED-FOR-VISUAL (output-provable core self-certified; 15/15 gates green) + two evidence-driven tuning fixes
 WHAT: Whittaker biome id in the FIELD (pillar decision: M2.3 shaping needs id on-GPU, so display-shader-only would be throwaway, 00 §1.1). Human deferred the design forks to the pillars + asked for N-axis "if not much more work."
