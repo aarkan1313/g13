@@ -93,8 +93,8 @@ The human's first action every session: read `DRIFT_LOG.md` top to bottom. This 
 A dead-simple single source of truth for "where are we." One line per step:
 
 ```
-M1.1 [x] field crate compiles, determinism test passes
-M1.2 [x] single chunk meshes and renders
+M1.1 [x] gdext skeleton loads, hot reload works
+M1.2 [x] one GPU page produced + readback determinism test passes
 M1.3 [ ] <- CURRENT
 ...
 ```

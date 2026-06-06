@@ -61,12 +61,12 @@ Properties that MUST hold forever:
 
 ### 2.2 The Renderer / Streaming layer (the "how it looks")
 
-Knows nothing about *why* a density value is what it is. Its only questions to the field are "what's the value here?" Responsibilities:
+Knows nothing about *why* a density value is what it is. Its only question to the field is "what's the value here?" — answered as produced **pages**. Responsibilities:
 
-- Chunk streaming (load/unload around the viewer)
-- Surface extraction (turning field samples into a mesh)
-- LOD selection and seam handling
-- Collision generation
+- Page streaming (acquire/evict around the viewer, bounded per frame)
+- Presenting pages: displacing a height page onto the ring/clipmap mesh (and, later, full-volume extraction for caves)
+- LOD ring selection and seam handling
+- Collision generation (from resident page heights)
 - Asset binding (textures, materials, later: scatter)
 
 If the renderer ever contains a line like "if biome == desert, lower the height," **that is a bug**, because that decision belongs in the field. The renderer's job is to faithfully draw whatever the field says.
@@ -161,7 +161,7 @@ A standalone Rust lib called over FFI fragments the code across a boundary you'd
 
 The end goal: start a new game, and configure the world by editing a resource file and swapping an asset folder — never by touching core Rust.
 
-- All tunables live in a **`WorldConfig` resource** (seed, render distance, chunk size, noise/biome/erosion params, asset references).
+- All tunables live in a **`WorldConfig` resource** (seed, render distance, page size, noise/biome/erosion params, asset references).
 - Biomes are **data**, not code: a biome is a config entry (height rules, material refs, scatter rules), so adding "volcanic wasteland" is a new data row, not a new code path.
 - Assets (your ComfyUI tileable textures, Meshy/TRELLIS models) are referenced by the config, bound by the renderer. Swapping them never touches the field.
 
@@ -171,8 +171,11 @@ If a feature can only be added by editing core Rust logic, it has been designed 
 
 ## 7. Glossary (so the agent and you use words the same way)
 
-- **Field** — the pure data function defining the world. The "what."
-- **Renderer / Streaming** — everything that turns field values into visible, collidable geometry. The "how it looks."
-- **Chunk** — a finite region the renderer meshes and streams. An implementation detail of the renderer. The field does not know it exists.
+- **Field** — the deterministic world-defining math. The "what." Its contract is the queries in §2.1; its canonical implementation is the GPU compute (GLSL) producer.
+- **Page** — a tile of world space the field producer fills on the GPU (a unit of *production*, not of meaning — see §2.1). The primary term in WG13.
+- **Chunk** — older/casual synonym for a page; used loosely in roadmap prose. Same idea: a finite region the renderer streams; an implementation detail the field doesn't know about.
+- **Renderer / Streaming** — everything that turns produced pages into visible, collidable geometry. The "how it looks."
+- **Page pool** — the bounded residency cache of produced pages; enforces max work/frame and never-evict-displayed (§3, M1.5).
+- **Terrain view** — the read-only presenter that binds resident pages to the ring mesh and never triggers compute in the bind path.
 - **Gate** — a visible or testable pass/fail condition that ends every step. See `02_WORKFLOW.md`.
-- **Contract** — the function signatures in 2.1. Changing them is a big deal.
+- **Contract** — the field queries in §2.1. Changing them is a big deal.
