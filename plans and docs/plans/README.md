@@ -8,7 +8,7 @@ Attempt #13. The previous twelve failed on **architecture tangle** and **plan dr
 2. **01_TOOLCHAIN.md** — verified environment + the concrete build/run/test/visual-capture/perf commands every gate depends on.
 3. **02_WORKFLOW.md** — the anti-drift protocol. THE most important doc for the real failure mode. Defines gates, the DRIFT_LOG, and the rule that unsupervised work may only cross *test* gates and must park at *visual* ones.
 4. **MILESTONE_1_land.md** — contiguous infinite land, gated step by step. Start here for building.
-5. **MILESTONE_2_biomes.md** — untextured biomes + how DEMs inform the terrain.
+5. **MILESTONE_2_biomes.md** — untextured biomes + how DEMs inform the terrain. (**M2_DESIGN.md** = the plain-language companion + the decisions already made; read it before implementing M2.)
 6. **03_DEM_CATALOG.md** — inventory of the 135 labeled reference DEMs M2 draws on.
 7. **04_CODE_MAP.md** — what's implemented, what runs what, how to run each gate. Read before touching code.
 8. **ROADMAP.md** — everything else, as headers, in dependency order.

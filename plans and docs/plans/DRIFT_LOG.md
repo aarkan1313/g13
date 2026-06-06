@@ -4,6 +4,19 @@ The human reads this FIRST every session. The agent appends here whenever it blo
 
 ---
 
+## [2026-06-06] — M2 planned (decisions locked); implementation deferred to a fresh session
+TYPE: (planning + design decisions; no code)
+User asked to plan M2 well, update docs, refresh handoff, then START M2 IMPLEMENTATION IN A NEW SESSION (context was getting long; clean start preserves the rhythm). Also clarified honestly: they don't fully follow the field internals and want "the best realistic system" — so I made the pillar-driven calls and wrote a PLAIN-LANGUAGE design note (M2_DESIGN.md) so the next session builds without re-deciding and the user understands what they're getting.
+DECISIONS LOCKED for M2 (rationale in M2_DESIGN.md):
+  1. Climate = Earth-like: temperature ~ latitude gradient (world-Z) minus altitude plus low-freq noise; moisture ~ low-freq noise. (Best-realistic over simplest; altitude coupling sets up M2.3.)
+  2. Climate produced in the SAME field dispatch as height (the page carries height+temp+moisture). One source of truth, no extra GPU pass, M2.2/2.3 read these same values (build-it-right-once, 00 §2.1).
+  3. Viz = recolor terrain via a view-mode toggle (key V cycles normal/temp/moisture, later biome) — user's explicit pick; same render path biome-color will use.
+  4. Biomes = DATA rows (00 §6); DEMs inform via OFFLINE stats only, never runtime file loads (milestone §3/§4). (M2.2+ / M2.5+ guardrails noted so they aren't violated early.)
+ALSO answered the user's frame-floor question (recorded in chat + the budget framing already in 01_TOOLCHAIN §6.1): the ~4ms steady floor is mostly Godot's own per-frame cost (clear/sky/light/present), NOT our code — our part is ~1.13ms (the HUD's `view` row). Can't and shouldn't push the engine floor lower; it's fixed overhead, and the 12+ms of remaining budget is for real content. Not waste, leave it.
+M2.1 is the START: temp/moisture fields in field_height.glsl (world-space, deterministic), page grows to ~3 channels, ring_displace gets a view_mode tint, world_view cycles it, new m2_1_climate_check gate (determinism + smooth/low-freq + range). See M2_DESIGN "what M2.1 concretely touches".
+CODEBASE STATE: green (planning only).
+WHAT I DID NOT DO: Did not implement M2.1 (deferred to fresh session per the user). Did not change code.
+
 ## [2026-06-06] — M1.9 live confirm + "is the budget real?" framing recorded
 TYPE: (human visual confirm + doc honesty pass)
 Human flew the M1.9 build ~49 km from origin (HUD: page -6,-97, xz -2773/-48898) and read the HUD: 240 fps / 4.17 ms, p99 4.55 == max 4.55 (worst frame == median, DEAD FLAT, no spikes), prod 0.00 / mesh 0.00 / view 1.13 ms steady, mem 132 MB flat (made 1831 / evict 1485 -> eviction working), vram 155 MB. HUD backing panel reads cleanly. Visual + perf confirmed good.
