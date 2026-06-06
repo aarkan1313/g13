@@ -6,10 +6,12 @@ extends Camera3D
 
 @export var speed: float = 600.0          # world units/sec (terrain is ~km-scale)
 @export var boost_mult: float = 4.0
+@export var turbo_mult: float = 25.0       # CapsLock = TURBO toggle (cover ground fast)
 @export var look_sensitivity: float = 0.0025
 
 var _yaw := 0.0
 var _pitch := 0.0
+var _turbo := false                        # CapsLock toggle: turbo_mult traverse speed
 var _captured := false
 
 func _ready() -> void:
@@ -19,6 +21,9 @@ func _ready() -> void:
 	_yaw = e.y
 
 func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_CAPSLOCK:
+		_turbo = not _turbo            # CapsLock = toggle TURBO fly (cover ground fast)
+		print("FLY turbo %s (x%.0f)" % ["ON" if _turbo else "OFF", turbo_mult])
 	if event is InputEventMouseButton:
 		if event.button_index == MOUSE_BUTTON_RIGHT:
 			_captured = event.pressed
@@ -41,5 +46,7 @@ func _process(delta: float) -> void:
 	if Input.is_key_pressed(KEY_SPACE) or Input.is_key_pressed(KEY_E): dir += Vector3.UP   # Space/E = rise
 	if Input.is_key_pressed(KEY_C) or Input.is_key_pressed(KEY_Q): dir -= Vector3.UP       # C/Q = descend
 	var s := speed * (boost_mult if Input.is_key_pressed(KEY_SHIFT) else 1.0)
+	if _turbo:
+		s *= turbo_mult                # CapsLock toggle: fast traverse (Shift still stacks)
 	if dir != Vector3.ZERO:
 		global_position += dir.normalized() * s * delta

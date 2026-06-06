@@ -27,7 +27,7 @@ func _init() -> void:
 	var view: Node3D = load(VIEW).new()
 	view.page_res = RES
 	view.spacing = SPACING
-	view.collision_radius = 1
+	view.collision_radius = 1   # test the mechanism at a small fixed radius (prod default is 2, M2.3-fix); the bound below is radius-relative so this stays valid
 	root.add_child(view)   # triggers _ready -> pool init, camera, first stream
 
 	# Let it run enough frames for the fine ring to produce AND the async

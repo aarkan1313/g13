@@ -13,6 +13,10 @@ extends Node3D
 const SHADER := "res://shaders/field_height.glsl"
 const RING := "res://shaders/ring_displace.gdshader"
 const FLY := "res://scripts/fly_camera.gd"
+# Half the vertical extent of each page's frustum-cull AABB (world units). Must
+# exceed the composed terrain's |height| (M2.3 peaks ~1.9km, valleys ~1km) so a
+# vertex-shader-displaced plane is never wrongly culled when the camera tilts.
+const AABB_HALF_HEIGHT := 4000.0
 
 @export var page_res: int = 128
 @export var spacing: float = 4.0
@@ -37,7 +41,7 @@ const FLY := "res://scripts/fly_camera.gd"
 # collidable before you reach it (no edge fall-through) without building dozens
 # of bodies. Built async off the main thread (00 §2.2 collision is a renderer
 # concern); kept cheap for the RTX 3070 minimum target.
-@export var collision_radius: int = 1       # level-0 pages each side around camera with collision
+@export var collision_radius: int = 2       # level-0 pages each side around the tracked target with collision (M2.3-fix: 1->2 = ~+/-1.3km margin so walking up a big mountain stays collidable)
 
 var _pool: RefCounted
 var _ring_shader: Resource
@@ -51,6 +55,12 @@ var _instances := {}                       # "L:gx:gz" -> MeshInstance3D
 var _inst_meta := {}                        # "L:gx:gz" -> Vector3i(level,gx,gz) — parsed once, so
                                             # the per-frame loops never re-split the string key (M1.9.3c)
 var _cam: Camera3D
+# M2.3-fix — the node whose world position drives STREAMING + COLLISION. Defaults
+# to the fly camera; in WALK mode the player sets it to the CAPSULE so the world
+# follows where you actually ARE (not the frozen fly-cam at the drop-in spot).
+# Without this, walking away from the drop point left the collision zone -> the
+# capsule fell through rendered-but-not-collidable terrain. Set via set_track_target().
+var _track: Node3D
 # M1.9.3a — kill the per-page alloc spike (measured: mesh+material `new` on the
 # eager burst was the dominant cost). (1) One SHARED PlaneMesh per level: every
 # page at a level has identical geometry, so build it once and reference it.
@@ -80,6 +90,7 @@ func _ready() -> void:
 	_pool.set_max_eager_per_frame(max_eager_per_frame)
 	_ring_shader = load(RING)
 	_spawn_camera()
+	_track = _cam            # default: stream/collide around the fly camera (WALK overrides)
 	var span: float = _pool.page_span()
 	var reach: float = ring_radius * span * pow(2.0, num_levels - 1)
 	print("M1.6: %d-level clipmap, ring_radius %d, base span %.0fm -> reach ~%.1f km" % [
@@ -93,8 +104,13 @@ func _process(_dt: float) -> void:
 	_pool.begin_frame()
 	var base_span: float = _pool.page_span()
 	var keep: int = ring_radius + evict_margin
-	var cam_x: float = _cam.global_position.x
-	var cam_z: float = _cam.global_position.z
+	# Stream + collide around the ACTIVE controller (the capsule in WALK mode, else
+	# the fly camera). Reading the frozen fly-cam here is what let a walking player
+	# leave the collision zone and fall through (M2.3-fix). Guard against a freed
+	# target by falling back to the camera.
+	var tracker: Node3D = _track if (_track != null and is_instance_valid(_track)) else _cam
+	var cam_x: float = tracker.global_position.x
+	var cam_z: float = tracker.global_position.z
 
 	# Request coarsest first. Three production modes (M1.9.3b):
 	#  - COARSEST level: unbounded eager — the never-black FLOOR, always complete.
@@ -183,6 +199,12 @@ func view_mode() -> int:
 
 func view_mode_name() -> String:
 	return VIEW_MODE_NAMES[_view_mode]
+
+# M2.3-fix — set the node whose position drives streaming + collision. The player
+# calls this with itself on WALK (so the world follows the capsule) and with the
+# fly camera on FLY. Pass null to restore the default (fly camera).
+func set_track_target(target: Node3D) -> void:
+	_track = target if target != null else _cam
 
 # Resident terrain height (world Y) at a world XZ, read from the SAME level-0
 # pool heights the collision uses (00 §2.2 one source). Returns NAN if that page
@@ -347,8 +369,15 @@ func _make_page_instance(tex, level: int, gx: int, gz: int, span: float) -> Mesh
 	mat.set_shader_parameter("page_tint",
 		(1.0 if (gx + gz) % 2 == 0 else 0.82) if show_page_tint else 1.0)
 	mi.position = Vector3(gx * span + span * 0.5, 0.0, gz * span + span * 0.5)
-	mi.custom_aabb = AABB(Vector3(-span, -amplitude, -span),
-		Vector3(2.0 * span, 4.0 * amplitude, 2.0 * span))
+	# Custom AABB: the mesh is a FLAT plane displaced in the VERTEX SHADER, so Godot
+	# can't auto-compute the displaced bounds — we must declare them or frustum
+	# culling uses the flat (y~0) box and CULLS the page when you look up/tilt,
+	# making terrain vanish at certain angles. The vertical extent MUST cover the
+	# real composed height range (M2.3 reaches ~+1.9km peaks / ~-1km valleys, far
+	# beyond the old +/-amplitude=240). Use a generous fixed band; an oversized AABB
+	# only costs a touch of over-draw, never a wrong cull. (Was: -amplitude..3*amplitude.)
+	mi.custom_aabb = AABB(Vector3(-span, -AABB_HALF_HEIGHT, -span),
+		Vector3(2.0 * span, 2.0 * AABB_HALF_HEIGHT, 2.0 * span))
 	_mesh_us_accum += Time.get_ticks_usec() - _t            # M1.9 profiling: per-frame mesh-build cost
 	return mi
 

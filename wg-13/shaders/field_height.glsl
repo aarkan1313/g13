@@ -101,17 +101,96 @@ float value_noise(vec2 p, uint seed) {
     return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
 }
 
-float fbm(vec2 world_xz, uint seed) {
-    float freq = base_freq;
-    float amp = amplitude;
-    float sum = 0.0;
-    for (uint o = 0u; o < octaves; o++) {
-        // vary the seed per octave so octaves are decorrelated but deterministic
-        sum += amp * value_noise(world_xz * freq, seed + o * 0x68bc21ebu);
-        freq *= 2.0;
-        amp *= 0.5;
+// --- M2.3 composition machine: shared terrain primitives --------------------
+// Layered composition: relief is PLACED by a low-frequency UPLIFT field (where
+// terrain stands up into hills/ranges vs stays flat lowland), carrying ridge
+// texture, with inter-range basins carved down. This is what a global octave-sum
+// cannot do (no "a range stands HERE") -> it makes uniform texture. World-space,
+// deterministic (00 §5). Character constants are hand-set here; DEM-tuned in M2.4.
+
+// Smooth fBM normalized to ~[0,1] (rolling undulation / continental base).
+float value_fbm(vec2 p, uint seed, uint oct, float lacunarity, float gain) {
+    float sum = 0.0, amp = 1.0, norm = 0.0, freq = 1.0;
+    for (uint o = 0u; o < oct; o++) {
+        sum  += amp * value_noise(p * freq, seed + o * 0x68bc21ebu);
+        norm += amp; amp *= gain; freq *= lacunarity;
     }
-    return sum;
+    return sum / max(norm, 1e-6);
+}
+
+// Ridged fBM: ridgelines via 1-|2n-1|, crest ROUNDED (smoothstep) so ridges have
+// body (not pinched tent-poles), with prev-octave weighting so detail rides the
+// ridges. Returns ~[0,1].
+float ridged_fbm(vec2 p, uint seed, uint oct, float lacunarity, float gain) {
+    float sum = 0.0, amp = 0.5, norm = 0.0, freq = 1.0, prev = 1.0;
+    for (uint o = 0u; o < oct; o++) {
+        float n = value_noise(p * freq, seed + o * 0x9e3779b9u);
+        float r = 1.0 - abs(2.0 * n - 1.0);
+        r = smoothstep(0.0, 1.0, r);    // round the crest -> ridgelines with body
+        r *= prev; prev = clamp(r, 0.0, 1.0);
+        sum  += amp * r; norm += amp; amp *= gain; freq *= lacunarity;
+    }
+    return sum / max(norm, 1e-6);
+}
+
+// Domain warp: bend coords by low-freq noise so landforms are organic, not grid.
+vec2 domain_warp(vec2 p, uint seed, float amount, float freq) {
+    float wx = value_noise(p * freq, seed ^ 0x57415250u) - 0.5;
+    float wz = value_noise(p * freq + vec2(31.4, 17.0), seed ^ 0x70726177u) - 0.5;
+    return p + amount * 2.0 * vec2(wx, wz);
+}
+
+// Uplift field: a blurred LOW-frequency mask in [0,1] — WHERE terrain stands up
+// (ranges/uplands) vs stays low (lowlands). Two low octaves (big regions + sub-
+// regions). smoothstep with a window so MOST of the world is lowland (real worlds
+// are mostly flat) and uplift rises in bands. This is the STRUCTURE PLACER.
+float uplift_field(vec2 p, uint seed, float freq, float lo, float hi) {
+    float a0 = value_noise(p * freq, seed ^ 0x55504c54u);        // "UPLT"
+    float a1 = value_noise(p * freq * 2.03, seed ^ 0x73756272u); // "subr"
+    float u = clamp(a0 * 0.7 + a1 * 0.3, 0.0, 1.0);
+    return smoothstep(lo, hi, u);
+}
+
+// Valley carve: press DOWN inter-range lowlands. Where uplift is low, subtract up
+// to depth; on a range (uplift high) subtract nothing. (1-uplift)^2 keeps range
+// flanks from being over-carved.
+float valley_carve(float uplift, float depth) {
+    float v = 1.0 - uplift;
+    return depth * v * v;
+}
+
+// M2.3 general terrain: ONE composition machine for the whole world. Structure
+// from uplift; character HAND-SET here (DEM-tuned in M2.4). Most of the world is
+// gentle lowland (base + small detail); ranges stand where uplift is high.
+float composition_height(vec2 world_xz, uint seed) {
+    // --- hand-set character knobs (M2.3 tuning; DEM-driven in M2.4) ---
+    const float WARP_AMOUNT  = 2200.0;   // world units of coord bend
+    const float WARP_FREQ    = 0.00004;  // warp's own low freq (~25 km)
+    const float UPLIFT_FREQ  = 0.000025; // range placement (~40 km regions)
+    const float UPLIFT_LO    = 0.45;     // below -> lowland (uplift 0)
+    const float UPLIFT_HI    = 0.70;     // above -> full range (uplift 1); wide gap -> mostly lowland
+    const uint  RIDGE_OCT    = 6u;
+    const float RIDGE_LAC    = 2.03;
+    const float RIDGE_GAIN   = 0.55;
+    const float RIDGE_SCALE  = 0.0004;   // ridgeline scale (~2.5 km)
+    const float RELIEF_AMP   = 1600.0;   // peak range relief (m)
+    const float CARVE_DEPTH  = 0.4;      // fraction of relief pressed into valleys
+    const float BASE_FREQ    = 0.00012;  // continental base undulation (~8 km)
+    const uint  BASE_OCT     = 3u;
+    const float BASE_AMP     = 180.0;    // gentle lowland relief everywhere
+    const float DETAIL_FREQ  = 0.0016;
+    const uint  DETAIL_OCT   = 4u;
+    const float DETAIL_AMP   = 70.0;     // fine surface roughness
+
+    vec2 warp    = domain_warp(world_xz, seed, WARP_AMOUNT, WARP_FREQ);
+    float uplift = uplift_field(warp, seed, UPLIFT_FREQ, UPLIFT_LO, UPLIFT_HI);
+    float base   = value_fbm(world_xz * BASE_FREQ, seed ^ 0x42415345u, BASE_OCT, 2.0, 0.5) * BASE_AMP;
+    float ridges = ridged_fbm(warp * RIDGE_SCALE, seed, RIDGE_OCT, RIDGE_LAC, RIDGE_GAIN);
+    float relief = uplift * ridges * RELIEF_AMP;
+    float carve  = valley_carve(uplift, CARVE_DEPTH * RELIEF_AMP);
+    float detail = (value_fbm(world_xz * DETAIL_FREQ, seed ^ 0x44455421u, DETAIL_OCT, 2.0, 0.5) - 0.5)
+                   * 2.0 * DETAIL_AMP;
+    return base + relief - carve + detail;
 }
 
 // --- M2.1 climate (world-space, low-frequency, deterministic) ----------------
@@ -202,7 +281,10 @@ void main() {
     }
     // absolute world position of this cell (00 §5)
     vec2 world_xz = vec2(origin_x, origin_z) + vec2(cell) * spacing;
-    float h = fbm(world_xz, uint(seed));
+    // M2.3: general terrain from the composition machine (uplift places structure,
+    // hand-set character). Replaces the flat M1 fbm. Climate/biome unchanged below
+    // (height never feeds biome — biome uses macro_altitude; no circularity).
+    float h = composition_height(world_xz, uint(seed));
     vec2 c = climate(world_xz, h, uint(seed));
 
     // M2.2: altitude axis = MACRO continental landform (already normalized [0,1]).

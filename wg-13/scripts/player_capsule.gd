@@ -11,18 +11,27 @@ extends CharacterBody3D
 #              to the capsule's own camera, enable gravity + WASD. Drop and walk;
 #              confirm you stand on the surface, never fall through, including on
 #              a page that just streamed in.
+#   CapsLock = TURBO toggle (WALK only) — multiply move speed by turbo_mult
+#              (default 60x) for fast on-foot traverse. CapsLock again = off.
+#              (Shift still stacks as sprint.) Uses the normal move_and_slide
+#              physics path — collision behaves as usual, just faster.
 #
 # The capsule finds the fly-camera via the viewport's current camera at _ready
 # (the view makes it current), so it never reaches into world_view internals.
 
 @export var move_speed: float = 12.0
 @export var sprint_mult: float = 3.0       # Shift = sprint
-@export var jump_speed: float = 12.0       # Space = jump (initial upward velocity)
+@export var turbo_mult: float = 60.0       # CapsLock = TURBO toggle (cover ground fast on foot)
+@export var jump_speed: float = 16.0       # Space = jump (initial upward velocity)
 @export var gravity: float = 30.0
+# Momentum: accelerate toward target velocity instead of snapping (weighty feel).
+# Units ~ 1/sec multiplier on speed; ground is snappy, air is light (air control).
+@export var accel_ground: float = 8.0
+@export var accel_air: float = 1.5
 @export var mouse_sensitivity: float = 0.0025
-@export var eye_height: float = 1.6        # camera offset above the capsule centre
-@export var capsule_height: float = 2.0
-@export var capsule_radius: float = 0.4
+@export var eye_height: float = 4.0        # camera offset above the capsule centre
+@export var capsule_height: float = 6.0    # taller capsule (was 2m) — better vantage walking
+@export var capsule_radius: float = 0.6
 @export var spawn_clearance: float = 3.0   # metres above terrain to drop in (small = no tunneling speed)
 
 var _view: Node3D                           # the world_view (for terrain-height lookup)
@@ -33,6 +42,7 @@ var _fly_cam: Camera3D                      # the world_view's free-fly camera
 var auto_move := Vector3.ZERO
 var _walk_cam: Camera3D                     # our own camera, used in WALK mode
 var _walking := false
+var _turbo := false                         # CapsLock toggle: turbo_mult traverse speed (WALK)
 var _yaw := 0.0
 var _pitch := 0.0
 var _captured := false
@@ -45,6 +55,15 @@ func _ready() -> void:
 	var col := CollisionShape3D.new()
 	col.shape = shape
 	add_child(col)
+
+	# Climb ANY slope (just slower on steep grades, handled in _physics_process):
+	# treat almost everything as walkable floor instead of an unclimbable wall.
+	# Default floor_max_angle (45 deg) makes steep mountain faces act as walls you
+	# slide off; raise it so the capsule ascends them. Floor snap keeps it stuck to
+	# the surface over bumps/crests instead of launching.
+	floor_max_angle = deg_to_rad(89.0)
+	floor_snap_length = max(capsule_height, 4.0)
+	floor_stop_on_slope = false      # don't freeze on a slope; let movement drive up it
 
 	# Our walk camera (eye-level), inactive until WALK.
 	_walk_cam = Camera3D.new()
@@ -80,6 +99,9 @@ func _unhandled_input(event: InputEvent) -> void:
 			_enter_walk()
 		elif event.keycode == KEY_F and _walking:
 			_enter_fly()
+		elif event.keycode == KEY_CAPSLOCK and _walking:
+			_turbo = not _turbo            # CapsLock = toggle TURBO walk (cover ground fast)
+			print("WALK turbo %s (x%.0f)" % ["ON" if _turbo else "OFF", turbo_mult])
 	# Mouse-look only in WALK (FLY mode is the view's fly_camera's job).
 	if _walking:
 		if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_RIGHT:
@@ -111,14 +133,23 @@ func _enter_walk() -> void:
 		_fly_cam.set_process(false)
 		_fly_cam.set_process_input(false)
 		_fly_cam.set_process_unhandled_input(false)
+	# M2.3-fix: stream + build collision around the CAPSULE now, not the frozen
+	# fly camera — otherwise walking away from the drop point leaves the collision
+	# zone and you fall through.
+	if _view != null and _view.has_method("set_track_target"):
+		_view.set_track_target(self)
 	velocity = Vector3.ZERO
 	_walk_cam.make_current()
 	print("M1.7c: WALK — capsule active, gravity on. Drop onto the terrain. (F = back to fly)")
 
 func _enter_fly() -> void:
 	_walking = false
+	_turbo = false                                 # leave WALK turbo off when handing back to fly
 	_captured = false
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	# M2.3-fix: stream + collide around the fly camera again.
+	if _view != null and _view.has_method("set_track_target"):
+		_view.set_track_target(_fly_cam)
 	if _fly_cam != null:
 		_fly_cam.set_process(true)                 # hand input back to the fly-camera
 		_fly_cam.set_process_input(true)
@@ -129,15 +160,19 @@ func _enter_fly() -> void:
 func _physics_process(delta: float) -> void:
 	if not _walking:
 		return
-	# Gravity + ground + jump.
-	if is_on_floor():
-		velocity.y = 0.0
-		if Input.is_key_pressed(KEY_SPACE):       # Space = jump (only from the ground)
-			velocity.y = jump_speed
+	var grounded := is_on_floor()
+
+	# --- VERTICAL: gravity + jump (momentum-preserving) ---
+	if grounded:
+		if velocity.y < 0.0:
+			velocity.y = 0.0                       # just landed: stop downward, keep horizontal momentum
+		if Input.is_key_pressed(KEY_SPACE):
+			velocity.y = jump_speed                # jump; horizontal velocity carries over (real arc)
 	else:
-		velocity.y -= gravity * delta
-	# Move dir: the auto-tour's auto_move if set, else WASD. Relative to facing
-	# (yaw only); Shift = sprint.
+		velocity.y -= gravity * delta             # fall with accelerating velocity
+
+	# --- HORIZONTAL: accelerate toward a target velocity (MOMENTUM, not snap) ---
+	# Move dir: the auto-tour's auto_move if set, else WASD (relative to facing).
 	var input := auto_move
 	if input == Vector3.ZERO:
 		if Input.is_key_pressed(KEY_W): input.z -= 1.0
@@ -148,7 +183,42 @@ func _physics_process(delta: float) -> void:
 	dir.y = 0.0
 	if dir.length() > 0.0:
 		dir = dir.normalized()
+
 	var spd: float = move_speed * (sprint_mult if Input.is_key_pressed(KEY_SHIFT) else 1.0)
-	velocity.x = dir.x * spd
-	velocity.z = dir.z * spd
-	move_and_slide()
+	if _turbo: spd *= turbo_mult
+	# GRADE-BASED SPEED: all slopes climbable, just slower the steeper (never zero,
+	# never a wall). Gentle: only bites on genuinely steep ground, floor of 0.45.
+	if grounded:
+		spd *= clampf(get_floor_normal().y, 0.45, 1.0)
+
+	var target := Vector3(dir.x * spd, 0.0, dir.z * spd)
+	var cur_h := Vector3(velocity.x, 0.0, velocity.z)
+	# Accelerate/decelerate toward target. Snappy on the ground, lighter in the air
+	# (air control) so jumps/falls keep momentum and feel weighty. Rates scale with
+	# speed so turbo still reaches top speed quickly.
+	var accel: float = (accel_ground if grounded else accel_air) * maxf(spd, move_speed)
+	cur_h = cur_h.move_toward(target, accel * delta)
+	velocity.x = cur_h.x
+	velocity.z = cur_h.z
+
+	# SUBSTEPPED MOVE (anti-tunneling). One move_and_slide advances velocity*delta in
+	# a SINGLE swept test; at turbo (~36 m/frame) that skips over terrain and tunnels
+	# (proven: every CLIP was turbo, hspeed=2160; normal/sprint never clipped). Split
+	# the frame's motion into N substeps each <= half the capsule radius, so the swept
+	# body always overlaps terrain between substeps. Keeps the proven move_and_slide
+	# path (floor snap, is_on_floor(), m1_7c gate); calls it N times at 1/N velocity
+	# so total distance is unchanged. N=1 at normal speed (no cost). One body -> cheap.
+	var frame_dist: float = velocity.length() * delta
+	var max_step: float = max(capsule_radius * 0.5, 0.05)
+	var substeps: int = clampi(int(ceil(frame_dist / max_step)), 1, 64)
+	if substeps <= 1:
+		move_and_slide()
+	else:
+		var keep_v := velocity
+		velocity = velocity / float(substeps)
+		for _s in range(substeps):
+			move_and_slide()
+		# Keep move_and_slide's resolved vertical (landing/slope), restore horizontal.
+		velocity.x = keep_v.x
+		velocity.z = keep_v.z
+
