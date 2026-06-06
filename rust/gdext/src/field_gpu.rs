@@ -10,8 +10,13 @@ use godot::classes::rendering_device::{ShaderLanguage, ShaderStage, UniformType}
 use godot::classes::{RdShaderSource, RdUniform, RenderingDevice, RenderingServer};
 use godot::prelude::*;
 
-/// Parameters for one page production. Mirrors the GLSL `Params` block layout:
-/// 8 × 4 bytes = 32 bytes, std430-friendly (4 floats, 2 uints, 2 floats).
+/// Number of float channels the field shader writes per cell (M2.1): the page
+/// carries [height, temperature, moisture] interleaved (00 §2.1 one dispatch).
+pub const FIELD_CHANNELS: usize = 3;
+
+/// Parameters for one page production. Mirrors the GLSL `Params` block layout,
+/// std430-friendly: 16 × 4 bytes = 64 bytes (8 height params + 6 climate params
+/// + 1 pad to a 16-float boundary). Field order MUST match field_height.glsl.
 #[derive(Clone, Copy)]
 pub struct PageParams {
     pub origin_x: f32,
@@ -22,11 +27,17 @@ pub struct PageParams {
     pub octaves: u32,
     pub base_freq: f32,
     pub amplitude: f32,
+    // --- M2.1 climate params (see field_height.glsl Params block) ---
+    pub climate_lat_scale: f32,
+    pub climate_temp_freq: f32,
+    pub climate_temp_noise: f32,
+    pub climate_lapse: f32,
+    pub climate_moist_freq: f32,
 }
 
 impl PageParams {
     fn to_bytes(&self) -> PackedByteArray {
-        let mut v: Vec<u8> = Vec::with_capacity(32);
+        let mut v: Vec<u8> = Vec::with_capacity(64);
         v.extend_from_slice(&self.origin_x.to_le_bytes());
         v.extend_from_slice(&self.origin_z.to_le_bytes());
         v.extend_from_slice(&self.spacing.to_le_bytes());
@@ -35,8 +46,24 @@ impl PageParams {
         v.extend_from_slice(&self.octaves.to_le_bytes());
         v.extend_from_slice(&self.base_freq.to_le_bytes());
         v.extend_from_slice(&self.amplitude.to_le_bytes());
+        v.extend_from_slice(&self.climate_lat_scale.to_le_bytes());
+        v.extend_from_slice(&self.climate_temp_freq.to_le_bytes());
+        v.extend_from_slice(&self.climate_temp_noise.to_le_bytes());
+        v.extend_from_slice(&self.climate_lapse.to_le_bytes());
+        v.extend_from_slice(&self.climate_moist_freq.to_le_bytes());
+        v.extend_from_slice(&0f32.to_le_bytes());   // _climate_pad0
         PackedByteArray::from(v.as_slice())
     }
+}
+
+/// One produced page, deinterleaved into separate per-channel arrays (each
+/// page_res*page_res, row-major z*res+x). `heights` is exactly what M1 produced,
+/// so the M1.7 collision/height contract is unchanged; `temp`/`moisture` are the
+/// M2.1 climate channels for the display shader's view-mode tint.
+pub struct FieldPage {
+    pub heights: PackedFloat32Array,
+    pub temp: PackedFloat32Array,
+    pub moisture: PackedFloat32Array,
 }
 
 /// A compiled field-compute pipeline on a dedicated local RenderingDevice.
@@ -74,13 +101,16 @@ impl FieldGpu {
         Some(Self { rd, shader, pipeline })
     }
 
-    /// Dispatch the field over one page and read the heights back to the CPU.
-    /// Returns PAGE_RES*PAGE_RES floats, row-major (z * page_res + x).
-    pub fn dispatch_page(&mut self, params: PageParams) -> Option<PackedFloat32Array> {
+    /// Dispatch the field over one page and read all channels back to the CPU.
+    /// Returns a FieldPage with deinterleaved height/temp/moisture arrays, each
+    /// PAGE_RES*PAGE_RES floats, row-major (z * page_res + x). ONE dispatch, ONE
+    /// readback — climate rides along with height (00 §2.1).
+    pub fn dispatch_page(&mut self, params: PageParams) -> Option<FieldPage> {
         let res = params.page_res;
         let n = (res * res) as usize;
 
-        let out_bytes = PackedByteArray::from(vec![0u8; n * 4]);
+        // The shader writes FIELD_CHANNELS floats per cell, interleaved.
+        let out_bytes = PackedByteArray::from(vec![0u8; n * FIELD_CHANNELS * 4]);
         let out_buf = self.rd.storage_buffer_create_ex(out_bytes.len() as u32).data(&out_bytes).done();
         let pbytes = params.to_bytes();
         let param_buf = self.rd.storage_buffer_create_ex(pbytes.len() as u32).data(&pbytes).done();
@@ -106,11 +136,35 @@ impl FieldGpu {
         self.rd.submit();
         self.rd.sync();
 
-        let result = self.rd.buffer_get_data(out_buf).to_float32_array();
+        let interleaved = self.rd.buffer_get_data(out_buf).to_float32_array();
         self.rd.free_rid(uniform_set);
         self.rd.free_rid(out_buf);
         self.rd.free_rid(param_buf);
-        Some(result)
+
+        // Deinterleave [h,t,m, h,t,m, ...] into three contiguous channel arrays.
+        // heights is bit-identical to what the M1 single-channel path produced
+        // for the same cell, so the M1.7 collision/texture contract is preserved.
+        if interleaved.len() != n * FIELD_CHANNELS {
+            godot_error!("FieldGpu: readback len {} != expected {}", interleaved.len(), n * FIELD_CHANNELS);
+            return None;
+        }
+        let mut heights = PackedFloat32Array::new();
+        let mut temp = PackedFloat32Array::new();
+        let mut moisture = PackedFloat32Array::new();
+        heights.resize(n);
+        temp.resize(n);
+        moisture.resize(n);
+        let src = interleaved.as_slice();
+        let h = heights.as_mut_slice();
+        let t = temp.as_mut_slice();
+        let m = moisture.as_mut_slice();
+        for i in 0..n {
+            let b = i * FIELD_CHANNELS;
+            h[i] = src[b];
+            t[i] = src[b + 1];
+            m[i] = src[b + 2];
+        }
+        Some(FieldPage { heights, temp, moisture })
     }
 }
 

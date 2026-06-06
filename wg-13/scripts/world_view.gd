@@ -41,6 +41,11 @@ const FLY := "res://scripts/fly_camera.gd"
 
 var _pool: RefCounted
 var _ring_shader: Resource
+# M2.1 view mode: 0 = normal height shading, 1 = temperature, 2 = moisture.
+# Cycled by V; pushed to every page material so the climate fields are visible
+# ON the terrain you're flying (the same render path biome color will use, M2.2).
+var _view_mode := 0
+const VIEW_MODE_NAMES := ["normal", "temperature", "moisture"]
 var _instances := {}                       # "L:gx:gz" -> MeshInstance3D
 var _inst_meta := {}                        # "L:gx:gz" -> Vector3i(level,gx,gz) — parsed once, so
                                             # the per-frame loops never re-split the string key (M1.9.3c)
@@ -148,6 +153,35 @@ func _process(_dt: float) -> void:
 	# M1.9 profiling: record this frame's view-side cost for the HUD.
 	prof_mesh_us = _mesh_us_accum
 	prof_process_us = Time.get_ticks_usec() - _t_start
+
+# M2.1 — V cycles the view mode (normal -> temperature -> moisture -> normal) and
+# pushes it to every live page material so the climate fields show on the terrain.
+func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo \
+			and event.keycode == KEY_V:
+		_view_mode = (_view_mode + 1) % VIEW_MODE_NAMES.size()
+		_apply_view_mode()
+		print("view mode: %s" % VIEW_MODE_NAMES[_view_mode])
+
+# Push the current view mode to all displayed page materials AND the recycled
+# free-list (so a recycled instance starts in the right mode before its per-page
+# bind also sets it). New pages pick it up in _make_page_instance.
+func _apply_view_mode() -> void:
+	for key in _instances.keys():
+		var mat: ShaderMaterial = _instances[key].material_override
+		if mat != null:
+			mat.set_shader_parameter("view_mode", _view_mode)
+	for mi in _free_instances:
+		var mat: ShaderMaterial = mi.material_override
+		if mat != null:
+			mat.set_shader_parameter("view_mode", _view_mode)
+
+# M2.1 introspection (for the climate gate / HUD): current view mode + its name.
+func view_mode() -> int:
+	return _view_mode
+
+func view_mode_name() -> String:
+	return VIEW_MODE_NAMES[_view_mode]
 
 # Resident terrain height (world Y) at a world XZ, read from the SAME level-0
 # pool heights the collision uses (00 §2.2 one source). Returns NAN if that page
@@ -300,6 +334,12 @@ func _make_page_instance(tex, level: int, gx: int, gz: int, span: float) -> Mesh
 
 	mi.mesh = _level_plane_mesh(level, span)                # shared per-level geometry
 	mat.set_shader_parameter("height_tex", tex)
+	# M2.1: bind this page's climate textures (same production as height_tex) so
+	# the climate view modes can tint by them. Resident here (we just produced
+	# or cache-hit the page), so the getters return the matching textures.
+	mat.set_shader_parameter("temp_tex", _pool.get_page_temp_tex(level, gx, gz))
+	mat.set_shader_parameter("moist_tex", _pool.get_page_moist_tex(level, gx, gz))
+	mat.set_shader_parameter("view_mode", _view_mode)       # current mode (recycled mats too)
 	mat.set_shader_parameter("page_world_size", span)       # span differs by level on reuse
 	mat.set_shader_parameter("cell_spacing", spacing * pow(2.0, level))
 	mat.set_shader_parameter("page_tint",

@@ -37,7 +37,7 @@ Then each biome **shapes the terrain differently** (mountains are rugged and tal
 
 ## The steps (each ends in a gate; see MILESTONE_2 for exact gates)
 
-- **M2.1 ← START HERE.** Temperature & moisture fields exist in the GLSL field, tunable, deterministic; recolor-toggle visualizes them. GATE (visual): two smooth, large-scale gradients across the world. GATE (test): same seed → identical temp/moisture at fixed world coords (readback, like the M1.2 determinism test).
+- **M2.1 ✓ BUILT (test gate PASS; visual gate PARKED 2026-06-06).** Temperature & moisture fields exist in the GLSL field, tunable (configure_climate), deterministic; V cycles normal/temp/moisture. GATE (test): m2_1_climate_check PASS — determinism + range[0,1] + low-freq/smooth + latitude gradient. GATE (visual): two smooth, large-scale gradients — PARKED for the human (captures in _captures/climate_*.png; fly + press V). Climate rides height's single dispatch; height path bit-identical (M1.7 intact). NEXT after human confirm: M2.2.
 - **M2.2** — Whittaker table → biome id per location; render biome as flat debug color. GATE: large contiguous color regions, no confetti; same seed → identical biome id (test).
 - **M2.3** — per-biome height shaping wired into the field. GATE: mountains mountainous, plains flat — visibly different terrain per biome.
 - **M2.4** — border blending. GATE: no hard square borders; natural transitions.

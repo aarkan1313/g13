@@ -36,7 +36,7 @@ M1.9.3c [x] cut per-frame string-key churn: parse the page key ONCE at creation 
 M1.9.x [x] PERF GATE: worst fast-motion frame 35->~11ms (3.2x), 0/300 over the 16.6 budget, never-black PROVEN intact, 13 gates green. Workload-independent waste removed. (GPU page production async/double-buffer = the remaining cost, DEFERRED: it's real work + workload-dependent, optimize when biomes/erosion make the field heavy.)
 
 ## Milestone 2 — Untextured biomes + DEM-informed shape  (plan: M2_DESIGN.md — plain-language + decisions made)
-M2.1 [ ] temperature & moisture debug-color fields   <- CURRENT (planned; implement next session)
+M2.1 [~] temperature & moisture climate fields. Test gate PASS (m2_1_climate_check: determinism, range [0,1], low-freq/smooth, latitude gradient 0.359/30km — 14/14 gates green, M1 height path bit-identical/additive). VISUAL gate (two smooth large-scale gradients) PARKED-FOR-VISUAL: captures in wg-13/_captures/climate_{normal,temperature,moisture}.png; V cycles modes in the live scene. Climate rides height's single GPU dispatch (page = [h,t,m]); height texture/heights array unchanged (collision intact).   <- CURRENT (awaiting human visual confirm; do NOT start M2.2 until confirmed)
 M2.2 [ ] Whittaker biome id, contiguous regions (visual + determinism test)
 M2.3 [ ] per-biome height shaping
 M2.4 [ ] border blending, no hard square borders

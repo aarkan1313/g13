@@ -17,22 +17,37 @@ rust/gdext/src/
                     produce_page / produce_page_texture. Used by the M1.2/M1.4 gates.
   page_pool.rs      PagePool (RefCounted) — the runtime: bounded production,
                     page cache by (level,gx,gz), pins, eviction. Over field_gpu.
-                    Each resident page caches the texture AND the CPU height
+                    Each resident page caches the height texture AND the CPU height
                     array it was packed from (ResidentPage); get_page_heights()
                     returns that same array for collision (M1.7, 00 §2.2) — no
-                    re-dispatch, no readback, can't drift from the view.
+                    re-dispatch, no readback, can't drift from the view. M2.1: the
+                    page ALSO carries temp_tex + moist_tex (R32F climate channels,
+                    same production); get_page_temp_tex/get_page_moist_tex expose
+                    them to the view for the climate view-mode tint. configure_climate()
+                    tunes the climate model. Height path is unchanged (additive).
+  field_gpu.rs (+)  dispatch_page now produces [height,temp,moisture] in ONE
+                    dispatch (FIELD_CHANNELS=3, interleaved) and returns a
+                    deinterleaved FieldPage{heights,temp,moisture}. heights is
+                    byte-identical to the M1 single-channel output (M1.7 intact).
 
 wg-13/                          (the Godot project, res://)
   project.godot                 Vulkan; main_scene = scenes/demo.tscn.
   wg13.gdextension              points at rust/target/{debug,release}/wg13.dll.
   shaders/
-    field_height.glsl           THE FIELD (compute): world-space fBM height page.
+    field_height.glsl           THE FIELD (compute): world-space fBM height page
+                                + M2.1 climate (temperature + moisture) in the
+                                SAME dispatch. Output is [h,t,m]/cell interleaved.
                                 Source of truth (00 §2.1). Sampled in world coords.
     ring_displace.gdshader       PRESENTS a height page: displaces a plane, shades.
-                                Not a generator (00 §4).
+                                M2.1: view_mode uniform (0 normal / 1 temperature /
+                                2 moisture) tints by the climate textures it's
+                                handed. Not a generator (00 §4) — only reads/draws.
   scripts/
     world_view.gd               LIVE view: owns PagePool, multi-level clipmap,
                                 camera-following streaming, never-black layering.
+                                M2.1: V cycles view_mode (normal/temperature/
+                                moisture), pushed to all page materials; binds each
+                                page's climate textures from the pool.
                                 Also builds NEAR (level-0) collision (M1.7):
                                 WorkerThreadPool packs a HeightMapShape3D from the
                                 pool's resident heights off-thread -> deferred
@@ -66,7 +81,8 @@ wg-13/                          (the Godot project, res://)
                                 CONTROLS — Fly: WASD move, right-drag look, Space
                                 rise, C descend, Shift boost, wheel speed. Walk
                                 (press G; F back to fly): WASD, Space jump, Shift
-                                sprint. HUD: H toggle, 1-4 sections. Tour: T toggle.
+                                sprint. HUD: H toggle, 1-5 sections. Tour: T toggle.
+                                M2.1: V cycles view mode (normal/temp/moisture).
   tests/                        GATES (PASS/FAIL, exit code). See "Running gates".
     m1_2_field_check.gd         determinism + continuity (GPU readback)
     m1_4_seam_check.gd          adjacent-page edge equality + teeth check
@@ -78,10 +94,12 @@ wg-13/                          (the Godot project, res://)
     m1_7b_collision_check.gd    drives the real view: level-0 collision body exists, shape map_data == pool heights, page-centre transform + cell_spacing scale, near-pages-only count
     m1_7c_stand_check.gd        loads demo.tscn, drops the capsule in WALK, asserts it doesn't fall through + is_on_floor on the terrain (output-provable core of the visual gate)
     m1_9b_eager_spread_check.gd never-black holds when mid-coarse eager is bounded+starved (every fine cell covered by some resident level; coarsest floor complete) — earns M1.9.3b
+    m2_1_climate_check.gd       (M2.1) climate determinism + range [0,1] + low-freq smoothness (anti-confetti) + latitude gradient, on the real GPU readback
     hud_smoke_check.gd          (smoke) perf HUD loads, finds the view, all sections show sane values matching the pool, toggles work
     tour_smoke_check.gd         (smoke) auto-tour starts OFF, drives the real fly-cam, advances steps, pause restores control, resume works
   captures/                     SCREENSHOT TOOLS (evidence, not gates).
     stream_capture.gd           fly the world_view, save _captures/streamed.png
+    climate_capture.gd          (M2.1) high wide vantage, save _captures/climate_{normal,temperature,moisture}.png — evidence for the parked visual gate
   _captures/                    PNG output — gitignored scratch (regenerable).
 
 run.ps1                         Launcher: agent runs the windowed scene on the user's
@@ -126,4 +144,4 @@ Fly the live world: `.\run.ps1` (agent launches a windowed instance on the user'
 | m1_7b_collision_check.gd | M1.7b | real view builds level-0 collision; shape map_data == pool heights; page-centre transform + cell_spacing scale; near-pages-only count |
 | m1_7c_stand_check.gd | M1.7c | capsule dropped in demo.tscn doesn't fall through and is_on_floor on the terrain (output-provable core; live walk is the human visual gate) |
 | m1_9b_eager_spread_check.gd | M1.9.3b | bounding mid-coarse eager stays never-black: every fine cell covered by some resident level; coarsest floor complete |
-| m1_5b_stream_check.gd | M1.5b | no pinned page evicted; eviction happens; residency bounded |
+| m2_1_climate_check.gd | M2.1 | climate determinism (same page+seed → bit-identical); range [0,1]; low-freq/smooth (anti-confetti); latitude gradient real |

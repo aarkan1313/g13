@@ -12,7 +12,7 @@
 
 use std::collections::HashMap;
 
-use crate::field_gpu::{FieldGpu, PageParams};
+use crate::field_gpu::{FieldGpu, FieldPage, PageParams};
 use godot::classes::image::Format;
 use godot::classes::{Image, ImageTexture};
 use godot::prelude::*;
@@ -26,14 +26,19 @@ struct PageKey {
     gz: i32,
 }
 
-/// A resident page: the displayed texture AND the CPU height array it was packed
-/// from. ONE production fills both, so collision (which reads `heights`) and the
-/// view (which displaces `texture`) can never disagree — the M1.7 contract
-/// ("collision reads the same resident page heights the view uses, never a second
-/// field path", 00 §2.2 / MILESTONE_1 M1.7). They cache and evict together.
+/// A resident page: the displayed height texture AND the CPU height array it was
+/// packed from, PLUS the M2.1 climate textures (temperature, moisture). ONE
+/// production fills all of them, so collision (which reads `heights`), the view's
+/// height displacement (`texture`) and the climate tint (`temp_tex`/`moist_tex`)
+/// can never disagree — the M1.7 contract ("collision reads the same resident
+/// page heights the view uses, never a second field path", 00 §2.2). The height
+/// path is byte-for-byte what M1 produced (climate is additive); they cache and
+/// evict together as one unit.
 struct ResidentPage {
     texture: Gd<ImageTexture>,
     heights: PackedFloat32Array,
+    temp_tex: Gd<ImageTexture>,
+    moist_tex: Gd<ImageTexture>,
 }
 
 /// How a page request is budgeted this frame (M1.9.3b).
@@ -44,8 +49,10 @@ enum RequestMode {
     EagerUnbounded,  // coarsest — never gated (the never-black floor)
 }
 
-/// fBM + page geometry config. Mirrors the GLSL Params block (page_pool dispatches
-/// the same field_height.glsl the M1.2/M1.3 path used).
+/// fBM + page geometry config + M2.1 climate params. Mirrors the GLSL Params
+/// block (page_pool dispatches the same field_height.glsl). Climate defaults are
+/// "continental": bands span tens of km so biomes (M2.2) come out large and
+/// contiguous, never per-page confetti (MILESTONE_2 §2).
 #[derive(Clone, Copy)]
 struct FieldConfig {
     page_res: u32,
@@ -54,11 +61,26 @@ struct FieldConfig {
     octaves: u32,
     base_freq: f32,
     amplitude: f32,
+    climate_lat_scale: f32,
+    climate_temp_freq: f32,
+    climate_temp_noise: f32,
+    climate_lapse: f32,
+    climate_moist_freq: f32,
 }
 
 impl Default for FieldConfig {
     fn default() -> Self {
-        Self { page_res: 128, spacing: 4.0, seed: 1234.0, octaves: 5, base_freq: 0.0015, amplitude: 240.0 }
+        Self {
+            page_res: 128, spacing: 4.0, seed: 1234.0, octaves: 5,
+            base_freq: 0.0015, amplitude: 240.0,
+            // ~60 km latitude half-swing (poles ~120 km apart): continental bands.
+            climate_lat_scale: 60000.0,
+            // 1/50 km temp wobble, 1/40 km moisture: large regions, smooth.
+            climate_temp_freq: 0.00002,
+            climate_temp_noise: 0.15,
+            climate_lapse: 0.4,
+            climate_moist_freq: 0.000025,
+        }
     }
 }
 
@@ -130,15 +152,36 @@ impl PagePool {
         self.gpu.is_some()
     }
 
-    /// Configure field params (tunable from GDScript / inspector).
+    /// Configure field params (tunable from GDScript / inspector). Climate params
+    /// keep their defaults (or whatever a prior configure_climate set); this
+    /// preserves the M1 call site (world_view) without forcing climate args here.
     #[func]
     fn configure(&mut self, page_res: i64, spacing: f32, seed: f32, octaves: i64,
                  base_freq: f32, amplitude: f32, max_new_per_frame: i64) {
+        let c = self.cfg;   // keep current climate params
         self.cfg = FieldConfig {
             page_res: page_res as u32, spacing, seed,
             octaves: octaves as u32, base_freq, amplitude,
+            climate_lat_scale: c.climate_lat_scale,
+            climate_temp_freq: c.climate_temp_freq,
+            climate_temp_noise: c.climate_temp_noise,
+            climate_lapse: c.climate_lapse,
+            climate_moist_freq: c.climate_moist_freq,
         };
         self.max_new_per_frame = max_new_per_frame as i32;
+    }
+
+    /// M2.1: tune the climate model (latitude band size, temp/moisture noise
+    /// frequencies, temp wobble amplitude, altitude lapse). Tunable from
+    /// GDScript / inspector; defaults are continental (see FieldConfig::default).
+    #[func]
+    fn configure_climate(&mut self, lat_scale: f32, temp_freq: f32, temp_noise: f32,
+                         lapse: f32, moist_freq: f32) {
+        self.cfg.climate_lat_scale = lat_scale;
+        self.cfg.climate_temp_freq = temp_freq;
+        self.cfg.climate_temp_noise = temp_noise;
+        self.cfg.climate_lapse = lapse;
+        self.cfg.climate_moist_freq = moist_freq;
     }
 
     /// M1.9.3b: per-frame cap for MID-coarse eager pages (the coarsest level
@@ -289,6 +332,23 @@ impl PagePool {
         }
     }
 
+    /// M2.1: the temperature texture (R32F) of a RESIDENT page — the SAME
+    /// production behind that page's height texture (one source of truth). Null
+    /// if the page isn't resident. The view binds it for the climate view-mode
+    /// tint; the field/collision paths don't depend on it.
+    #[func]
+    fn get_page_temp_tex(&self, level: i64, gx: i64, gz: i64) -> Option<Gd<ImageTexture>> {
+        let key = PageKey { level: level as i32, gx: gx as i32, gz: gz as i32 };
+        self.cache.get(&key).map(|p| p.temp_tex.clone())
+    }
+
+    /// M2.1: the moisture texture (R32F) of a RESIDENT page (see get_page_temp_tex).
+    #[func]
+    fn get_page_moist_tex(&self, level: i64, gx: i64, gz: i64) -> Option<Gd<ImageTexture>> {
+        let key = PageKey { level: level as i32, gx: gx as i32, gz: gz as i32 };
+        self.cache.get(&key).map(|p| p.moist_tex.clone())
+    }
+
     /// Produce one page on the GPU (via shared FieldGpu): the height array AND
     /// the R32F texture packed from it, kept together as a ResidentPage so they
     /// can't drift (M1.7 one-source-of-truth). Coarser levels stretch origin
@@ -307,16 +367,33 @@ impl PagePool {
             octaves: self.cfg.octaves,
             base_freq: self.cfg.base_freq,
             amplitude: self.cfg.amplitude,
+            climate_lat_scale: self.cfg.climate_lat_scale,
+            climate_temp_freq: self.cfg.climate_temp_freq,
+            climate_temp_noise: self.cfg.climate_temp_noise,
+            climate_lapse: self.cfg.climate_lapse,
+            climate_moist_freq: self.cfg.climate_moist_freq,
         };
         // Profiled region: GPU dispatch + blocking readback (rd.sync) — the
         // suspected fast-motion spike source. Accumulated per frame (M1.9.1).
-        let heights = self.gpu.as_mut()?.dispatch_page(params)?;
+        let FieldPage { heights, temp, moisture } = self.gpu.as_mut()?.dispatch_page(params)?;
         self.produce_us_this_frame += t0.elapsed().as_micros() as i64;
         let res = self.cfg.page_res as i32;
-        let bytes = heights.to_byte_array();
+        // Height texture: R32F, byte-identical to `heights` (M1.7 contract).
+        let texture = Self::r32f_texture(res, &heights)?;
+        // Climate textures: same R32F format, separate per channel, for the
+        // display shader's view-mode tint (M2.1). One production, all channels.
+        let temp_tex = Self::r32f_texture(res, &temp)?;
+        let moist_tex = Self::r32f_texture(res, &moisture)?;
+        Some(ResidentPage { texture, heights, temp_tex, moist_tex })
+    }
+
+    /// Pack a per-cell float array into an R32F ImageTexture (the format the M1
+    /// height path used; reused for the M2.1 climate channels). Bytes are the LE
+    /// float bytes, so the texture is bit-identical to the source array.
+    fn r32f_texture(res: i32, data: &PackedFloat32Array) -> Option<Gd<ImageTexture>> {
+        let bytes = data.to_byte_array();
         let img = Image::create_from_data(res, res, false, Format::RF, &bytes)?;
-        let texture = ImageTexture::create_from_image(&img)?;
-        Some(ResidentPage { texture, heights })
+        ImageTexture::create_from_image(&img)
     }
 
     /// Grid index of the level-0 page containing a world X (or Z) coordinate.
