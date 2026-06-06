@@ -15,10 +15,9 @@ use godot::prelude::*;
 /// dispatch). biome_id is a float-encoded integer index into the biome table.
 pub const FIELD_CHANNELS: usize = 4;
 
-/// Floats per biome row in the pushed BiomeTable (TWO vec4 for std430):
-///   [temp_c, moist_c, alt_c, detail_amp,  detail_rough, _pad, _pad, _pad]
-/// M2.2 centroid (first 3) + M2.3 shaping (detail_amp, detail_rough).
-pub const BIOME_STRIDE: usize = 8;
+/// Floats per biome centroid row in the pushed BiomeTable (vec4 stride for
+/// std430): [temp_c, moist_c, alt_c, _pad].
+pub const BIOME_STRIDE: usize = 4;
 
 /// Parameters for one page production. Mirrors the GLSL `Params` block layout,
 /// std430-friendly: 20 × 4 bytes = 80 bytes (8 height + 6 climate + 6 biome,
