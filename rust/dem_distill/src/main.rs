@@ -4,6 +4,9 @@
 //! for the runtime spectral field (M2.4). OFFLINE ONLY — never linked into the
 //! Godot runtime; the runtime never opens a .tif (03_DEM_CATALOG hard rule).
 
+#[allow(dead_code)] // wired into the pipeline in Task 7
+mod archetype;
+
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
