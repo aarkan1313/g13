@@ -127,6 +127,8 @@ This is the rhythm that's working. It is the standing way to build WG13, milesto
 4. **Record** — update `PROGRESS.md`, `DRIFT_LOG.md`, `04_CODE_MAP.md`, and the relevant plan doc *as part of the step*, not afterward. Docs must always match reality.
 5. **Commit at green**, then **continue**.
 
+**At a milestone boundary (or end of a work session), refresh `HANDOFF.md` §3** (current commit, what's done, the next step) so a fresh session starts accurate. Stale handoff = lost magic at the session transition.
+
 **Debugging is always systematic.** Root-cause before fixing (read the error, reproduce, gather evidence, form one hypothesis, test minimally). **If a fix doesn't work, REVERT it — never stack a second fix on a failed one.** Question the measurement before trusting a number. (This project has already caught a wrong measurement and a counter-productive fix this way; that rigor is the standard, not the exception.)
 
 **Decisions.** Apply the pillars (`00 §1`) yourself and state the decision — don't bounce pillar calls back to the human. Surface only *genuine forks* (real design choices with real tradeoffs); for conventional/derivable choices, pick the obvious one and say what you did.

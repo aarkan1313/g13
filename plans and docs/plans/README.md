@@ -3,6 +3,7 @@
 Attempt #13. The previous twelve failed on **architecture tangle** and **plan drift during unsupervised work**, not on algorithms. This doc set is built to prevent exactly those two failure modes.
 
 ## Read in this order
+0. **HANDOFF.md** — IF YOU ARE A FRESH SESSION, START HERE. Current state, the next step, the posture to adopt, and the gotchas. It tells you what (little) else to read so you don't bloat context.
 1. **00_ARCHITECTURE.md** — first principles. The Field/Renderer boundary is the rule that prevents "works then breaks." Read this fully before any code.
 2. **01_TOOLCHAIN.md** — verified environment + the concrete build/run/test/visual-capture/perf commands every gate depends on.
 3. **02_WORKFLOW.md** — the anti-drift protocol. THE most important doc for the real failure mode. Defines gates, the DRIFT_LOG, and the rule that unsupervised work may only cross *test* gates and must park at *visual* ones.
