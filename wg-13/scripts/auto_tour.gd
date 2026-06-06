@@ -62,11 +62,10 @@ func _input(event: InputEvent) -> void:
 		_stop("manual input")
 
 func _is_manual_input(event: InputEvent) -> bool:
-	# Passive mouse MOTION must NOT pause the tour — the cursor just sitting in
-	# the window moves a pixel and that isn't "take control". Only a deliberate
-	# movement key or a mouse BUTTON (e.g. right-drag to look) counts.
-	if event is InputEventMouseButton and event.pressed:
-		return true
+	# Only deliberate MOVEMENT counts as "take control". Looking around does NOT:
+	# passive mouse motion AND right-click-drag (the look/aim control) are allowed
+	# while the tour drives, so you can inspect the view hands-free without pausing.
+	# Mouse wheel (speed adjust) is also allowed. Taking over = a movement key.
 	if event is InputEventKey and event.pressed and not event.echo:
 		return event.keycode in [KEY_W, KEY_A, KEY_S, KEY_D, KEY_SPACE, KEY_C,
 			KEY_E, KEY_Q, KEY_SHIFT, KEY_F, KEY_G]
@@ -77,10 +76,12 @@ func _start() -> void:
 		return
 	_active = true
 	enabled = true
-	# Take the keyboard away from the fly-cam while we drive it (no fighting).
+	# The tour owns POSITION (disable the fly-cam's _process movement), but LOOK
+	# stays live (keep _unhandled_input) so you can right-drag to aim the camera
+	# and inspect the view while the tour flies. On orbit steps the tour sets the
+	# rotation itself (look-at the centre); on straight steps your look coexists
+	# with the tour's translation.
 	_fly.set_process(false)
-	_fly.set_process_input(false)
-	_fly.set_process_unhandled_input(false)
 	_fly.make_current()
 	print("AUTO-TOUR: ON (step %d/%d). T or any movement key = pause + take control." % [
 		_idx + 1, tour.size()])

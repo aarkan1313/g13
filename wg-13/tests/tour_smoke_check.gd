@@ -61,6 +61,21 @@ func _init() -> void:
 	else:
 		print("PASS: a movement key (W) does hand over control")
 
+	# 3c. RIGHT-CLICK (look/aim) must NOT pause the tour — you can look around
+	# while it drives. And the fly-cam's LOOK input stays live during the tour.
+	var rmb := InputEventMouseButton.new()
+	rmb.button_index = MOUSE_BUTTON_RIGHT
+	rmb.pressed = true
+	if tour._is_manual_input(rmb):
+		_fail("right-click is treated as take-control -> can't look around without pausing")
+	else:
+		print("PASS: right-click (look) does NOT pause the tour")
+	# while the tour is active, the fly-cam should still process look input.
+	if not tour._fly.is_processing_unhandled_input():
+		_fail("fly-cam look input disabled during tour -> can't aim the camera")
+	else:
+		print("PASS: fly-cam look stays live during the tour (can aim while watching)")
+
 	# 4. pausing hands control back: fly-cam process re-enabled, tour inactive.
 	tour._stop("test")
 	if tour._active:
