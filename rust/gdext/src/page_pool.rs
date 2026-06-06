@@ -17,16 +17,17 @@ use godot::classes::image::Format;
 use godot::classes::{Image, ImageTexture};
 use godot::prelude::*;
 
-/// M2.2 default biome roster (DATA, 00 §6) — centroids in normalized
-/// (temp, moisture, altitude), BIOME_STRIDE floats per row [t_c, m_c, a_c, _pad].
+/// M2.2 default biome roster (DATA, 00 §6) — centroids [t_c, m_c, a_c, _pad].
 /// Nearest-centroid Whittaker over the climate cube; high alt_c rows (snow, rock)
 /// pull in at elevation via the altitude weight. The display shader holds the
 /// matching debug-color table (BIOME_COLORS in world_view). Adding a biome = a
-/// row here + a color there; never a code branch. Order = biome id.
+/// row here + a color there; never a code branch. Order = biome id. M2.4: the
+/// GPU row also carries the DEM spectrum (built in build_biome_table); this const
+/// is just the 4-float centroid.
 ///   0 snow/ice  1 tundra  2 taiga  3 mountain rock  4 grassland
 ///   5 temperate forest  6 temperate rainforest  7 desert  8 savanna
 ///   9 tropical rainforest
-const BIOME_CENTROIDS: [[f32; BIOME_STRIDE]; 10] = [
+const BIOME_CENTROIDS: [[f32; 4]; 10] = [
     [0.15, 0.50, 0.95, 0.0],  // 0 snow / ice cap
     [0.18, 0.35, 0.55, 0.0],  // 1 tundra
     [0.35, 0.62, 0.50, 0.0],  // 2 taiga / boreal
@@ -47,6 +48,71 @@ const BIOME_W_ALT: f32 = 1.2;   // elevation pulls peaks to alpine/snow, but tem
 // so biomes stay contiguous at every LOD. ~1/30 km = big landmasses/sub-regions,
 // far below any LOD cell spacing. Tunable.
 const BIOME_ALT_FREQ: f32 = 0.000033;
+
+use crate::fingerprints;
+
+/// Maps each of the 10 M2.2 biomes (row index = biome id) to a DEM archetype
+/// whose fingerprint shapes its terrain (M2.4). DATA (00 §6).
+const BIOME_ARCHETYPE: [&str; 10] = [
+    "glacial",     // 0 snow / ice cap
+    "tundra",      // 1 tundra
+    "temperate",   // 2 taiga / boreal
+    "mountain",    // 3 bare mountain rock
+    "grassland",   // 4 grassland / steppe
+    "temperate",   // 5 temperate forest
+    "rainforest",  // 6 temperate rainforest
+    "desert",      // 7 desert
+    "grassland",   // 8 savanna
+    "rainforest",  // 9 tropical rainforest
+];
+
+/// Path to the committed fingerprint file (res:// at runtime).
+const FINGERPRINTS_PATH: &str = "res://data/dem_fingerprints.json";
+
+/// A safe default spectrum if a fingerprint is missing (generic 0.5/octave,
+/// normalized) so the field never produces NaN; slope ceiling generous.
+fn default_fingerprint() -> fingerprints::Fingerprint {
+    let mut s = [0f32; fingerprints::N_BANDS];
+    let mut a = 1.0f32; let mut tot = 0.0f32;
+    for i in 0..fingerprints::N_BANDS { s[i] = a; tot += a; a *= 0.5; }
+    for v in s.iter_mut() { *v /= tot; }
+    fingerprints::Fingerprint { spectrum: s, slope_p95: 1.0 }
+}
+
+/// Read the committed fingerprint JSON from res:// and parse it. Empty map on
+/// failure (build_biome_table then falls back to the generic spectrum).
+fn load_fingerprints() -> std::collections::HashMap<String, fingerprints::Fingerprint> {
+    use godot::classes::file_access::ModeFlags;
+    use godot::classes::FileAccess;
+    let path = GString::from(FINGERPRINTS_PATH);
+    match FileAccess::open(&path, ModeFlags::READ) {
+        Some(f) => fingerprints::parse(&f.get_as_text().to_string()),
+        None => {
+            godot_warn!("M2.4: could not open {FINGERPRINTS_PATH}; using generic spectrum");
+            std::collections::HashMap::new()
+        }
+    }
+}
+
+/// Build the flat per-biome GPU table (BIOME_STRIDE floats/biome): centroid +
+/// slope_p95 + 8-band spectrum, looking each biome's archetype up in the loaded
+/// fingerprints. Falls back to a generic spectrum if a fingerprint is absent.
+fn build_biome_table(fps: &std::collections::HashMap<String, fingerprints::Fingerprint>)
+    -> Vec<f32> {
+    let mut out = Vec::with_capacity(BIOME_CENTROIDS.len() * BIOME_STRIDE);
+    for (i, c) in BIOME_CENTROIDS.iter().enumerate() {
+        let fp = fps.get(BIOME_ARCHETYPE[i]).copied().unwrap_or_else(default_fingerprint);
+        // row[0]: centroid (t,m,a) + slope_p95
+        out.push(c[0]); out.push(c[1]); out.push(c[2]); out.push(fp.slope_p95);
+        // row[1]: spectrum[0..4)
+        for k in 0..4 { out.push(fp.spectrum[k]); }
+        // row[2]: spectrum[4..8)
+        for k in 4..8 { out.push(fp.spectrum[k]); }
+        // row[3]: pad
+        out.push(0.0); out.push(0.0); out.push(0.0); out.push(0.0);
+    }
+    out
+}
 
 /// Identifies a page in the world: ring level + integer grid coordinates.
 /// Level 0 is finest; each coarser level doubles world span per page (M1.5c).
@@ -200,8 +266,11 @@ impl PagePool {
     fn initialize(&mut self, shader_glsl_path: GString) -> bool {
         self.gpu = FieldGpu::new(&shader_glsl_path);
         if let Some(gpu) = self.gpu.as_mut() {
-            let flat: Vec<f32> = BIOME_CENTROIDS.iter().flatten().copied().collect();
-            gpu.set_biome_centroids(&PackedFloat32Array::from(flat.as_slice()));
+            // M2.4: pack each biome's DEM fingerprint (spectrum + slope) into the
+            // per-biome GPU table, keyed by the biome->archetype map.
+            let fps = load_fingerprints();
+            let table = build_biome_table(&fps);
+            gpu.set_biome_centroids(&PackedFloat32Array::from(table.as_slice()));
         }
         self.gpu.is_some()
     }

@@ -16,10 +16,11 @@ use godot::prelude::*;
 /// GLSL Params block: lat_scale, temp_freq, temp_noise, lapse, moist_freq.
 const CLIMATE_DEFAULT: [f32; 5] = [60000.0, 0.00002, 0.15, 0.35, 0.000025];
 
-/// M2.2 biome roster + weights for the test oracle, matching PagePool's
-/// BIOME_CENTROIDS / weights so a FieldCompute production reproduces the runtime
-/// biome ids exactly (the M2.2 gate relies on this). Centroids: [t,m,a,_pad] × N.
-const BIOME_CENTROIDS: [[f32; BIOME_STRIDE]; 10] = [
+/// M2.2 biome roster (centroids [t,m,a,_pad]) for the test oracle, matching
+/// PagePool so a FieldCompute production reproduces the runtime biome ids. M2.4:
+/// the GPU row also carries the DEM spectrum (built in initialize), so this is
+/// just the 4-float centroid; the spectrum comes from the fingerprints.
+const BIOME_CENTROIDS: [[f32; 4]; 10] = [
     [0.15, 0.50, 0.95, 0.0],
     [0.18, 0.35, 0.55, 0.0],
     [0.35, 0.62, 0.50, 0.0],
@@ -33,6 +34,46 @@ const BIOME_CENTROIDS: [[f32; BIOME_STRIDE]; 10] = [
 ];
 const BIOME_WEIGHTS: [f32; 3] = [1.0, 1.0, 1.2];   // temp, moist, alt
 const BIOME_ALT_FREQ: f32 = 0.000033;              // macro-altitude freq (match PagePool)
+
+use crate::fingerprints;
+
+/// Biome -> DEM archetype (must match PagePool's BIOME_ARCHETYPE).
+const BIOME_ARCHETYPE: [&str; 10] = [
+    "glacial","tundra","temperate","mountain","grassland",
+    "temperate","rainforest","desert","grassland","rainforest",
+];
+
+fn load_fingerprints_fc() -> std::collections::HashMap<String, fingerprints::Fingerprint> {
+    use godot::classes::file_access::ModeFlags;
+    use godot::classes::FileAccess;
+    let path = GString::from("res://data/dem_fingerprints.json");
+    match FileAccess::open(&path, ModeFlags::READ) {
+        Some(f) => fingerprints::parse(&f.get_as_text().to_string()),
+        None => std::collections::HashMap::new(),
+    }
+}
+
+fn default_fingerprint_fc() -> fingerprints::Fingerprint {
+    let mut s = [0f32; fingerprints::N_BANDS];
+    let mut a = 1.0f32; let mut tot = 0.0f32;
+    for i in 0..fingerprints::N_BANDS { s[i] = a; tot += a; a *= 0.5; }
+    for v in s.iter_mut() { *v /= tot; }
+    fingerprints::Fingerprint { spectrum: s, slope_p95: 1.0 }
+}
+
+/// Build the per-biome GPU table (BIOME_STRIDE floats/biome) — same packing as
+/// PagePool::build_biome_table, so the oracle reproduces the runtime exactly.
+fn build_biome_table_fc(fps: &std::collections::HashMap<String, fingerprints::Fingerprint>) -> Vec<f32> {
+    let mut out = Vec::with_capacity(BIOME_CENTROIDS.len() * BIOME_STRIDE);
+    for (i, c) in BIOME_CENTROIDS.iter().enumerate() {
+        let fp = fps.get(BIOME_ARCHETYPE[i]).copied().unwrap_or_else(default_fingerprint_fc);
+        out.push(c[0]); out.push(c[1]); out.push(c[2]); out.push(fp.slope_p95);
+        for k in 0..4 { out.push(fp.spectrum[k]); }
+        for k in 4..8 { out.push(fp.spectrum[k]); }
+        out.push(0.0); out.push(0.0); out.push(0.0); out.push(0.0);
+    }
+    out
+}
 
 #[derive(GodotClass)]
 #[class(base = RefCounted)]
@@ -56,8 +97,10 @@ impl FieldCompute {
     fn initialize(&mut self, shader_glsl_path: GString) -> bool {
         self.gpu = FieldGpu::new(&shader_glsl_path);
         if let Some(gpu) = self.gpu.as_mut() {
-            let flat: Vec<f32> = BIOME_CENTROIDS.iter().flatten().copied().collect();
-            gpu.set_biome_centroids(&PackedFloat32Array::from(flat.as_slice()));
+            // M2.4: reproduce the runtime table (same fingerprints, same packing).
+            let fps = load_fingerprints_fc();
+            let table = build_biome_table_fc(&fps);
+            gpu.set_biome_centroids(&PackedFloat32Array::from(table.as_slice()));
         }
         self.gpu.is_some()
     }
