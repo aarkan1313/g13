@@ -81,3 +81,11 @@ M1.5c (multi-level clipmap) built but never-black coverage test (m1_5c_coverage_
 DECISION NEEDED (surfaced to human): how to guarantee the coarse blanket is always complete — (a) coarse levels produced unbounded/eagerly (few & cheap), (b) per-level budget with coarse guaranteed first, (c) shrink coarse ring radius. Did NOT pick unilaterally; this sets the streaming budget model.
 CODEBASE STATE: green and compiling (the RED is a test asserting a not-yet-satisfied property, intentionally committed red to track the gap honestly).
 WHAT I DID NOT DO: Did not fake the coverage gate green. Did not change the contract.
+
+## [2026-06-06] — M1.5c RESOLVED + M1.5 PARKED
+TYPE: coverage gate now PASS (self-certified); full M1.5 PARKED-FOR-VISUAL
+FIX (human-approved, after a plain-language explanation): the never-black gap was budget mis-allocation, not a perf wall. Coarse blanket pages are cheap and few; capping them like expensive fine pages starved the blanket → black under fast motion. Fix: coarse levels (>0) produced EAGERLY (request_page_eager, unbounded); only the finest level (0) stays bounded per frame. The budget caps the expensive detail (which causes stutter), not the cheap blanket.
+RESULT: m1_5c_coverage_check PASS — with a deliberately tight budget that produced 0/49 fine pages, all 49 coarse blanket pages were produced and every fine cell stayed covered → never black. All 5 gates green (M1.2/1.4/1.5a/1.5b/1.5c). Live capture continuous to horizon, no black.
+M1.5 milestone now awaits its FULL live visual gate (human): fly 5+ min, confirm no black ever (incl. fast motion), no stutter crossing page boundaries, memory flat. Launch: `& $env:GODOT --rendering-driver vulkan --path "D:\world gen 13\wg-13"` (F5), WASD + right-drag, Shift to boost — try to outrun the streamer and confirm you see blurry-coarse, never black.
+CODEBASE STATE: green at the M1.5c commit.
+WHAT I DID NOT DO: Did not start M1.6. Did not change the contract.

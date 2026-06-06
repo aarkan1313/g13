@@ -52,8 +52,11 @@ func _process(_dt: float) -> void:
 	var cam_x: float = _cam.global_position.x
 	var cam_z: float = _cam.global_position.z
 
-	# Request coarsest FIRST so the blanket is prioritized under the per-frame
-	# budget — the cheap wide coverage wins the budget before fine detail.
+	# Request coarsest first. COARSE levels (>0) are produced EAGERLY (unbounded):
+	# they're cheap, few, and are the never-black blanket, so they must always be
+	# complete. Only the FINEST level (0) is bounded per frame — that's the
+	# expensive detail whose burst would stutter. (00 §3; budget caps detail, not
+	# the blanket.)
 	for level in range(num_levels - 1, -1, -1):
 		var span: float = base_span * pow(2.0, level)
 		var ccx: int = int(floor(cam_x / span))
@@ -63,9 +66,10 @@ func _process(_dt: float) -> void:
 				var key := "%d:%d:%d" % [level, gx, gz]
 				if _instances.has(key):
 					continue
-				var tex = _pool.request_page(level, gx, gz)
+				var tex = (_pool.request_page_eager(level, gx, gz) if level > 0
+					else _pool.request_page(level, gx, gz))
 				if tex == null:
-					continue                  # over budget; coarse blanket covers it
+					continue                  # fine over budget; coarse blanket covers it
 				_instances[key] = _make_page_instance(tex, level, gx, gz, span)
 
 	# Per level: drop stale meshes -> pin remaining -> evict pool pages outside keep.

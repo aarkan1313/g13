@@ -160,21 +160,35 @@ impl PagePool {
         removed
     }
 
-    /// Request a page. Returns its texture if resident, or if we can afford to
-    /// produce it this frame (under the budget). Returns null when over budget
-    /// and not yet cached — the caller then shows coarser coverage (M1.5c).
+    /// Request a page, BOUNDED by the per-frame budget. Returns its texture if
+    /// resident or affordable this frame; null when over budget and not cached
+    /// (caller falls back to coarse coverage). Use for the expensive FINE level.
     #[func]
     fn request_page(&mut self, level: i64, gx: i64, gz: i64) -> Option<Gd<ImageTexture>> {
+        self.request(level, gx, gz, false)
+    }
+
+    /// Request a page EAGERLY, bypassing the per-frame budget. Use for the cheap
+    /// COARSE blanket levels, which must ALWAYS be complete so a missing fine
+    /// page never reveals black (00 §3 never-black). Coarse pages are few and
+    /// cheap, so producing them unbounded does not cause stutter; the budget
+    /// exists to cap the expensive fine detail, not the blanket.
+    #[func]
+    fn request_page_eager(&mut self, level: i64, gx: i64, gz: i64) -> Option<Gd<ImageTexture>> {
+        self.request(level, gx, gz, true)
+    }
+
+    fn request(&mut self, level: i64, gx: i64, gz: i64, eager: bool) -> Option<Gd<ImageTexture>> {
         let key = PageKey { level: level as i32, gx: gx as i32, gz: gz as i32 };
         if let Some(tex) = self.cache.get(&key) {
             self.cache_hits += 1;
             return Some(tex.clone());
         }
-        if self.produced_this_frame >= self.max_new_per_frame {
+        if !eager && self.produced_this_frame >= self.max_new_per_frame {
             return None; // over budget this frame; caller falls back to coarse
         }
         let tex = self.produce(key)?;
-        self.produced_this_frame += 1;
+        self.produced_this_frame += 1; // counted even when eager (diagnostics)
         self.total_produced += 1;
         self.cache.insert(key, tex.clone());
         Some(tex)

@@ -19,27 +19,18 @@ func _init() -> void:
 	if not pool.initialize(SHADER): _fail("initialize failed (need vulkan)"); _finish(); return
 	pool.configure(64, 4.0, 1234.0, 4, 0.0015, 240.0, TIGHT_BUDGET)
 
-	# Camera at origin. Request coarsest-first (as world_view does) so the blanket
-	# wins the tight budget. Run ONE frame with the tight budget.
-	var have := {}          # "L:gx:gz" -> true (pages actually produced this frame)
+	# Camera at origin. ONE frame, tight budget. Coarse (>0) eager, fine (0)
+	# bounded — exactly as world_view does. The coarse blanket must fully exist
+	# even though the tight budget starves the fine level.
+	var have := {}          # "L:gx:gz" -> true (pages produced)
 	pool.begin_frame()
 	for level in range(LEVELS - 1, -1, -1):
 		for gz in range(-R, R + 1):
 			for gx in range(-R, R + 1):
-				var t = pool.request_page(level, gx, gz)
+				var t = (pool.request_page_eager(level, gx, gz) if level > 0
+					else pool.request_page(level, gx, gz))
 				if t != null:
 					have["%d:%d:%d" % [level, gx, gz]] = true
-
-	# Coarsest level must be FULLY covered (it's the blanket; coarsest-first +
-	# few pages means it should fit even a tight budget over a couple frames).
-	# Give it up to 8 frames to fully populate the coarsest ring.
-	for _f in range(8):
-		pool.begin_frame()
-		for gz in range(-R, R + 1):
-			for gx in range(-R, R + 1):
-				var t = pool.request_page(LEVELS - 1, gx, gz)
-				if t != null:
-					have["%d:%d:%d" % [LEVELS - 1, gx, gz]] = true
 
 	# Check: every cell of the FINE ring (level 0) is covered by SOME page —
 	# either its own fine page, or the coarse page whose 2x footprint contains it.
