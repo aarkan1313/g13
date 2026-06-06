@@ -12,6 +12,8 @@
 use godot::classes::INode;
 use godot::prelude::*;
 
+mod field_compute;
+
 /// The extension library marker. Godot calls the generated `gdext_rust_init`
 /// entry symbol (see wg13.gdextension) to register everything below.
 struct Wg13Extension;

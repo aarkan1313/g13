@@ -95,12 +95,21 @@ cargo test --manifest-path "D:\world gen 13\rust\Cargo.toml"
 ```
 These exercise the **real compute path** (`00_ARCHITECTURE.md §2.1`): Rust spins up a `RenderingDevice`, runs the field GLSL over a page, reads it back, and asserts determinism (same seed → identical bytes), continuity, and adjacent-page edge equality (M1.2, M1.4). The GPU output is the oracle — there is no CPU field to compare against. Note: these need a GPU/RenderingDevice available, so they are not pure-CPU unit tests; on a headless agent box confirm a usable device or run them via the headless Godot path below.
 
-### Godot-side tests (headless)
-For gates that need the engine (e.g. a scene loads, a mesh has N vertices), run a GDScript check headless and exit:
+### Godot-side tests (engine needed, NOT headless for GPU)
+For gates that need the engine, run a GDScript check and exit. PASS/FAIL printed; exit code is the gate.
+
+**Non-GPU checks** (a scene loads, a node exists) can use `--headless`:
 ```powershell
 & $env:GODOT_CONSOLE --headless --path "D:\world gen 13\wg-13" --script res://tests/<name>_check.gd
 ```
-The `_check.gd` script asserts, `print("PASS"/"FAIL ...")`, and calls `get_tree().quit(code)`. PASS/FAIL is the gate. (Pattern carried from WG10's `*_check.gd`.)
+
+**GPU compute checks MUST use a real rendering driver — `--headless` will NOT work.** Established at M1.2: `--headless` uses the dummy driver, so `create_local_rendering_device()` returns null ("no local RenderingDevice"). Use Vulkan explicitly (matches `00 §` Vulkan baseline):
+```powershell
+& $env:GODOT_CONSOLE --rendering-driver vulkan --path "D:\world gen 13\wg-13" --script res://tests/<name>_check.gd
+```
+This opens a real (brief) window. It is still self-certifiable from stdout (PASS/FAIL is output-provable, 02_WORKFLOW §2) — it just isn't *headless*. A `SceneTree` `_init()` script that `quit(code)`s exits fast enough that the window barely flashes. (Pattern carried from WG10's `*_check.gd`.)
+
+> Implication for unsupervised runs: a GPU-less / truly-headless agent box can't run these. On this machine (has a GPU) it's fine. If we ever run the agent remotely, GPU determinism gates can't be self-certified there — flagged.
 
 ---
 

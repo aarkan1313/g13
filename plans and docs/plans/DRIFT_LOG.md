@@ -22,3 +22,12 @@ EXACT ERROR / STATE: none — green and compiling.
 MY HYPOTHESIS: gate should pass; gdext `reloadable = true` is set and 0.5.3 supports hot reload.
 CODEBASE STATE: green at the M1.1 commit (see git log).
 WHAT I DID NOT DO: Did not start M1.2. Did not self-certify the visual gate. Did not change the contract.
+
+## [2026-06-06] — M1.2
+TYPE: (informational — test gate passed, self-certified)
+WHAT I WAS DOING: First GPU step — field compute shader produces one world-space height page; Rust dispatches on a LOCAL RenderingDevice and reads back; determinism/continuity tests assert on the readback.
+WHAT HAPPENED: PASS (output-proven, 02_WORKFLOW §2). All four checks green: determinism (same seed → identical 4096-cell page), seed sensitivity (different seed → different), continuity (max adjacent step 2.93 << 120 limit, no NaN), seam preview (east page reproduces deterministically). GPU is the source of truth and we trust it via readback, exactly per 00 §2.1.
+FINDING (now in 01_TOOLCHAIN §4): **GPU compute tests cannot run under `--headless`** — the dummy driver returns no RenderingDevice. Must use `--rendering-driver vulkan`. This changes the test-gate command for every GPU step. Implication: a GPU-less remote agent box could not self-certify these gates.
+EXACT ERROR / STATE: green and compiling.
+CODEBASE STATE: green at the M1.2 commit.
+WHAT I DID NOT DO: Did not start M1.3 (the first on-screen render — a real visual gate). Did not change the contract.
