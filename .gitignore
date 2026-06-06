@@ -1,0 +1,34 @@
+# ── WG13 repository ignores ──────────────────────────────────────────────
+# Repo root is "D:\world gen 13". Docs + the wg-13 Godot project are tracked.
+# The archive and all heavy/generated data are NOT.
+
+# Archived WG9/WG10 material (~97 GB: old code, DEMs, generated worlds).
+# Kept on disk for reference; never committed.
+/archive/
+
+# Move manifests are bookkeeping for the archive operation, not project source.
+/_manifest/
+
+# ── Godot ────────────────────────────────────────────────────────────────
+# Editor cache / imported assets / per-machine state.
+wg-13/.godot/
+wg-13/android/
+wg-13/*.translation
+
+# ── Rust / gdext (created at M1.1) ───────────────────────────────────────
+# Build output for the GDExtension crate. Can be huge; always reproducible.
+**/target/
+**/*.rs.bk
+Cargo.lock.bak
+
+# Compiled GDExtension libraries land next to the .gdextension file when built.
+# Track the .gdextension manifest; ignore the per-platform binaries.
+*.dll.lib
+*.pdb
+*.exp
+
+# ── OS / editor noise ────────────────────────────────────────────────────
+Thumbs.db
+desktop.ini
+.DS_Store
+*.swp
