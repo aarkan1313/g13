@@ -62,9 +62,12 @@ func _input(event: InputEvent) -> void:
 		_stop("manual input")
 
 func _is_manual_input(event: InputEvent) -> bool:
-	if event is InputEventMouseMotion or event is InputEventMouseButton:
+	# Passive mouse MOTION must NOT pause the tour — the cursor just sitting in
+	# the window moves a pixel and that isn't "take control". Only a deliberate
+	# movement key or a mouse BUTTON (e.g. right-drag to look) counts.
+	if event is InputEventMouseButton and event.pressed:
 		return true
-	if event is InputEventKey and event.pressed:
+	if event is InputEventKey and event.pressed and not event.echo:
 		return event.keycode in [KEY_W, KEY_A, KEY_S, KEY_D, KEY_SPACE, KEY_C,
 			KEY_E, KEY_Q, KEY_SHIFT, KEY_F, KEY_G]
 	return false

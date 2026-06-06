@@ -46,6 +46,21 @@ func _init() -> void:
 	else:
 		print("PASS: tour advances steps (step %d -> %d)" % [start_idx + 1, tour._idx + 1])
 
+	# 3b. passive MOUSE MOTION must NOT pause the tour (the bug: cursor sitting in
+	# the window moves a pixel -> tour stopped after ~1s). A movement KEY must.
+	var mm := InputEventMouseMotion.new()
+	if tour._is_manual_input(mm):
+		_fail("mouse MOTION is treated as take-control -> tour pauses on passive cursor movement")
+	else:
+		print("PASS: passive mouse motion does NOT pause the tour")
+	var kw := InputEventKey.new()
+	kw.keycode = KEY_W
+	kw.pressed = true
+	if not tour._is_manual_input(kw):
+		_fail("a real movement key (W) is NOT treated as take-control")
+	else:
+		print("PASS: a movement key (W) does hand over control")
+
 	# 4. pausing hands control back: fly-cam process re-enabled, tour inactive.
 	tour._stop("test")
 	if tour._active:
