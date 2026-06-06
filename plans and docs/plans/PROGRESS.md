@@ -20,10 +20,10 @@ M1.5 [x] bounded pool + clipmap rings + read-only view; streams, no black, no z-
   M1.5b [x] camera-following streaming: ring recenters, evicts behind, pins displayed; flat memory (test PASS)
   M1.5c [x] annulus clipmap: coarse blanket EAGER, fine BOUNDED; coarse HIDDEN where fine covers (no overlap -> no z-fight) yet shown over holes (never-black). coverage + overlap tests PASS
 M1.6 [~] LOD to horizon: 6 levels -> ~49km reach (30km goal +margin), fog hides edge; frame-time gate PASS (steady-state 2.4ms/420fps, p99 2.7ms << 16.6); startup ~150ms one-time transient (deferred async-load). Live horizon PARKED-FOR-VISUAL   <- CURRENT
-M1.7 [~] near-page collision, character doesn't fall through   <- CURRENT
+M1.7 [~] near-page collision, character doesn't fall through   <- CURRENT (M1.7c live visual PARKED)
   M1.7a [x] PagePool retains CPU heights; get_page_heights() returns the SAME array behind the texture (no readback, no second path). Test PASS (bit-identical to texture, matches FieldCompute, empty when non-resident)
   M1.7b [x] collision build in world_view: level-0 only, radius 1, WorkerThreadPool off-thread -> deferred add_child; bodies evict with the ring. Test PASS (shape map_data bit-identical to pool heights; dims + page-centre transform + cell_spacing scale correct; 9 bodies for 294 meshes = near pages only)
-  M1.7c [ ] capsule character + fly/walk (F/G) toggle; visual gate (no fall-through, incl. fresh pages)
+  M1.7c [~] capsule character + fly/walk (F/G) toggle. Output-provable core PASS (raycast: collision_y == field height to <1cm at all sample cells incl. asymmetric; capsule drops + is_on_floor true, settles on surface). Live walk PARKED-FOR-VISUAL. Human-test fix: walk/fly mutually exclusive (no input bleed) + spawn just above resident terrain (no fall-through on fresh pages)
 M1.8 [ ] MILESTONE GATE — full definition of done, tag m1-complete
 
 ## Milestone 2 — Untextured biomes + DEM-informed shape

@@ -39,6 +39,10 @@ wg-13/                          (the Godot project, res://)
                                 add_child; bodies evict with the ring. This is
                                 what demo.tscn runs.
     fly_camera.gd               Reusable WASD + right-drag inspection camera.
+    player_capsule.gd           DEMO test character (M1.7c): CharacterBody3D
+                                capsule, F = fly (hand back to view's fly-cam),
+                                G = walk (drop + gravity + WASD). Proves the
+                                terrain collision; engine-generic, drops out clean.
   scenes/
     demo.tscn                   The launch target: WorldRoot + world_view. F5 = fly.
   tests/                        GATES (PASS/FAIL, exit code). See "Running gates".
@@ -50,6 +54,7 @@ wg-13/                          (the Godot project, res://)
     m1_5c_overlap_check.gd      annulus: no visible coarse overlaps covered fine (no z-fight)
     m1_7a_heights_check.gd      get_page_heights == texture bytes (same source), matches FieldCompute, empty if non-resident
     m1_7b_collision_check.gd    drives the real view: level-0 collision body exists, shape map_data == pool heights, page-centre transform + cell_spacing scale, near-pages-only count
+    m1_7c_stand_check.gd        loads demo.tscn, drops the capsule in WALK, asserts it doesn't fall through + is_on_floor on the terrain (output-provable core of the visual gate)
   captures/                     SCREENSHOT TOOLS (evidence, not gates).
     stream_capture.gd           fly the world_view, save _captures/streamed.png
   _captures/                    PNG output — gitignored scratch (regenerable).
@@ -94,4 +99,5 @@ Fly the live world: `.\run.ps1` (agent launches a windowed instance on the user'
 | m1_5c_overlap_check.gd | M1.5c | annulus: no visible coarse page overlaps a fully-covered fine area |
 | m1_7a_heights_check.gd | M1.7a | get_page_heights returns the same array behind the texture; matches FieldCompute; empty when non-resident |
 | m1_7b_collision_check.gd | M1.7b | real view builds level-0 collision; shape map_data == pool heights; page-centre transform + cell_spacing scale; near-pages-only count |
+| m1_7c_stand_check.gd | M1.7c | capsule dropped in demo.tscn doesn't fall through and is_on_floor on the terrain (output-provable core; live walk is the human visual gate) |
 | m1_5b_stream_check.gd | M1.5b | no pinned page evicted; eviction happens; residency bounded |

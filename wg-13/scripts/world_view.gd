@@ -113,6 +113,25 @@ func _process(_dt: float) -> void:
 	_update_annulus_visibility()
 	_update_collision(cam_x, cam_z, base_span)
 
+# Resident terrain height (world Y) at a world XZ, read from the SAME level-0
+# pool heights the collision uses (00 §2.2 one source). Returns NAN if that page
+# isn't resident. For demo/character spawn use (sample the floor without a
+# physics query); the render/collision paths don't depend on this.
+func page_terrain_height(wx: float, wz: float) -> float:
+	var span: float = page_span_value()
+	var gx: int = int(floor(wx / span))
+	var gz: int = int(floor(wz / span))
+	var heights: PackedFloat32Array = _pool.get_page_heights(0, gx, gz)
+	if heights.size() != page_res * page_res:
+		return NAN
+	# Nearest cell within the page (page-local world -> cell).
+	var cx: int = clampi(int(round((wx - gx * span) / spacing)), 0, page_res - 1)
+	var cz: int = clampi(int(round((wz - gz * span) / spacing)), 0, page_res - 1)
+	return heights[cz * page_res + cx]
+
+func page_span_value() -> float:
+	return (page_res - 1) * spacing
+
 # M1.7 — collision for NEAR fine (level-0) pages. Each frame: build bodies for
 # in-radius level-0 pages whose heights are resident (async, off the main thread
 # via WorkerThreadPool), and free bodies for pages that left the radius. The
