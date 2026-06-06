@@ -70,7 +70,7 @@ impl FieldCompute {
     /// compute pipeline. Returns true on success. Idempotent-ish: call once.
     #[func]
     fn initialize(&mut self, shader_glsl_path: GString) -> bool {
-        let mut server = RenderingServer::singleton();
+        let server = RenderingServer::singleton();
         // 0.5.3: returns the local RenderingDevice object directly (dedicated,
         // off the main render device — ideal for off-frame readback later).
         let Some(mut rd) = server.create_local_rendering_device() else {
@@ -177,6 +177,38 @@ impl FieldCompute {
         rd.free_rid(param_buf);
 
         heights
+    }
+
+    /// Produce one page and pack it into an R32F ImageTexture for a render
+    /// shader to sample (M1.3). The render shader only PRESENTS this page; it is
+    /// not a terrain generator (00 §4). Returns null on failure.
+    #[func]
+    fn produce_page_texture(
+        &mut self,
+        origin_x: f32,
+        origin_z: f32,
+        spacing: f32,
+        seed: f32,
+        page_res: i64,
+        octaves: i64,
+        base_freq: f32,
+        amplitude: f32,
+    ) -> Option<Gd<godot::classes::ImageTexture>> {
+        use godot::classes::image::Format;
+        use godot::classes::{Image, ImageTexture};
+
+        let heights = self.produce_page(
+            origin_x, origin_z, spacing, seed, page_res, octaves, base_freq, amplitude,
+        );
+        let res = page_res as i32;
+        if heights.len() as i32 != res * res {
+            godot_error!("produce_page_texture: unexpected height count");
+            return None;
+        }
+        // R32F image: one float per texel == one height per cell.
+        let bytes = heights.to_byte_array();
+        let img = Image::create_from_data(res, res, false, Format::RF, &bytes)?;
+        ImageTexture::create_from_image(&img)
     }
 }
 

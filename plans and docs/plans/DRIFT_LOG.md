@@ -31,3 +31,18 @@ FINDING (now in 01_TOOLCHAIN §4): **GPU compute tests cannot run under `--headl
 EXACT ERROR / STATE: green and compiling.
 CODEBASE STATE: green at the M1.2 commit.
 WHAT I DID NOT DO: Did not start M1.3 (the first on-screen render — a real visual gate). Did not change the contract.
+
+## [2026-06-06] — M1.3
+TYPE: PARKED-FOR-VISUAL
+WHAT I WAS DOING: First on-screen render. Read the GPU height page back into an R32F ImageTexture, displaced a flat subdivided plane with the ring_displace.gdshader (render shader PRESENTS the page; does not generate it — 00 §4), added camera/sun/ambient. Wired into demo.tscn so F5 shows it.
+WHAT HAPPENED: Renders correctly. Captured two PNGs (visual-capture procedure, 01_TOOLCHAIN §5):
+  - res://_captures/m1_3_page.png — seed 1234, smooth rolling 1024m terrain.
+  - res://_captures/m1_3_page_seed2.png — seed 77777, distinctly different shape (central ridge).
+  Demo scene loads clean under vulkan (both WorldRoot print and "page presented" fire, no errors).
+WHAT I CAN CERTIFY FROM THE CAPTURES: terrain is non-blocky (smooth normals), not Perlin-nebula, and SHAPE RESPONDS TO SEED (the two PNGs differ clearly). The AESTHETIC pass ("does this read as good terrain") is the human's call.
+HOW TO RESOLVE THIS GATE (human, at desk):
+  - Open the two PNGs in _captures/ and confirm they look like smooth, non-blocky terrain and differ by seed. OR run live: `& $env:GODOT --rendering-driver vulkan --path "D:\world gen 13\wg-13"` (F5), tune seed_val/base_freq/amplitude on the M1_3_View node in the inspector and watch the shape change (the tuning loop).
+NOTE (must use vulkan, not headless): GPU compute needs a real driver (see M1.2 finding). The capture window flashes briefly.
+EXACT ERROR / STATE: green and compiling.
+CODEBASE STATE: green at the M1.3 commit.
+WHAT I DID NOT DO: Did not start M1.4 (seamless NxN). Did not change the contract. Did not introduce a CPU meshing path (heights go GPU → texture → displacement shader).
