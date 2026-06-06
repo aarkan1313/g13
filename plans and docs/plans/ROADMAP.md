@@ -9,8 +9,9 @@ Milestones 1 and 2 are detailed in their own docs. Everything past that is a **h
 ## M1 — Contiguous infinite land  *(detailed: MILESTONE_1_land.md)*  — **not started**
 The foundation. Smooth, seamless, streaming, performant, untextured land.
 
-## M2 — Untextured biomes + DEM-informed shape  *(detailed: MILESTONE_2_biomes.md)*  — **not started**
+## M2 — Untextured biomes + DEM-informed shape  *(detailed: MILESTONE_2_biomes.md)*  — **in progress**
 Large contiguous biomes by climate; DEM statistics make terrain believable. Flat colors. (DEM library inventoried in `03_DEM_CATALOG.md`.)
+**Roadmap correction (2026-06-06):** plain value-noise fBM proved structurally incapable of real landforms ("Perlin oatmeal", the attempt #1–12 failure), so a step **M2.3b — real macro-landform field** (domain-warped + ridged elevation: actual ridgelines/valleys) was inserted between M2.3 and M2.4. This macro-elevation field is the PERMANENT, non-deprecating shape infrastructure: **M6 erosion carves real detail into it, M2.5/2.6 DEM-stats tune it, M3 textures drape it, M4 scatter reads its slope.** Accordingly **M2.5/2.6 are redefined** from "rescue placeholder noise" to "tune the M2.3b ridged macro field with DEM-measured statistics." High-frequency detail is deliberately kept minimal in M2.3b because that is erosion's job (M6) — building it now would be throwaway (`00 §1.1`). See `M2_DESIGN.md` and the design spec `docs/superpowers/specs/2026-06-06-m2-3b-macro-landform-field-design.md`.
 
 ---
 
@@ -25,6 +26,7 @@ Sea level and lake basins are field data; water surface shader + buoyancy/swim i
 
 ## M6 — Erosion & hydrology  *(Field side — a post-process pass on the field)*
 The "cool water" realism you want. Hydraulic + thermal erosion as a GPU compute pass that runs over the field's heights to carve valleys and deposit sediment; hydrology traces where water flows, which feeds river/lake placement. Runs as a bake or region pass, results cached deterministically. *Pure field-side; renderer unaffected.* This is high-value, moderate-high risk — it gets its own detailed doc when M5 is done, not before.
+**Relationship to M2.3b:** M2.3b builds the ridged macro-landform *skeleton* (where ranges/valleys are, large-scale). M6 erosion carves the *real* fine detail into that skeleton (hydraulic flow). This is why M2.3b deliberately keeps high-frequency detail minimal — erosion supplies it for real, so building elaborate fake detail in M2.3b would be throwaway. The two compose: macro structure (M2.3b) → carved detail (M6).
 
 ## M7 — Caves, overhangs, tunnels  *(Renderer gains full-volume extraction; Field already 3D)*
 The payoff of choosing a density field in M1. The field already returns 3D density; here the renderer learns Surface Nets / Dual Contouring for chunks containing interior air, so caves are smooth, not blocky. *No field rewrite — this is why we paid for the density field up front.*
