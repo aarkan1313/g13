@@ -2,9 +2,12 @@
 # Per 00_ARCHITECTURE.md §4: Rust owns the runtime (scheduling, residency,
 # view, facts, tests) and drives the GPU field. It never re-implements the
 # world math on the CPU — that lives in wg-13/shaders/ GLSL (the source of truth).
+# `dem_distill` is an OFFLINE-only tool (M2.3): it reads DEM .tif files and emits
+# a small fingerprint file; it is NOT linked into the `gdext` cdylib, so the
+# runtime never opens a .tif (03_DEM_CATALOG hard rule).
 [workspace]
 resolver = "2"
-members = ["gdext"]
+members = ["gdext", "dem_distill"]
 
 [profile.dev]
 # Faster iterate-rebuild loop for the hot-reload tuning workflow.
