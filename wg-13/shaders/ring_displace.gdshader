@@ -17,7 +17,11 @@ uniform sampler2D height_tex : filter_linear, repeat_disable;
 // M2.1 climate page (RG32F): R = temperature, G = moisture. One texture for both
 // channels, bound per page alongside height_tex.
 uniform sampler2D climate_tex : filter_linear, repeat_disable;
-// View mode: 0 = normal height shading, 1 = temperature, 2 = moisture.
+// M2.2 biome-id page (R32F, float-encoded int). NEAREST filter: biome id is a
+// category, not a value — linear filtering between two ids would invent a wrong
+// in-between id at borders. (Hard borders here are expected; M2.4 blends them.)
+uniform sampler2D biome_tex : filter_nearest, repeat_disable;
+// View mode: 0 = normal height shading, 1 = temperature, 2 = moisture, 3 = biome.
 uniform int view_mode = 0;
 // World extent the page covers (page_res * spacing), so UVs map to the plane.
 uniform float page_world_size = 256.0;
@@ -93,11 +97,39 @@ vec3 moist_color(float m) {
 	return mix(damp, wet, (t - 0.75) / 0.25);
 }
 
+// M2.2 biome debug colors — matches the Rust BIOME_CENTROIDS roster by index
+// (the field outputs the id; the display shader owns the color table, M2_DESIGN).
+// Adding a biome = a centroid row in Rust + a color here. id is the R32F value.
+const vec3 BIOME_COLORS[10] = vec3[10](
+	vec3(0.95, 0.96, 0.98),  // 0 snow / ice cap
+	vec3(0.62, 0.60, 0.52),  // 1 tundra
+	vec3(0.20, 0.42, 0.34),  // 2 taiga / boreal
+	vec3(0.55, 0.52, 0.50),  // 3 bare mountain rock
+	vec3(0.70, 0.72, 0.40),  // 4 grassland / steppe
+	vec3(0.30, 0.55, 0.28),  // 5 temperate forest
+	vec3(0.16, 0.45, 0.30),  // 6 temperate rainforest
+	vec3(0.85, 0.74, 0.45),  // 7 desert
+	vec3(0.78, 0.70, 0.32),  // 8 savanna
+	vec3(0.18, 0.60, 0.25)   // 9 tropical rainforest
+);
+
+vec3 biome_color(float id_f) {
+	int id = int(id_f + 0.5);              // round the float-encoded int
+	if (id < 0) id = 0;
+	if (id > 9) id = 9;
+	return BIOME_COLORS[id];
+}
+
 void fragment() {
 	if (view_mode == 1) {
 		// Temperature view: tint by the climate texture's R channel.
 		float tv = texture(climate_tex, clamp(UV, vec2(0.0), vec2(1.0))).r;
 		ALBEDO = temp_color(tv) * page_tint;
+		ROUGHNESS = 0.95;
+	} else if (view_mode == 3) {
+		// Biome view: flat per-biome debug color (the M2.2 gate's visual).
+		float bid = texture(biome_tex, clamp(UV, vec2(0.0), vec2(1.0))).r;
+		ALBEDO = biome_color(bid) * page_tint;
 		ROUGHNESS = 0.95;
 	} else if (view_mode == 2) {
 		// Moisture view: tint by the climate texture's G channel.

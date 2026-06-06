@@ -4,6 +4,22 @@ The human reads this FIRST every session. The agent appends here whenever it blo
 
 ---
 
+## [2026-06-06] — M2.2 biome assignment implemented — test gate PASS, visual gate PARKED
+TYPE: PARKED-FOR-VISUAL (output-provable core self-certified; 15/15 gates green) + two evidence-driven tuning fixes
+WHAT: Whittaker biome id in the FIELD (pillar decision: M2.3 shaping needs id on-GPU, so display-shader-only would be throwaway, 00 §1.1). Human deferred the design forks to the pillars + asked for N-axis "if not much more work."
+DESIGN (locked in M2_DESIGN):
+  - NEAREST-CENTROID classifier (Whittaker-as-Voronoi), not (lo,hi) bands: gapless + overlap-free by construction, trivially N-axis, sets up M2.4 blend-by-distance. Biome row = {id, color, centroid(temp,moist,alt)} — DATA (00 §6), pushed to GLSL as a uniform table. 10-biome roster.
+  - 3 axes wired now (temp, moisture, ALTITUDE) — N-axis structure, altitude free (field already has height) and makes snow peaks. 4th axis later = a data column + the field emitting it, not a rewrite.
+  - Page grows to 4 channels [h, t, m, biome_id]; FIELD_CHANNELS 3->4. Biome id in its own R32F texture; climate stays RG32F; height path UNCHANGED (m1_7a still bit-identical).
+TWO BUGS FOUND BY PROBING (systematic-debugging, not guessing — I wrote scratch probes, read the numbers, then fixed the cause):
+  1. CONFETTI AT DISTANCE: biome flipped per-cell on coarse pages (level-5 adjacent-differ 38.8%). CAUSE: altitude axis used the DETAILED height (base_freq ~period 670m); at coarse 128m cell spacing neighboring cells sample wildly different heights -> flipping biomes. FIX (pillar-chosen): biome altitude = a SEPARATE continental low-frequency landform `macro_altitude` (biome_alt_freq ~1/30km, like the climate noises), NOT the render height. Low-freq by construction -> contiguous at EVERY LOD, no neighborhood blur / page-edge issues. Result: fine pages 0.0%, level-5 ~9% adjacent-differ.
+  2. EVERYTHING COLD: only cold biomes appeared; temp mean was 0.19 with 54% of the world CLAMPED at temp=0. CAUSE: M2.1's altitude cooling used height/amplitude whose mean is ~0.99 (fBM isn't centered at 0), so it subtracted ~0.4 from EVERYWHERE then clamped. FIX (pillar-chosen — fix the field, don't rescale biome names to a broken distribution): warm latitude FLOOR (band spans [0.30..1] not [0..1]) + altitude cooling now normalized over [lowland..peak] (clamp((h-150)/200)) so only real highlands cool, lapse 0.4->0.35. Result: temp mean 0.48, ALL 10 biomes appear, balanced (taiga 26 / tundra 21 / savanna 14 / grass+rock ~13 / tempforest 9 / snow 2.5 / desert+rainforests rare-but-present).
+VERIFY: m2_2_biome_check PASS (determinism, valid ids [0,10), 0% fine adjacent-differ, global variety, seed sensitivity). m2_1_climate_check STILL PASS after the temp rebalance (within its range/smoothness/gradient tolerances). All 15 gates green. Live biome capture shows large contiguous regions (green forest blobs, yellow savanna bands, grey tundra/rock, white snow) — boundaries are hard nearest-neighbor (expected; M2.4 blends them).
+PARKED FOR VISUAL: M2.2 gate = "large contiguous color regions, no confetti." Believe satisfied. Evidence _captures/climate_biome.png; live: run.ps1 then V to the biome mode, fly to see regions. Awaiting human confirm before M2.3.
+NOTE for M2.4: region BORDERS still dither at the seam between two biomes (nearest-neighbor hard edge) — that's exactly what M2.4 border-blending addresses; not a bug now.
+CODEBASE STATE: green at the M2.2 commit.
+WHAT I DID NOT DO: Did not start M2.3 (parked for visual). Did not use display-shader-only biome (would be throwaway). Did not rescale biome centroids to paper over the cold field (fixed the field instead). Did not change the field/renderer contract (biome id is a field output, allowed). Did not break the height path (m1_7a bit-identical).
+
 ## [2026-06-06] — Post-M2.1 review audit: climate textures packed (RG32F); deferrals logged
 TYPE: (workload-independent cleanup from a code review; 14/14 gates green) + DEVIATION-AVERTED notes
 A review audited the fresh M2.1 code. Verified each point against the code before acting (receiving-code-review discipline — not blind implementation).

@@ -10,13 +10,18 @@ use godot::classes::rendering_device::{ShaderLanguage, ShaderStage, UniformType}
 use godot::classes::{RdShaderSource, RdUniform, RenderingDevice, RenderingServer};
 use godot::prelude::*;
 
-/// Number of float channels the field shader writes per cell (M2.1): the page
-/// carries [height, temperature, moisture] interleaved (00 §2.1 one dispatch).
-pub const FIELD_CHANNELS: usize = 3;
+/// Number of float channels the field shader writes per cell (M2.2): the page
+/// carries [height, temperature, moisture, biome_id] interleaved (00 §2.1, one
+/// dispatch). biome_id is a float-encoded integer index into the biome table.
+pub const FIELD_CHANNELS: usize = 4;
+
+/// Floats per biome centroid row in the pushed BiomeTable (vec4 stride for
+/// std430): [temp_c, moist_c, alt_c, _pad].
+pub const BIOME_STRIDE: usize = 4;
 
 /// Parameters for one page production. Mirrors the GLSL `Params` block layout,
-/// std430-friendly: 16 × 4 bytes = 64 bytes (8 height params + 6 climate params
-/// + 1 pad to a 16-float boundary). Field order MUST match field_height.glsl.
+/// std430-friendly: 20 × 4 bytes = 80 bytes (8 height + 6 climate + 6 biome,
+/// the last 3 of which are pad). Field order MUST match field_height.glsl.
 #[derive(Clone, Copy)]
 pub struct PageParams {
     pub origin_x: f32,
@@ -33,11 +38,17 @@ pub struct PageParams {
     pub climate_temp_noise: f32,
     pub climate_lapse: f32,
     pub climate_moist_freq: f32,
+    // --- M2.2 biome classifier params ---
+    pub biome_count: u32,
+    pub biome_w_temp: f32,
+    pub biome_w_moist: f32,
+    pub biome_w_alt: f32,
+    pub biome_alt_freq: f32, // macro-altitude frequency (continental, low)
 }
 
 impl PageParams {
     fn to_bytes(&self) -> PackedByteArray {
-        let mut v: Vec<u8> = Vec::with_capacity(64);
+        let mut v: Vec<u8> = Vec::with_capacity(80);
         v.extend_from_slice(&self.origin_x.to_le_bytes());
         v.extend_from_slice(&self.origin_z.to_le_bytes());
         v.extend_from_slice(&self.spacing.to_le_bytes());
@@ -51,7 +62,13 @@ impl PageParams {
         v.extend_from_slice(&self.climate_temp_noise.to_le_bytes());
         v.extend_from_slice(&self.climate_lapse.to_le_bytes());
         v.extend_from_slice(&self.climate_moist_freq.to_le_bytes());
-        v.extend_from_slice(&0f32.to_le_bytes());   // _climate_pad0
+        v.extend_from_slice(&self.biome_count.to_le_bytes());
+        v.extend_from_slice(&self.biome_w_temp.to_le_bytes());
+        v.extend_from_slice(&self.biome_w_moist.to_le_bytes());
+        v.extend_from_slice(&self.biome_w_alt.to_le_bytes());
+        v.extend_from_slice(&self.biome_alt_freq.to_le_bytes());
+        v.extend_from_slice(&0f32.to_le_bytes());   // _biome_pad0
+        v.extend_from_slice(&0f32.to_le_bytes());   // _biome_pad1
         PackedByteArray::from(v.as_slice())
     }
 }
@@ -59,11 +76,13 @@ impl PageParams {
 /// One produced page, deinterleaved into separate per-channel arrays (each
 /// page_res*page_res, row-major z*res+x). `heights` is exactly what M1 produced,
 /// so the M1.7 collision/height contract is unchanged; `temp`/`moisture` are the
-/// M2.1 climate channels for the display shader's view-mode tint.
+/// M2.1 climate channels; `biome` is the M2.2 biome-id channel (float-encoded
+/// int) for the display shader's biome debug color.
 pub struct FieldPage {
     pub heights: PackedFloat32Array,
     pub temp: PackedFloat32Array,
     pub moisture: PackedFloat32Array,
+    pub biome: PackedFloat32Array,
 }
 
 /// A compiled field-compute pipeline on a dedicated local RenderingDevice.
@@ -72,6 +91,11 @@ pub struct FieldGpu {
     rd: Gd<RenderingDevice>,
     shader: Rid,
     pipeline: Rid,
+    /// M2.2 biome centroid table (binding 2): flat f32 LE bytes, BIOME_STRIDE
+    /// floats per biome ([temp_c, moist_c, alt_c, _pad]). Set via
+    /// set_biome_centroids; the std430 buffer can't be zero-length, so a 1-row
+    /// default is kept until configured (biome_count in PageParams gates use).
+    biome_bytes: PackedByteArray,
 }
 
 impl FieldGpu {
@@ -98,7 +122,21 @@ impl FieldGpu {
         }
         let shader = rd.shader_create_from_spirv(&spirv);
         let pipeline = rd.compute_pipeline_create(shader);
-        Some(Self { rd, shader, pipeline })
+        // Default biome table: one centroid (BIOME_STRIDE floats), so the std430
+        // buffer is never zero-length before set_biome_centroids. With biome_count
+        // left at its caller default this still classifies sanely (all -> row 0).
+        let biome_bytes = PackedByteArray::from(vec![0u8; BIOME_STRIDE * 4]);
+        Some(Self { rd, shader, pipeline, biome_bytes })
+    }
+
+    /// Set the M2.2 biome centroid table. `centroids` is a flat f32 list,
+    /// BIOME_STRIDE per biome: [temp_c, moist_c, alt_c, _pad] × N. The caller
+    /// passes biome_count in PageParams to match. Must be non-empty (std430).
+    pub fn set_biome_centroids(&mut self, centroids: &PackedFloat32Array) {
+        if centroids.is_empty() {
+            return;
+        }
+        self.biome_bytes = centroids.to_byte_array();
     }
 
     /// Dispatch the field over one page and read all channels back to the CPU.
@@ -114,6 +152,11 @@ impl FieldGpu {
         let out_buf = self.rd.storage_buffer_create_ex(out_bytes.len() as u32).data(&out_bytes).done();
         let pbytes = params.to_bytes();
         let param_buf = self.rd.storage_buffer_create_ex(pbytes.len() as u32).data(&pbytes).done();
+        // M2.2 biome centroid table (binding 2).
+        let biome_buf = self.rd
+            .storage_buffer_create_ex(self.biome_bytes.len() as u32)
+            .data(&self.biome_bytes)
+            .done();
 
         let mut u_out = RdUniform::new_gd();
         u_out.set_uniform_type(UniformType::STORAGE_BUFFER);
@@ -123,8 +166,12 @@ impl FieldGpu {
         u_param.set_uniform_type(UniformType::STORAGE_BUFFER);
         u_param.set_binding(1);
         u_param.add_id(param_buf);
+        let mut u_biome = RdUniform::new_gd();
+        u_biome.set_uniform_type(UniformType::STORAGE_BUFFER);
+        u_biome.set_binding(2);
+        u_biome.add_id(biome_buf);
 
-        let uniforms = array![&u_out, &u_param];
+        let uniforms = array![&u_out, &u_param, &u_biome];
         let uniform_set = self.rd.uniform_set_create(&uniforms, self.shader, 0);
 
         let groups = (res + 7) / 8;
@@ -140,8 +187,9 @@ impl FieldGpu {
         self.rd.free_rid(uniform_set);
         self.rd.free_rid(out_buf);
         self.rd.free_rid(param_buf);
+        self.rd.free_rid(biome_buf);
 
-        // Deinterleave [h,t,m, h,t,m, ...] into three contiguous channel arrays.
+        // Deinterleave [h,t,m,b, ...] into four contiguous channel arrays.
         // heights is bit-identical to what the M1 single-channel path produced
         // for the same cell, so the M1.7 collision/texture contract is preserved.
         if interleaved.len() != n * FIELD_CHANNELS {
@@ -151,20 +199,24 @@ impl FieldGpu {
         let mut heights = PackedFloat32Array::new();
         let mut temp = PackedFloat32Array::new();
         let mut moisture = PackedFloat32Array::new();
+        let mut biome = PackedFloat32Array::new();
         heights.resize(n);
         temp.resize(n);
         moisture.resize(n);
+        biome.resize(n);
         let src = interleaved.as_slice();
         let h = heights.as_mut_slice();
         let t = temp.as_mut_slice();
         let m = moisture.as_mut_slice();
+        let bm = biome.as_mut_slice();
         for i in 0..n {
             let b = i * FIELD_CHANNELS;
             h[i] = src[b];
             t[i] = src[b + 1];
             m[i] = src[b + 2];
+            bm[i] = src[b + 3];
         }
-        Some(FieldPage { heights, temp, moisture })
+        Some(FieldPage { heights, temp, moisture, biome })
     }
 }
 

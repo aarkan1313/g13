@@ -5,7 +5,7 @@
 //! tests. The runtime uses `PagePool` (also over `FieldGpu`); both share the one
 //! GPU-dispatch implementation, so there is no duplicated field code (00 §4).
 
-use crate::field_gpu::{FieldGpu, FieldPage, PageParams};
+use crate::field_gpu::{FieldGpu, FieldPage, PageParams, BIOME_STRIDE};
 use godot::classes::image::Format;
 use godot::classes::{Image, ImageTexture};
 use godot::prelude::*;
@@ -14,7 +14,25 @@ use godot::prelude::*;
 /// `PagePool`'s `FieldConfig::default` so a FieldCompute production reproduces
 /// the runtime climate exactly (the M2.1 gate relies on this). Order matches the
 /// GLSL Params block: lat_scale, temp_freq, temp_noise, lapse, moist_freq.
-const CLIMATE_DEFAULT: [f32; 5] = [60000.0, 0.00002, 0.15, 0.4, 0.000025];
+const CLIMATE_DEFAULT: [f32; 5] = [60000.0, 0.00002, 0.15, 0.35, 0.000025];
+
+/// M2.2 biome roster + weights for the test oracle, matching PagePool's
+/// BIOME_CENTROIDS / weights so a FieldCompute production reproduces the runtime
+/// biome ids exactly (the M2.2 gate relies on this). Centroids: [t,m,a,_pad] × N.
+const BIOME_CENTROIDS: [[f32; BIOME_STRIDE]; 10] = [
+    [0.15, 0.50, 0.95, 0.0],
+    [0.18, 0.35, 0.55, 0.0],
+    [0.35, 0.62, 0.50, 0.0],
+    [0.50, 0.30, 0.85, 0.0],
+    [0.58, 0.30, 0.30, 0.0],
+    [0.55, 0.70, 0.35, 0.0],
+    [0.50, 0.92, 0.35, 0.0],
+    [0.88, 0.15, 0.25, 0.0],
+    [0.85, 0.45, 0.30, 0.0],
+    [0.90, 0.90, 0.30, 0.0],
+];
+const BIOME_WEIGHTS: [f32; 3] = [1.0, 1.0, 1.2];   // temp, moist, alt
+const BIOME_ALT_FREQ: f32 = 0.000033;              // macro-altitude freq (match PagePool)
 
 #[derive(GodotClass)]
 #[class(base = RefCounted)]
@@ -32,16 +50,21 @@ impl IRefCounted for FieldCompute {
 
 #[godot_api]
 impl FieldCompute {
-    /// Create the local RD + compile the field shader. Returns true on success.
+    /// Create the local RD + compile the field shader, and push the default
+    /// biome centroid table (matching PagePool). Returns true on success.
     #[func]
     fn initialize(&mut self, shader_glsl_path: GString) -> bool {
         self.gpu = FieldGpu::new(&shader_glsl_path);
+        if let Some(gpu) = self.gpu.as_mut() {
+            let flat: Vec<f32> = BIOME_CENTROIDS.iter().flatten().copied().collect();
+            gpu.set_biome_centroids(&PackedFloat32Array::from(flat.as_slice()));
+        }
         self.gpu.is_some()
     }
 
-    /// Build PageParams with the default continental climate (so heights match
-    /// the M1 path exactly — climate never feeds back into height — and climate
-    /// reproduces the runtime). The order mirrors the GLSL Params block.
+    /// Build PageParams with the default continental climate + biome roster (so
+    /// heights match the M1 path exactly — climate/biome never feed back into
+    /// height — and climate/biome reproduce the runtime). Mirrors the GLSL block.
     fn params(origin_x: f32, origin_z: f32, spacing: f32, seed: f32,
               page_res: i64, octaves: i64, base_freq: f32, amplitude: f32) -> PageParams {
         PageParams {
@@ -52,6 +75,11 @@ impl FieldCompute {
             climate_temp_noise: CLIMATE_DEFAULT[2],
             climate_lapse: CLIMATE_DEFAULT[3],
             climate_moist_freq: CLIMATE_DEFAULT[4],
+            biome_count: BIOME_CENTROIDS.len() as u32,
+            biome_w_temp: BIOME_WEIGHTS[0],
+            biome_w_moist: BIOME_WEIGHTS[1],
+            biome_w_alt: BIOME_WEIGHTS[2],
+            biome_alt_freq: BIOME_ALT_FREQ,
         }
     }
 
@@ -100,6 +128,23 @@ impl FieldCompute {
             dst[i * 2 + 1] = m[i];
         }
         out
+    }
+
+    /// M2.2: produce one page and return its BIOME-ID channel (float-encoded int,
+    /// page_res*page_res floats, row-major). Used by the m2_2_biome gate to prove
+    /// determinism / contiguity / valid-id on the real GPU output. Empty on fail.
+    #[func]
+    fn produce_biome_page(
+        &mut self,
+        origin_x: f32, origin_z: f32, spacing: f32, seed: f32,
+        page_res: i64, octaves: i64, base_freq: f32, amplitude: f32,
+    ) -> PackedFloat32Array {
+        let Some(gpu) = self.gpu.as_mut() else {
+            godot_error!("FieldCompute: not initialized.");
+            return PackedFloat32Array::new();
+        };
+        let p = Self::params(origin_x, origin_z, spacing, seed, page_res, octaves, base_freq, amplitude);
+        gpu.dispatch_page(p).map(|fp| fp.biome).unwrap_or_default()
     }
 
     /// Produce one page packed into an R32F ImageTexture (for a render shader).

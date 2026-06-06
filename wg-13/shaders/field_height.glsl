@@ -18,15 +18,25 @@
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
-// Output: PAGE_RES * PAGE_RES cells, 3 floats per cell, interleaved row-major:
-//   field[(z*PAGE_RES + x)*3 + 0] = height (world Y, what M1 produced)
-//   field[(z*PAGE_RES + x)*3 + 1] = temperature  (normalized ~[0,1], M2.1)
-//   field[(z*PAGE_RES + x)*3 + 2] = moisture     (normalized ~[0,1], M2.1)
+// Output: PAGE_RES * PAGE_RES cells, 4 floats per cell, interleaved row-major:
+//   field[(z*PAGE_RES + x)*4 + 0] = height (world Y, what M1 produced)
+//   field[(z*PAGE_RES + x)*4 + 1] = temperature  (normalized ~[0,1], M2.1)
+//   field[(z*PAGE_RES + x)*4 + 2] = moisture     (normalized ~[0,1], M2.1)
+//   field[(z*PAGE_RES + x)*4 + 3] = biome id      (float-encoded int, M2.2)
 // Rust deinterleaves channel 0 to keep the M1.7 height-array/R32F-texture
-// contract intact (collision still reads height-only), and slices temp/moisture
-// into their own R32F textures for the display shader's view-mode tint.
+// contract intact (collision still reads height-only), packs temp+moisture into
+// one RG32F texture and the biome id into an R32F texture for the display shader.
 layout(set = 0, binding = 0, std430) restrict writeonly buffer FieldBuffer {
     float field[];
+};
+
+// M2.2 biome table: nearest-centroid Whittaker classifier. Flat array of
+// `biome_count` centroids, 4 floats each [temp_c, moist_c, alt_c, _pad] (vec4
+// stride keeps std430 happy). DATA pushed from Rust (00 §6) — adding a biome is
+// a row here, never a code branch. The field outputs only the id; the display
+// shader owns the debug color table.
+layout(set = 0, binding = 2, std430) restrict readonly buffer BiomeTable {
+    vec4 biome_centroid[];   // .xyz = (temp_c, moist_c, alt_c), .w unused
 };
 
 // Params pushed from Rust. Kept as a UBO-style block for clarity; bound as a
@@ -46,7 +56,18 @@ layout(set = 0, binding = 1, std430) restrict readonly buffer Params {
     float climate_temp_noise;  // amplitude of that wobble in normalized temp units (0..~0.3)
     float climate_lapse;       // temperature drop per amplitude unit of altitude (altitude coupling)
     float climate_moist_freq;  // low frequency of the moisture noise (1/world-units)
-    float _climate_pad0;       // keep the block 16-float (64-byte) aligned, std430-friendly
+    // --- M2.2 biome classifier params ---
+    uint  biome_count;         // number of centroids in BiomeTable
+    float biome_w_temp;        // axis weight: temperature
+    float biome_w_moist;       // axis weight: moisture
+    float biome_w_alt;         // axis weight: altitude (>1 so elevation dominates)
+    // Macro-altitude frequency: the biome altitude axis is a SEPARATE continental
+    // low-frequency landform (macro_altitude), sampled at this freq (~1/tens-of-km,
+    // like the climate noises) so biomes stay contiguous at every LOD instead of
+    // inheriting the detailed height's much-higher frequency (which fragments them).
+    float biome_alt_freq;      // 1/world-units; low (continental landmass scale)
+    float _biome_pad0;         // pad block to 20 floats (80 bytes)
+    float _biome_pad1;
 };
 
 // --- deterministic hash-based value noise (no textures, no state) ---------
@@ -108,16 +129,21 @@ vec2 climate(vec2 world_xz, float height, uint seed) {
 
     // Latitude band: a smooth triangle wave over world-Z with a half-period of
     // climate_lat_scale, mapped to [0,1] (1 = equator/warm, 0 = pole/cold).
+    // Keep a warm FLOOR (lat doesn't reach pure 0) so the equatorial half stays
+    // genuinely hot and the whole world isn't dragged cold — the band spans a
+    // temperate [floor..1] range, then altitude carves the cold high ground.
     float lat = abs(fract(world_xz.y / (2.0 * climate_lat_scale)) * 2.0 - 1.0);
-    float lat_temp = smoothstep(0.0, 1.0, lat);
+    float lat_temp = mix(0.30, 1.0, smoothstep(0.0, 1.0, lat));
 
     // Gentle low-frequency wobble so the latitude bands aren't perfect stripes.
     float wobble = (value_noise(world_xz * climate_temp_freq, temp_seed) - 0.5)
                    * 2.0 * climate_temp_noise;
 
-    // Altitude cooling: higher ground is colder (sets up M2.3 mountains). height
-    // is in world units; normalize by amplitude so lapse is unit-free and tunable.
-    float alt_cool = max(height, 0.0) / max(amplitude, 1.0) * climate_lapse;
+    // Altitude cooling: only ground ABOVE the lowlands cools (else the fBM's high
+    // mean would subtract from everywhere and clamp half the world to 0). Normalize
+    // height over [lowland..peak] so lowlands get ~0 cooling, peaks get full lapse.
+    float alt_norm = clamp((height - 150.0) / 200.0, 0.0, 1.0);
+    float alt_cool = alt_norm * climate_lapse;
 
     float temp = clamp(lat_temp + wobble - alt_cool, 0.0, 1.0);
 
@@ -125,6 +151,48 @@ vec2 climate(vec2 world_xz, float height, uint seed) {
     float moist = clamp(value_noise(world_xz * climate_moist_freq, moist_seed), 0.0, 1.0);
 
     return vec2(temp, moist);
+}
+
+// M2.2 macro altitude: a CONTINENTAL-SCALE low-frequency landform signal used as
+// the biome altitude axis instead of the detailed height. *Why:* biomes are a
+// macro feature — they follow the regional landform (a whole range = alpine), not
+// every small bump. The detailed height runs at base_freq (~period 670 m), which
+// fragments biomes into confetti when sampled at coarse LOD cell spacing. So we
+// sample a SEPARATE low-frequency landform at biome_alt_freq (continental, like
+// the climate noises) — low-frequency by construction, hence contiguous at EVERY
+// LOD with no neighborhood blur or page-edge issues. Returns a normalized [0,1]
+// "how high is this region" independent of the render height's fine detail.
+float macro_altitude(vec2 world_xz, uint seed) {
+    uint alt_seed = hash_u(seed ^ 0x414c5421u);   // "ALT!"
+    // Two octaves at the continental frequency: big landmasses + sub-regions,
+    // still far below any LOD cell spacing. Normalized to ~[0,1].
+    float a0 = value_noise(world_xz * biome_alt_freq, alt_seed);
+    float a1 = value_noise(world_xz * biome_alt_freq * 2.0, alt_seed + 0x68bc21ebu);
+    return clamp(a0 * 0.67 + a1 * 0.33, 0.0, 1.0);
+}
+
+// --- M2.2 biome classifier: nearest centroid in weighted climate space --------
+// Returns the index of the biome whose centroid (temp_c, moist_c, alt_c) is
+// nearest to this cell's (temp, moist, alt), under per-axis weights. Gapless and
+// overlap-free by construction (every point gets exactly one biome). DATA-driven:
+// the centroids are the pushed BiomeTable rows (00 §6). alt is normalized height.
+float biome_id(float temp, float moist, float alt) {
+    if (biome_count == 0u) {
+        return 0.0;   // no table -> single default; never NaN
+    }
+    vec3 w = vec3(biome_w_temp, biome_w_moist, biome_w_alt);
+    vec3 p = vec3(temp, moist, alt);
+    uint best = 0u;
+    float best_d = 1e30;
+    for (uint b = 0u; b < biome_count; b++) {
+        vec3 d = (p - biome_centroid[b].xyz) * w;
+        float dist2 = dot(d, d);
+        if (dist2 < best_d) {
+            best_d = dist2;
+            best = b;
+        }
+    }
+    return float(best);
 }
 
 void main() {
@@ -137,9 +205,16 @@ void main() {
     float h = fbm(world_xz, uint(seed));
     vec2 c = climate(world_xz, h, uint(seed));
 
-    // Interleaved [height, temp, moisture] per cell (Rust deinterleaves).
-    uint base = (cell.y * page_res + cell.x) * 3u;
+    // M2.2: altitude axis = MACRO continental landform (already normalized [0,1]).
+    // Low-frequency by construction -> biomes contiguous at every LOD (full height
+    // would fragment them into confetti at coarse cell spacing).
+    float alt = macro_altitude(world_xz, uint(seed));
+    float bid = biome_id(c.x, c.y, alt);
+
+    // Interleaved [height, temp, moisture, biome_id] per cell (Rust deinterleaves).
+    uint base = (cell.y * page_res + cell.x) * 4u;
     field[base + 0u] = h;
     field[base + 1u] = c.x;
     field[base + 2u] = c.y;
+    field[base + 3u] = bid;
 }

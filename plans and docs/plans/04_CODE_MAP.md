@@ -23,8 +23,11 @@ rust/gdext/src/
                     re-dispatch, no readback, can't drift from the view. M2.1: the
                     page ALSO carries ONE climate_tex (RG32F: R=temperature,
                     G=moisture, same production); get_page_climate_tex() exposes it
-                    to the view for the climate view-mode tint. configure_climate()
-                    tunes the climate model. Height path is unchanged (additive).
+                    to the view. M2.2: ALSO a biome_tex (R32F id) + the biome array;
+                    get_page_biome_tex/get_page_biome expose them; biome roster +
+                    weights are DATA (BIOME_CENTROIDS) pushed to the GPU in
+                    initialize(). configure_climate() tunes the climate model.
+                    Height path is unchanged (additive).
   field_gpu.rs (+)  dispatch_page now produces [height,temp,moisture] in ONE
                     dispatch (FIELD_CHANNELS=3, interleaved) and returns a
                     deinterleaved FieldPage{heights,temp,moisture}. heights is
@@ -35,15 +38,20 @@ wg-13/                          (the Godot project, res://)
   wg13.gdextension              points at rust/target/{debug,release}/wg13.dll.
   shaders/
     field_height.glsl           THE FIELD (compute): world-space fBM height page
-                                + M2.1 climate (temperature + moisture) in the
-                                SAME dispatch. Output is [h,t,m]/cell interleaved.
-                                Source of truth (00 §2.1). Sampled in world coords.
+                                + M2.1 climate (temp + moisture) + M2.2 biome id
+                                (nearest-centroid over temp/moist/macro-altitude),
+                                ALL in the SAME dispatch. Output [h,t,m,biome]/cell
+                                interleaved. macro_altitude = a continental low-freq
+                                landform (NOT detailed height) so biomes stay
+                                contiguous at every LOD. Biome centroids pushed as a
+                                uniform table (binding 2). Source of truth (00 §2.1).
     ring_displace.gdshader       PRESENTS a height page: displaces a plane, shades.
-                                M2.1: view_mode uniform (0 normal / 1 temperature /
-                                2 moisture) tints by the climate_tex it's handed
-                                (RG32F: .r=temp, .g=moisture). Distinct palettes
-                                (temp=thermal blue->red; moist=earth brown->blue).
-                                Not a generator (00 §4) — only reads/draws.
+                                view_mode uniform: 0 normal / 1 temperature /
+                                2 moisture / 3 BIOME. Tints by climate_tex (RG32F:
+                                .r=temp .g=moist) or biome_tex (R32F id, nearest
+                                filter). Distinct palettes (temp=thermal blue->red;
+                                moist=earth brown->blue; biome=BIOME_COLORS table
+                                matching the Rust roster by index). Only reads/draws.
   scripts/
     world_view.gd               LIVE view: owns PagePool, multi-level clipmap,
                                 camera-following streaming, never-black layering.
@@ -97,6 +105,7 @@ wg-13/                          (the Godot project, res://)
     m1_7c_stand_check.gd        loads demo.tscn, drops the capsule in WALK, asserts it doesn't fall through + is_on_floor on the terrain (output-provable core of the visual gate)
     m1_9b_eager_spread_check.gd never-black holds when mid-coarse eager is bounded+starved (every fine cell covered by some resident level; coarsest floor complete) — earns M1.9.3b
     m2_1_climate_check.gd       (M2.1) climate determinism + range [0,1] + low-freq smoothness (anti-confetti) + latitude gradient, on the real GPU readback
+    m2_2_biome_check.gd         (M2.2) biome determinism + valid ids [0,N) + contiguity (low adjacent-differ, no confetti) + global variety + seed sensitivity
     hud_smoke_check.gd          (smoke) perf HUD loads, finds the view, all sections show sane values matching the pool, toggles work
     tour_smoke_check.gd         (smoke) auto-tour starts OFF, drives the real fly-cam, advances steps, pause restores control, resume works
   captures/                     SCREENSHOT TOOLS (evidence, not gates).
@@ -147,3 +156,4 @@ Fly the live world: `.\run.ps1` (agent launches a windowed instance on the user'
 | m1_7c_stand_check.gd | M1.7c | capsule dropped in demo.tscn doesn't fall through and is_on_floor on the terrain (output-provable core; live walk is the human visual gate) |
 | m1_9b_eager_spread_check.gd | M1.9.3b | bounding mid-coarse eager stays never-black: every fine cell covered by some resident level; coarsest floor complete |
 | m2_1_climate_check.gd | M2.1 | climate determinism (same page+seed → bit-identical); range [0,1]; low-freq/smooth (anti-confetti); latitude gradient real |
+| m2_2_biome_check.gd | M2.2 | biome determinism; valid integer ids [0,N); contiguity (low adjacent-differ); global variety; seed sensitivity |

@@ -11,7 +11,7 @@ extends SceneTree
 const VIEW := preload("res://scripts/world_view.gd")
 const OUT_DIR := "res://_captures"
 const SETTLE_FRAMES := 90        # let the multi-level ring fill before shooting
-const MODE_NAMES := ["normal", "temperature", "moisture"]
+const MODE_NAMES := ["normal", "temperature", "moisture", "biome"]
 
 var _root: Node3D
 var _f := 0

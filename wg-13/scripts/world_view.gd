@@ -41,11 +41,12 @@ const FLY := "res://scripts/fly_camera.gd"
 
 var _pool: RefCounted
 var _ring_shader: Resource
-# M2.1 view mode: 0 = normal height shading, 1 = temperature, 2 = moisture.
-# Cycled by V; pushed to every page material so the climate fields are visible
-# ON the terrain you're flying (the same render path biome color will use, M2.2).
+# View mode: 0 = normal height shading, 1 = temperature, 2 = moisture (M2.1),
+# 3 = biome (M2.2). Cycled by V; pushed to every page material so the field's
+# climate/biome outputs are visible ON the terrain you're flying (the same render
+# path real biome textures will use in M3).
 var _view_mode := 0
-const VIEW_MODE_NAMES := ["normal", "temperature", "moisture"]
+const VIEW_MODE_NAMES := ["normal", "temperature", "moisture", "biome"]
 var _instances := {}                       # "L:gx:gz" -> MeshInstance3D
 var _inst_meta := {}                        # "L:gx:gz" -> Vector3i(level,gx,gz) — parsed once, so
                                             # the per-frame loops never re-split the string key (M1.9.3c)
@@ -338,6 +339,8 @@ func _make_page_instance(tex, level: int, gx: int, gz: int, span: float) -> Mesh
 	# so the climate view modes can tint by it. Resident here (we just produced or
 	# cache-hit the page), so the getter returns the matching texture.
 	mat.set_shader_parameter("climate_tex", _pool.get_page_climate_tex(level, gx, gz))
+	# M2.2: bind this page's biome-id texture (R32F) for the biome view mode.
+	mat.set_shader_parameter("biome_tex", _pool.get_page_biome_tex(level, gx, gz))
 	mat.set_shader_parameter("view_mode", _view_mode)       # current mode (recycled mats too)
 	mat.set_shader_parameter("page_world_size", span)       # span differs by level on reuse
 	mat.set_shader_parameter("cell_spacing", spacing * pow(2.0, level))

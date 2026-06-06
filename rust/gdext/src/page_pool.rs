@@ -12,10 +12,41 @@
 
 use std::collections::HashMap;
 
-use crate::field_gpu::{FieldGpu, FieldPage, PageParams};
+use crate::field_gpu::{FieldGpu, FieldPage, PageParams, BIOME_STRIDE};
 use godot::classes::image::Format;
 use godot::classes::{Image, ImageTexture};
 use godot::prelude::*;
+
+/// M2.2 default biome roster (DATA, 00 §6) — centroids in normalized
+/// (temp, moisture, altitude), BIOME_STRIDE floats per row [t_c, m_c, a_c, _pad].
+/// Nearest-centroid Whittaker over the climate cube; high alt_c rows (snow, rock)
+/// pull in at elevation via the altitude weight. The display shader holds the
+/// matching debug-color table (BIOME_COLORS in world_view). Adding a biome = a
+/// row here + a color there; never a code branch. Order = biome id.
+///   0 snow/ice  1 tundra  2 taiga  3 mountain rock  4 grassland
+///   5 temperate forest  6 temperate rainforest  7 desert  8 savanna
+///   9 tropical rainforest
+const BIOME_CENTROIDS: [[f32; BIOME_STRIDE]; 10] = [
+    [0.15, 0.50, 0.95, 0.0],  // 0 snow / ice cap
+    [0.18, 0.35, 0.55, 0.0],  // 1 tundra
+    [0.35, 0.62, 0.50, 0.0],  // 2 taiga / boreal
+    [0.50, 0.30, 0.85, 0.0],  // 3 bare mountain rock
+    [0.58, 0.30, 0.30, 0.0],  // 4 grassland / steppe
+    [0.55, 0.70, 0.35, 0.0],  // 5 temperate forest
+    [0.50, 0.92, 0.35, 0.0],  // 6 temperate rainforest
+    [0.88, 0.15, 0.25, 0.0],  // 7 desert
+    [0.85, 0.45, 0.30, 0.0],  // 8 savanna
+    [0.90, 0.90, 0.30, 0.0],  // 9 tropical rainforest
+];
+const BIOME_W_TEMP: f32 = 1.0;
+const BIOME_W_MOIST: f32 = 1.0;
+const BIOME_W_ALT: f32 = 1.2;   // elevation pulls peaks to alpine/snow, but temp/
+                                // moisture still decide lowlands (deserts, jungle)
+// Macro-altitude frequency: the biome altitude axis is a SEPARATE continental
+// low-frequency landform (not the detailed render height), sampled at this freq
+// so biomes stay contiguous at every LOD. ~1/30 km = big landmasses/sub-regions,
+// far below any LOD cell spacing. Tunable.
+const BIOME_ALT_FREQ: f32 = 0.000033;
 
 /// Identifies a page in the world: ring level + integer grid coordinates.
 /// Level 0 is finest; each coarser level doubles world span per page (M1.5c).
@@ -41,6 +72,10 @@ struct ResidentPage {
     // G = moisture) — one texture/upload/sampler instead of two. Same single
     // production as height; the height R32F texture/array is unchanged (M1.7).
     climate_tex: Gd<ImageTexture>,
+    // M2.2 biome id (float-encoded int) as an R32F texture + the CPU array it
+    // was packed from (same production; the array is the gate's source of truth).
+    biome_tex: Gd<ImageTexture>,
+    biome: PackedFloat32Array,
 }
 
 /// How a page request is budgeted this frame (M1.9.3b).
@@ -68,6 +103,12 @@ struct FieldConfig {
     climate_temp_noise: f32,
     climate_lapse: f32,
     climate_moist_freq: f32,
+    // M2.2 biome classifier (centroids live in FieldGpu; here = count + weights).
+    biome_count: u32,
+    biome_w_temp: f32,
+    biome_w_moist: f32,
+    biome_w_alt: f32,
+    biome_alt_freq: f32,
 }
 
 impl Default for FieldConfig {
@@ -80,8 +121,14 @@ impl Default for FieldConfig {
             // 1/50 km temp wobble, 1/40 km moisture: large regions, smooth.
             climate_temp_freq: 0.00002,
             climate_temp_noise: 0.15,
-            climate_lapse: 0.4,
+            climate_lapse: 0.35,   // cooling from lowland->peak (alt-normalized now)
             climate_moist_freq: 0.000025,
+            // Biome defaults match the BIOME_CENTROIDS roster pushed in initialize().
+            biome_count: BIOME_CENTROIDS.len() as u32,
+            biome_w_temp: BIOME_W_TEMP,
+            biome_w_moist: BIOME_W_MOIST,
+            biome_w_alt: BIOME_W_ALT,
+            biome_alt_freq: BIOME_ALT_FREQ,
         }
     }
 }
@@ -147,10 +194,15 @@ impl IRefCounted for PagePool {
 
 #[godot_api]
 impl PagePool {
-    /// Compile the field shader on a local RD (shared FieldGpu machinery).
+    /// Compile the field shader on a local RD (shared FieldGpu machinery) and
+    /// push the default M2.2 biome centroid table to the GPU.
     #[func]
     fn initialize(&mut self, shader_glsl_path: GString) -> bool {
         self.gpu = FieldGpu::new(&shader_glsl_path);
+        if let Some(gpu) = self.gpu.as_mut() {
+            let flat: Vec<f32> = BIOME_CENTROIDS.iter().flatten().copied().collect();
+            gpu.set_biome_centroids(&PackedFloat32Array::from(flat.as_slice()));
+        }
         self.gpu.is_some()
     }
 
@@ -160,16 +212,14 @@ impl PagePool {
     #[func]
     fn configure(&mut self, page_res: i64, spacing: f32, seed: f32, octaves: i64,
                  base_freq: f32, amplitude: f32, max_new_per_frame: i64) {
-        let c = self.cfg;   // keep current climate params
-        self.cfg = FieldConfig {
-            page_res: page_res as u32, spacing, seed,
-            octaves: octaves as u32, base_freq, amplitude,
-            climate_lat_scale: c.climate_lat_scale,
-            climate_temp_freq: c.climate_temp_freq,
-            climate_temp_noise: c.climate_temp_noise,
-            climate_lapse: c.climate_lapse,
-            climate_moist_freq: c.climate_moist_freq,
-        };
+        // Mutate only the height/geometry fields in place, so climate (M2.1) and
+        // biome (M2.2) params keep their defaults / prior configure_* values.
+        self.cfg.page_res = page_res as u32;
+        self.cfg.spacing = spacing;
+        self.cfg.seed = seed;
+        self.cfg.octaves = octaves as u32;
+        self.cfg.base_freq = base_freq;
+        self.cfg.amplitude = amplitude;
         self.max_new_per_frame = max_new_per_frame as i32;
     }
 
@@ -344,6 +394,27 @@ impl PagePool {
         self.cache.get(&key).map(|p| p.climate_tex.clone())
     }
 
+    /// M2.2: the biome-id texture (R32F, float-encoded int) of a RESIDENT page —
+    /// the SAME production behind that page's height/climate textures. Null if not
+    /// resident. The view binds it for the biome view-mode debug color.
+    #[func]
+    fn get_page_biome_tex(&self, level: i64, gx: i64, gz: i64) -> Option<Gd<ImageTexture>> {
+        let key = PageKey { level: level as i32, gx: gx as i32, gz: gz as i32 };
+        self.cache.get(&key).map(|p| p.biome_tex.clone())
+    }
+
+    /// M2.2: biome id (float-encoded int) of a RESIDENT page, row-major — the
+    /// SAME array behind biome_tex (for the gate / future field-side readers).
+    /// Empty if not resident.
+    #[func]
+    fn get_page_biome(&self, level: i64, gx: i64, gz: i64) -> PackedFloat32Array {
+        let key = PageKey { level: level as i32, gx: gx as i32, gz: gz as i32 };
+        match self.cache.get(&key) {
+            Some(page) => page.biome.clone(),
+            None => PackedFloat32Array::new(),
+        }
+    }
+
     /// Produce one page on the GPU (via shared FieldGpu): the height array AND
     /// the R32F texture packed from it, kept together as a ResidentPage so they
     /// can't drift (M1.7 one-source-of-truth). Coarser levels stretch origin
@@ -367,10 +438,15 @@ impl PagePool {
             climate_temp_noise: self.cfg.climate_temp_noise,
             climate_lapse: self.cfg.climate_lapse,
             climate_moist_freq: self.cfg.climate_moist_freq,
+            biome_count: self.cfg.biome_count,
+            biome_w_temp: self.cfg.biome_w_temp,
+            biome_w_moist: self.cfg.biome_w_moist,
+            biome_w_alt: self.cfg.biome_w_alt,
+            biome_alt_freq: self.cfg.biome_alt_freq,
         };
         // Profiled region: GPU dispatch + blocking readback (rd.sync) — the
         // suspected fast-motion spike source. Accumulated per frame (M1.9.1).
-        let FieldPage { heights, temp, moisture } = self.gpu.as_mut()?.dispatch_page(params)?;
+        let FieldPage { heights, temp, moisture, biome } = self.gpu.as_mut()?.dispatch_page(params)?;
         self.produce_us_this_frame += t0.elapsed().as_micros() as i64;
         let res = self.cfg.page_res as i32;
         // Height texture: R32F, byte-identical to `heights` (M1.7 contract).
@@ -378,7 +454,9 @@ impl PagePool {
         // Climate: temp + moisture packed into ONE RG32F texture (R=temp,
         // G=moisture) — one upload/sampler for both channels (one production).
         let climate_tex = Self::rg32f_texture(res, &temp, &moisture)?;
-        Some(ResidentPage { texture, heights, climate_tex })
+        // Biome id: R32F (float-encoded int), same single production.
+        let biome_tex = Self::r32f_texture(res, &biome)?;
+        Some(ResidentPage { texture, heights, climate_tex, biome_tex, biome })
     }
 
     /// Pack a per-cell float array into an R32F ImageTexture (the format the M1
