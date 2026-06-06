@@ -40,9 +40,12 @@ wg-13/                          (the Godot project, res://)
                                 what demo.tscn runs.
     fly_camera.gd               Reusable WASD + right-drag inspection camera.
     player_capsule.gd           DEMO test character (M1.7c): CharacterBody3D
-                                capsule, F = fly (hand back to view's fly-cam),
-                                G = walk (drop + gravity + WASD). Proves the
-                                terrain collision; engine-generic, drops out clean.
+                                capsule. F = fly, G = walk (drop + gravity + WASD).
+                                Walk: Space = jump, Shift = sprint. (Fly: Space =
+                                rise, C = descend, Shift = boost — fly_camera.gd.)
+                                Walk/fly are mutually exclusive (no input bleed);
+                                spawns just above resident terrain (no fresh-page
+                                fall-through). Proves the collision; drops out clean.
   scenes/
     demo.tscn                   The launch target: WorldRoot + world_view. F5 = fly.
   tests/                        GATES (PASS/FAIL, exit code). See "Running gates".

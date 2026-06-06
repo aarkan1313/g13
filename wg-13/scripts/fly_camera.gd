@@ -38,8 +38,8 @@ func _process(delta: float) -> void:
 	if Input.is_key_pressed(KEY_S): dir += transform.basis.z
 	if Input.is_key_pressed(KEY_A): dir -= transform.basis.x
 	if Input.is_key_pressed(KEY_D): dir += transform.basis.x
-	if Input.is_key_pressed(KEY_E): dir += Vector3.UP
-	if Input.is_key_pressed(KEY_Q): dir -= Vector3.UP
+	if Input.is_key_pressed(KEY_SPACE) or Input.is_key_pressed(KEY_E): dir += Vector3.UP   # Space/E = rise
+	if Input.is_key_pressed(KEY_C) or Input.is_key_pressed(KEY_Q): dir -= Vector3.UP       # C/Q = descend
 	var s := speed * (boost_mult if Input.is_key_pressed(KEY_SHIFT) else 1.0)
 	if dir != Vector3.ZERO:
 		global_position += dir.normalized() * s * delta

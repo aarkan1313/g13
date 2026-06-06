@@ -4,6 +4,12 @@ The human reads this FIRST every session. The agent appends here whenever it blo
 
 ---
 
+## [2026-06-06] — M1.7c LIVE WALK PASS + controls polish
+TYPE: PARKED-FOR-VISUAL -> PASS (human), then demo-control tweaks
+HUMAN VISUAL PASS: after the input-bleed + spawn-at-terrain fix, the user re-flew the live world, dropped in (G), and confirmed: "i didnt fall through, i think you fixed it." M1.7c fall-through gate satisfied — the capsule stands on the streamed terrain and does not fall through, including the Shift case that first exposed it. The fix (walk/fly mutually exclusive + spawn just above resident terrain) is the real resolution.
+CONTROLS (user-requested, demo-only QoL — GDScript, no rebuild): fly now uses SPACE = rise / C = descend (E/Q kept as aliases). Walk: SPACE = jump (from the ground), SHIFT = sprint (move_speed x3). Stand gate still PASS; sprint speed (~36 m/s) is far under the tunneling-safe range proven earlier (2400 u/s probe didn't tunnel).
+REMAINING for M1.7: this was the last sub-step. M1.7 collision is DONE pending nothing — proceed to M1.8 (full M1 definition-of-done + tag m1-complete).
+
 ## [2026-06-06] — M1.7c (test character) — output-provable core PASS, live walk PARKED-FOR-VISUAL
 TYPE: PARKED-FOR-VISUAL (output-provable core self-certified)
 WHAT: Added player_capsule.gd (DEMO content, not engine) + wired into demo.tscn beside the view. CharacterBody3D capsule with F = fly (hand control back to world_view's free-fly camera, capsule sleeps -> flying unchanged) / G = walk (snap under the fly-cam, switch to the capsule's own camera, gravity + WASD). Finds the fly-camera via the viewport's current camera, so it never reaches into world_view internals (clean boundary). world_view.gd untouched (stays the reusable view).

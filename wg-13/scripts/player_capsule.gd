@@ -16,6 +16,8 @@ extends CharacterBody3D
 # (the view makes it current), so it never reaches into world_view internals.
 
 @export var move_speed: float = 12.0
+@export var sprint_mult: float = 3.0       # Shift = sprint
+@export var jump_speed: float = 12.0       # Space = jump (initial upward velocity)
 @export var gravity: float = 30.0
 @export var mouse_sensitivity: float = 0.0025
 @export var eye_height: float = 1.6        # camera offset above the capsule centre
@@ -123,12 +125,14 @@ func _enter_fly() -> void:
 func _physics_process(delta: float) -> void:
 	if not _walking:
 		return
-	# Gravity + ground.
-	if not is_on_floor():
-		velocity.y -= gravity * delta
-	else:
+	# Gravity + ground + jump.
+	if is_on_floor():
 		velocity.y = 0.0
-	# WASD relative to facing (yaw only).
+		if Input.is_key_pressed(KEY_SPACE):       # Space = jump (only from the ground)
+			velocity.y = jump_speed
+	else:
+		velocity.y -= gravity * delta
+	# WASD relative to facing (yaw only); Shift = sprint.
 	var input := Vector3.ZERO
 	if Input.is_key_pressed(KEY_W): input.z -= 1.0
 	if Input.is_key_pressed(KEY_S): input.z += 1.0
@@ -138,6 +142,7 @@ func _physics_process(delta: float) -> void:
 	dir.y = 0.0
 	if dir.length() > 0.0:
 		dir = dir.normalized()
-	velocity.x = dir.x * move_speed
-	velocity.z = dir.z * move_speed
+	var spd: float = move_speed * (sprint_mult if Input.is_key_pressed(KEY_SHIFT) else 1.0)
+	velocity.x = dir.x * spd
+	velocity.z = dir.z * spd
 	move_and_slide()
