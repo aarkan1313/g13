@@ -4,6 +4,31 @@ The human reads this FIRST every session. The agent appends here whenever it blo
 
 ---
 
+## [2026-06-06] — M1.9.3a mesh/material pooling — worst frame 35 -> 17 ms (verified)
+TYPE: (perf fix, evidence-verified; 12/12 gates green)
+FIX (targets the M1.9.2 finding exactly): stop allocating per page. (1) ONE shared PlaneMesh per level (identical geometry for every page at a level) -> referenced, not re-newed. (2) A free-list of MeshInstance3D+material: evicted instances are hidden and recycled (re-point height_tex, reposition) instead of queue_free + new. Steady state and the eager burst now allocate nothing.
+RE-CAPTURED (same flight, 2400 u/s, before -> after):
+  worst frame 35.40ms -> 17.15ms (-52%)
+  worst mesh  19.08ms ->  0.79ms (-96%)  <- the alloc spike is gone
+  view total over 300 frames 1014ms -> 835ms
+VERIFY: all 12 (10 gates + 2 smoke) PASS — pooling didn't break annulus visibility/coverage (recycled instances leave _instances, so the annulus pass ignores them; reused ones are re-shown then coverage-resolved as normal).
+WHAT THE EVIDENCE NOW SHOWS (-> M1.9.3b): worst frame 17.15ms is JUST over the 16.6 budget, and mesh is no longer the cause. The remaining cost on the worst (28-eager) frame is prod 9.3ms (GPU producing 28 coarse pages in ONE frame — my original hypothesis, real but secondary) + ~13ms non-mesh view (ring/dict iteration across 6 levels). Root trigger is the EAGER BURST (28 coarse pages/frame). 3b: spread that burst over a few frames WITHOUT breaking never-black (note: a prior naive eager-cap broke never-black + worsened startup — see 2026-06-06 M1.6 entry; must spread, not starve).
+CODEBASE STATE: green at the M1.9.3a commit.
+WHAT I DID NOT DO: Did not claim "fixed" without re-measuring. Did not touch the field/contract. Did not yet address the eager burst (3b).
+
+## [2026-06-06] — M1.9.2 spike CAPTURED — root cause was NOT what I assumed
+TYPE: (root-cause via evidence; hypothesis overturned)
+Captured the fast-motion spike with the M1.9.1 profiler (scratch diag flying east at 2400 u/s, AutoTour disabled). WORST 12 FRAMES:
+  dt=35.4ms -> prod 8.75 | view 31.4 | mesh 19.1 | 4 fine, 28 EAGER
+  dt=31.7ms -> prod 8.34 | view 27.8 | mesh 16.0 | 4 fine, 21 eager
+  ... calm frames: 0 eager -> mesh ~2.5ms, dt ~10ms.
+  Totals over 300 frames: prod=106ms, view=1014ms (view includes mesh).
+FINDING (overturned my guess): I assumed the spike was GPU production/readback (prod / rd.sync). IT IS NOT. prod is cheap and well-behaved (~8ms worst). The spike is VIEW-side GDScript, ~10x the GPU cost, dominated by MESH: building a fresh PlaneMesh + ShaderMaterial + MeshInstance3D PER PAGE. The trigger is the EAGER coarse-page burst — flying fast crosses coarse boundaries and the view builds many coarse pages in ONE frame (up to 28), each allocating mesh+material on the main thread. Worst frames correlate exactly with eager count. (This is why "measure before cutting" is a rule: optimizing prod/sync would have fixed nothing.)
+SECONDARY: view-minus-mesh ~12ms on the worst frame = non-mesh per-frame work (ring iteration / dict churn across all levels) — a second GDScript target.
+PLAN CHANGE: M1.9.3's "mesh/material reuse" is actually the PRIMARY spike fix, so it moves up (M1.9.3a): pool/reuse PlaneMesh + ShaderMaterial instead of per-page alloc. Then re-capture; address the ring/dict churn (3b) only if still significant.
+CODEBASE STATE: green (diagnostic was scratch, removed; no code change yet).
+WHAT I DID NOT DO: Did not optimize the GPU path (the evidence says it's not the problem). Did not cut on a guess.
+
 ## [2026-06-06] — M1.9.1 profiler instrumentation (measure before cutting)
 TYPE: (instrumentation; smoke + 10 gates green)
 First M1.9 step is MEASUREMENT, not optimization (Survivability: don't cut on a guess). Added per-system frame timing so the fast-motion spike becomes attributable:

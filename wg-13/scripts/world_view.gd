@@ -40,6 +40,14 @@ var _pool: RefCounted
 var _ring_shader: Resource
 var _instances := {}                       # "L:gx:gz" -> MeshInstance3D
 var _cam: Camera3D
+# M1.9.3a — kill the per-page alloc spike (measured: mesh+material `new` on the
+# eager burst was the dominant cost). (1) One SHARED PlaneMesh per level: every
+# page at a level has identical geometry, so build it once and reference it.
+# (2) A FREE-LIST of MeshInstance3D (with their material): evicted instances are
+# recycled (texture re-pointed, repositioned) instead of freed + re-newed. Steady
+# state and bursts now allocate nothing.
+var _level_mesh := {}                       # level -> shared PlaneMesh
+var _free_instances: Array = []             # recycled MeshInstance3D pool
 # M1.7 collision state (level-0 pages only). "gx:gz" keys.
 var _collisions := {}                       # "gx:gz" -> StaticBody3D (resident collision body)
 var _collision_building := {}               # "gx:gz" -> true while a WorkerThreadPool task is in flight
@@ -109,7 +117,7 @@ func _process(_dt: float) -> void:
 				continue
 			var cheb: int = maxi(absi(int(p[1]) - ccx), absi(int(p[2]) - ccz))
 			if cheb > keep:
-				_instances[key].queue_free()
+				_recycle_instance(_instances[key])   # back to the free-list, not freed
 				_instances.erase(key)
 		# 2. pin everything still displayed at this level
 		for key in _instances.keys():
@@ -243,33 +251,55 @@ func _update_annulus_visibility() -> void:
 					finer_covers = false
 		_instances[key].visible = not finer_covers
 
-func _make_page_instance(tex, level: int, gx: int, gz: int, span: float) -> MeshInstance3D:
-	var _t := Time.get_ticks_usec()
+# Shared PlaneMesh for a level — identical geometry for every page at that level,
+# so it's built once and referenced by all (no per-page mesh alloc). Cached.
+func _level_plane_mesh(level: int, span: float) -> PlaneMesh:
+	if _level_mesh.has(level):
+		return _level_mesh[level]
 	var plane := PlaneMesh.new()
 	plane.size = Vector2(span, span)
 	plane.subdivide_width = mini(page_res - 1, 160)
 	plane.subdivide_depth = mini(page_res - 1, 160)
+	_level_mesh[level] = plane
+	return plane
 
-	var mat := ShaderMaterial.new()
-	mat.shader = _ring_shader
+# Build OR RECYCLE a page instance. Recycling (popping a hidden instance off the
+# free-list and re-pointing its texture/transform) is what removes the eager-burst
+# alloc spike measured in M1.9.2 — steady state and bursts allocate nothing.
+func _make_page_instance(tex, level: int, gx: int, gz: int, span: float) -> MeshInstance3D:
+	var _t := Time.get_ticks_usec()
+	var mi: MeshInstance3D
+	var mat: ShaderMaterial
+	if _free_instances.is_empty():
+		mi = MeshInstance3D.new()
+		mat = ShaderMaterial.new()
+		mat.shader = _ring_shader
+		mat.set_shader_parameter("page_world_size", span)   # set once per material
+		mat.set_shader_parameter("height_scale", 1.0)
+		mi.material_override = mat
+		add_child(mi)
+	else:
+		mi = _free_instances.pop_back()
+		mat = mi.material_override
+		mi.visible = true
+
+	mi.mesh = _level_plane_mesh(level, span)                # shared per-level geometry
 	mat.set_shader_parameter("height_tex", tex)
-	mat.set_shader_parameter("page_world_size", span)
-	mat.set_shader_parameter("height_scale", 1.0)
+	mat.set_shader_parameter("page_world_size", span)       # span differs by level on reuse
 	mat.set_shader_parameter("cell_spacing", spacing * pow(2.0, level))
 	mat.set_shader_parameter("page_tint",
 		(1.0 if (gx + gz) % 2 == 0 else 0.82) if show_page_tint else 1.0)
-	# No overlap (annulus): coarse pages are hidden where fine fully covers (see
-	# _update_annulus_visibility), so levels never render the same ground -> no
-	# z-fighting. No Y bias / render_priority hacks needed.
-	var mi := MeshInstance3D.new()
-	mi.mesh = plane
-	mi.material_override = mat
 	mi.position = Vector3(gx * span + span * 0.5, 0.0, gz * span + span * 0.5)
 	mi.custom_aabb = AABB(Vector3(-span, -amplitude, -span),
 		Vector3(2.0 * span, 4.0 * amplitude, 2.0 * span))
-	add_child(mi)
-	_mesh_us_accum += Time.get_ticks_usec() - _t   # M1.9 profiling: per-frame mesh-build cost
+	_mesh_us_accum += Time.get_ticks_usec() - _t            # M1.9 profiling: per-frame mesh-build cost
 	return mi
+
+# Return an evicted instance to the free-list instead of freeing it (no churn):
+# hide it and keep it parented for reuse next time a page spawns.
+func _recycle_instance(mi: MeshInstance3D) -> void:
+	mi.visible = false
+	_free_instances.push_back(mi)
 
 func _spawn_camera() -> void:
 	var span: float = _pool.page_span()
