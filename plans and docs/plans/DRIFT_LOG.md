@@ -4,6 +4,16 @@ The human reads this FIRST every session. The agent appends here whenever it blo
 
 ---
 
+## [2026-06-06] — Dev tooling: perf HUD + data-driven auto-tour (smoke PASS)
+TYPE: (tooling — demo-side, not milestone work; smoke-verified, all 9 gates still green)
+Built two DEMO dev tools (no engine/contract impact; world_view/Rust/GLSL untouched), brainstormed + user-approved:
+  - perf_hud.gd (top-right CanvasLayer): true per-frame delta -> fps/ms + rolling p99/max (amber over 16.6ms budget; the M1.6 "Engine FPS hides spikes" lesson), streaming (resident pages / collision bodies / made / evicted from the pool's getters), camera world pos + page index, static mem + VRAM. COST DISCIPLINE: the label is rebuilt at update_hz (~5/s), NOT per frame — per-frame work is one delta sample into a ring buffer. H toggles all; 1-4 toggle sections. Reads the scene, never writes.
+  - auto_tour.gd (Node): DATA-DRIVEN — `tour` is an Array of {action,...,secs} step dicts; change the tour by editing rows (engine "variability in data" rule). Actions: fly_forward/boost/slow_pan/reverse/ascend/descend/orbit/walk_drop — each a small reusable fn. DRIVES THE EXISTING RIGS (moves world_view's fly-cam; triggers the player's walk via a new auto_move hook), not a parallel mover. T toggles; any movement input or T PAUSES and hands over the normal fly/walk from the current spot; T resumes from the same step. Starts OFF so a normal launch is clean.
+  - player_capsule gained `auto_move` (local-space drive dir): when set, the capsule moves by it instead of reading keys, so the tour can auto-walk without faking OS input. Zero -> manual keys as before.
+SMOKE PASS (output-provable, hud_smoke_check + tour_smoke_check): HUD finds the view, all 4 sections show sane values, the streaming count matches pool.resident_count, section toggle removes a row. Tour starts OFF, drives the real fly-cam (moved ~70m in 0.5s @ 600/s), advances steps, pause restores fly control, resume reactivates. All 9 M1 gates + the m1_6 frame-time gate still PASS (no regression from the auto_move hook).
+Wired both into demo.tscn (PerfHUD, AutoTour nodes beside View/Player). Removing them later = delete two nodes.
+NEXT: M1.8 — run the milestone flythrough (the auto-tour is the vehicle) and tag m1-complete.
+
 ## [2026-06-06] — Far-distance visual items confirmed (both deferred)
 TYPE: (observation logged, no code change)
 Human flying the live world reported two far-distance visual items: (1) SLIGHT LOD detail-step at clipmap ring boundaries (already a known deferred geomorph item), and (2) the MAIN one — terrain POPPING IN at the loaded-world frontier instead of dissolving into the depth fog. #2 was NOT distinctly logged before (it's separate from the geomorph step and the startup hitch). Added #2 as its own item in HANDOFF "Known deferred items". User agreed both are fine to fix later. Neither blocks M1 (gate is no-black/no-cracks; both hold — these are far-edge LOD/fog softness). Not fixing piecemeal (would be slop).

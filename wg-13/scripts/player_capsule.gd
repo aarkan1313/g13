@@ -27,6 +27,10 @@ extends CharacterBody3D
 
 var _view: Node3D                           # the world_view (for terrain-height lookup)
 var _fly_cam: Camera3D                      # the world_view's free-fly camera
+# Auto-drive hook (used by the auto-tour to walk the capsule without faking OS
+# input): a LOCAL-space move dir (x = strafe, z = forward/back, -z = forward).
+# Zero -> read the keyboard as normal. Set back to ZERO to return to manual.
+var auto_move := Vector3.ZERO
 var _walk_cam: Camera3D                     # our own camera, used in WALK mode
 var _walking := false
 var _yaw := 0.0
@@ -132,12 +136,14 @@ func _physics_process(delta: float) -> void:
 			velocity.y = jump_speed
 	else:
 		velocity.y -= gravity * delta
-	# WASD relative to facing (yaw only); Shift = sprint.
-	var input := Vector3.ZERO
-	if Input.is_key_pressed(KEY_W): input.z -= 1.0
-	if Input.is_key_pressed(KEY_S): input.z += 1.0
-	if Input.is_key_pressed(KEY_A): input.x -= 1.0
-	if Input.is_key_pressed(KEY_D): input.x += 1.0
+	# Move dir: the auto-tour's auto_move if set, else WASD. Relative to facing
+	# (yaw only); Shift = sprint.
+	var input := auto_move
+	if input == Vector3.ZERO:
+		if Input.is_key_pressed(KEY_W): input.z -= 1.0
+		if Input.is_key_pressed(KEY_S): input.z += 1.0
+		if Input.is_key_pressed(KEY_A): input.x -= 1.0
+		if Input.is_key_pressed(KEY_D): input.x += 1.0
 	var dir := (transform.basis * Vector3(input.x, 0.0, input.z))
 	dir.y = 0.0
 	if dir.length() > 0.0:

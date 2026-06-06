@@ -45,9 +45,27 @@ wg-13/                          (the Godot project, res://)
                                 rise, C = descend, Shift = boost — fly_camera.gd.)
                                 Walk/fly are mutually exclusive (no input bleed);
                                 spawns just above resident terrain (no fresh-page
-                                fall-through). Proves the collision; drops out clean.
+                                fall-through). `auto_move` hook lets the auto-tour
+                                drive it without faking OS input. Drops out clean.
+    perf_hud.gd                 DEMO dev tool: top-right perf/diagnostics HUD.
+                                True per-frame delta -> fps/ms + p99/max (amber
+                                over budget); streaming (pages/bodies/made/evict),
+                                position, memory/VRAM. Label rebuilt at update_hz
+                                (~5/s), not per frame -> no perf cost. H = toggle
+                                all; 1-4 = toggle sections. Reads the scene, never writes.
+    auto_tour.gd                DEMO dev tool: data-driven auto-tour. `tour` is a
+                                list of {action,...,secs} step dicts (edit rows to
+                                change it); each action is a small fn. Drives the
+                                EXISTING rigs (fly-cam + player auto_move), not a
+                                parallel mover. T toggles; any movement input or T
+                                PAUSES + hands you control; T resumes. Starts OFF.
   scenes/
-    demo.tscn                   The launch target: WorldRoot + world_view. F5 = fly.
+    demo.tscn                   The launch target: WorldRoot + View + Player +
+                                PerfHUD + AutoTour. F5 = fly.
+                                CONTROLS — Fly: WASD move, right-drag look, Space
+                                rise, C descend, Shift boost, wheel speed. Walk
+                                (press G; F back to fly): WASD, Space jump, Shift
+                                sprint. HUD: H toggle, 1-4 sections. Tour: T toggle.
   tests/                        GATES (PASS/FAIL, exit code). See "Running gates".
     m1_2_field_check.gd         determinism + continuity (GPU readback)
     m1_4_seam_check.gd          adjacent-page edge equality + teeth check
@@ -58,6 +76,8 @@ wg-13/                          (the Godot project, res://)
     m1_7a_heights_check.gd      get_page_heights == texture bytes (same source), matches FieldCompute, empty if non-resident
     m1_7b_collision_check.gd    drives the real view: level-0 collision body exists, shape map_data == pool heights, page-centre transform + cell_spacing scale, near-pages-only count
     m1_7c_stand_check.gd        loads demo.tscn, drops the capsule in WALK, asserts it doesn't fall through + is_on_floor on the terrain (output-provable core of the visual gate)
+    hud_smoke_check.gd          (smoke) perf HUD loads, finds the view, all sections show sane values matching the pool, toggles work
+    tour_smoke_check.gd         (smoke) auto-tour starts OFF, drives the real fly-cam, advances steps, pause restores control, resume works
   captures/                     SCREENSHOT TOOLS (evidence, not gates).
     stream_capture.gd           fly the world_view, save _captures/streamed.png
   _captures/                    PNG output — gitignored scratch (regenerable).
