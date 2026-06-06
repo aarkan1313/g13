@@ -42,6 +42,8 @@ const FLY := "res://scripts/fly_camera.gd"
 var _pool: RefCounted
 var _ring_shader: Resource
 var _instances := {}                       # "L:gx:gz" -> MeshInstance3D
+var _inst_meta := {}                        # "L:gx:gz" -> Vector3i(level,gx,gz) — parsed once, so
+                                            # the per-frame loops never re-split the string key (M1.9.3c)
 var _cam: Camera3D
 # M1.9.3a — kill the per-page alloc spike (measured: mesh+material `new` on the
 # eager burst was the dominant cost). (1) One SHARED PlaneMesh per level: every
@@ -114,29 +116,31 @@ func _process(_dt: float) -> void:
 				if tex == null:
 					continue                  # over budget; coarser blanket covers it
 				_instances[key] = _make_page_instance(tex, level, gx, gz, span)
+				_inst_meta[key] = Vector3i(level, gx, gz)   # parse the key ONCE, here
 
-	# Per level: drop stale meshes -> pin remaining -> evict pool pages outside keep.
-	# (Order matters: drop before pin so a stale page isn't pinned then evicted.)
+	# Per-level camera page-center, precomputed once (was recomputed per instance).
+	var lvl_ccx := PackedInt32Array(); lvl_ccx.resize(num_levels)
+	var lvl_ccz := PackedInt32Array(); lvl_ccz.resize(num_levels)
 	for level in range(num_levels):
 		var span: float = base_span * pow(2.0, level)
-		var ccx: int = int(floor(cam_x / span))
-		var ccz: int = int(floor(cam_z / span))
-		# 1. drop meshes outside keep zone at this level
-		for key in _instances.keys():
-			var p: PackedStringArray = key.split(":")
-			if int(p[0]) != level:
-				continue
-			var cheb: int = maxi(absi(int(p[1]) - ccx), absi(int(p[2]) - ccz))
-			if cheb > keep:
-				_recycle_instance(_instances[key])   # back to the free-list, not freed
-				_instances.erase(key)
-		# 2. pin everything still displayed at this level
-		for key in _instances.keys():
-			var p2: PackedStringArray = key.split(":")
-			if int(p2[0]) == level:
-				_pool.pin_page(level, int(p2[1]), int(p2[2]))
-		# 3. evict pool pages outside keep radius at this level
-		_pool.evict_outside(level, ccx, ccz, keep)
+		lvl_ccx[level] = int(floor(cam_x / span))
+		lvl_ccz[level] = int(floor(cam_z / span))
+
+	# ONE pass over instances (no per-level re-iteration, no string parsing):
+	# drop stale -> recycle; pin the rest. (Drop before pin so a stale page isn't
+	# pinned then evicted.) Reads coords from _inst_meta (parsed at creation).
+	for key in _instances.keys():
+		var m: Vector3i = _inst_meta[key]
+		var cheb: int = maxi(absi(m.y - lvl_ccx[m.x]), absi(m.z - lvl_ccz[m.x]))
+		if cheb > keep:
+			_recycle_instance(_instances[key])
+			_instances.erase(key)
+			_inst_meta.erase(key)
+		else:
+			_pool.pin_page(m.x, m.y, m.z)             # still displayed -> pin
+	# Evict pool pages outside keep radius, per level (cheap; bounded level count).
+	for level in range(num_levels):
+		_pool.evict_outside(level, lvl_ccx[level], lvl_ccz[level], keep)
 
 	_update_annulus_visibility()
 	_update_collision(cam_x, cam_z, base_span)
@@ -247,13 +251,13 @@ func _update_annulus_visibility() -> void:
 	for key in _instances.keys():
 		displayed[key] = true
 	for key in _instances.keys():
-		var p: PackedStringArray = key.split(":")
-		var level := int(p[0])
+		var m: Vector3i = _inst_meta[key]      # parsed at creation, not here (M1.9.3c)
+		var level := m.x
 		if level == 0:
 			_instances[key].visible = true     # finest is always shown
 			continue
-		var cgx := int(p[1])
-		var cgz := int(p[2])
+		var cgx := m.y
+		var cgz := m.z
 		# Is the entire finer (level-1) footprint displayed?
 		var finer_covers := true
 		for dz in range(2):

@@ -4,6 +4,19 @@ The human reads this FIRST every session. The agent appends here whenever it blo
 
 ---
 
+## [2026-06-06] — M1.9.3c string-churn removal + M1.9 CLOSED
+TYPE: (workload-independent waste removed; M1.9 perf milestone done; 13/13 gates green)
+M1.9.3c: the per-frame drop/pin/annulus loops re-split the "L:gx:gz" string key and re-iterated _instances ONCE PER LEVEL (6x). Fix: parse the key ONCE at instance creation into a parallel _inst_meta[key]=Vector3i(level,gx,gz); drop+pin is now a SINGLE pass reading meta (no per-level re-iteration, no string parsing); annulus visibility reads meta too. Churn (view minus prod minus mesh) dropped ~3.6ms -> ~1.8ms on the worst frame. The annulus overlap/coverage gates pass, so the visibility refactor preserved behavior exactly.
+M1.9 PERF MILESTONE SUMMARY (all evidence-driven, measure-before-cut):
+  worst fast-motion frame (2400 u/s boost): 35.40ms -> 17.15 (3a mesh pool) -> 10.97 (3b eager spread) -> ~11ms (3c). 0/300 frames over the 16.6 budget. ~3.2x.
+  - 3a: shared per-level PlaneMesh + MeshInstance3D free-list (no per-page alloc).
+  - 3b: bound mid-coarse eager production; coarsest stays unbounded (never-black floor). PROVEN never-black by m1_9b_eager_spread_check.
+  - 3c: parse page key once; single-pass per-frame loops.
+  All workload-INDEPENDENT (always correct, never re-done). 13 gates green. No feature/quality sacrificed; field/contract untouched.
+REMAINING COST = GPU page production (~5-7ms on the worst burst frame) — but that's REAL WORK (producing pages), bounded + spread, not waste. Optimizing it (async/double-buffered GPU production to avoid the blocking rd.sync) is WORKLOAD-DEPENDENT (the field gets much heavier with biomes/erosion in M2/M6), so per the agreed scope it's DEFERRED — optimize it when real content reveals the true cost, not against the placeholder fBM. Logged in HANDOFF.
+CODEBASE STATE: green at the M1.9.3c commit. M1.9 done.
+WHAT I DID NOT DO: Did not optimize the GPU production path (deferred, workload-dependent). Did not change the field/contract.
+
 ## [2026-06-06] — M1.9.3b eager-burst spread — worst frame 17 -> 11 ms, 0/300 over budget (never-black PROVEN)
 TYPE: (perf fix touching never-black, proven safe; 13/13 gates green)
 THE CAREFUL ONE (a prior naive eager-cap broke never-black — see M1.6 entry — so this needed a real argument, not a cap). Three production modes in the pool now:
