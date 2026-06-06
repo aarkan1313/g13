@@ -30,14 +30,21 @@ layout(set = 0, binding = 0, std430) restrict writeonly buffer FieldBuffer {
     float field[];
 };
 
-// M2.2 biome table: nearest-centroid Whittaker classifier. Flat array of
-// `biome_count` centroids, 4 floats each [temp_c, moist_c, alt_c, _pad] (vec4
-// stride keeps std430 happy). DATA pushed from Rust (00 §6) — adding a biome is
-// a row here, never a code branch. The field outputs only the id; the display
-// shader owns the debug color table.
+// M2.2/M2.3 biome table: nearest-centroid Whittaker classifier (M2.2) + per-biome
+// height shaping params (M2.3). Flat vec4 array, TWO vec4 per biome (BIOME_STRIDE
+// = 8 floats), std430-aligned:
+//   biome_row[b*2 + 0] = (temp_c, moist_c, alt_c, detail_amp)
+//   biome_row[b*2 + 1] = (detail_rough, _, _, _)
+// DATA pushed from Rust (00 §6) — adding a biome is a row here, never a code
+// branch. The field outputs only the id; the display shader owns the color table.
 layout(set = 0, binding = 2, std430) restrict readonly buffer BiomeTable {
-    vec4 biome_centroid[];   // .xyz = (temp_c, moist_c, alt_c), .w unused
+    vec4 biome_row[];        // 2 vec4 per biome (centroid+amp, rough+pad)
 };
+
+// Accessors so the rest of the shader reads biome data by meaning, not index math.
+vec3  biome_centroid(uint b)    { return biome_row[b * 2u].xyz; }
+float biome_detail_amp(uint b)  { return biome_row[b * 2u].w; }
+float biome_detail_rough(uint b){ return biome_row[b * 2u + 1u].x; }
 
 // Params pushed from Rust. Kept as a UBO-style block for clarity; bound as a
 // small storage/uniform buffer.
@@ -108,6 +115,53 @@ float fbm(vec2 world_xz, uint seed) {
     for (uint o = 0u; o < octaves; o++) {
         // vary the seed per octave so octaves are decorrelated but deterministic
         sum += amp * value_noise(world_xz * freq, seed + o * 0x68bc21ebu);
+        freq *= 2.0;
+        amp *= 0.5;
+    }
+    return sum;
+}
+
+// --- M2.3 per-biome height shaping --------------------------------------------
+// The full height is split into a SHARED base landform (the low octaves, the same
+// everywhere -> continuous across biome borders, no cliffs) plus per-biome DETAIL
+// (the high octaves, scaled by the biome's detail_amp/detail_rough). Biome is
+// chosen from the macro-altitude landform (00 §5: NOT from this shaped height), so
+// there's no circular dependency. Mountains = big rough detail; plains = ~0 detail.
+const uint BASE_OCTAVES = 2u;   // low octaves shared by all biomes (the macro shape)
+
+// Shared base landform: the first BASE_OCTAVES of the fBM. Identical on both sides
+// of any biome border, so the surface stays continuous (only detail intensity
+// steps across a border — a roughness change, never an elevation jump).
+float base_landform(vec2 world_xz, uint seed) {
+    float freq = base_freq;
+    float amp = amplitude;
+    float sum = 0.0;
+    uint oc = min(BASE_OCTAVES, octaves);
+    for (uint o = 0u; o < oc; o++) {
+        sum += amp * value_noise(world_xz * freq, seed + o * 0x68bc21ebu);
+        freq *= 2.0;
+        amp *= 0.5;
+    }
+    return sum;
+}
+
+// Per-biome detail: the high octaves (above BASE_OCTAVES), with the octave count
+// extended by `rough` (more octaves = more fine ruggedness) and scaled outside by
+// the caller's detail_amp. Returns detail in the SAME amplitude units as the base
+// (the per-octave amp continues the base's geometric falloff), so detail_amp ~1
+// reproduces M1's character and detail_amp 0 gives a flat (base-only) surface.
+float detail_landform(vec2 world_xz, uint seed, float rough) {
+    // Start where the base left off (continue the geometric series).
+    float freq = base_freq * exp2(float(BASE_OCTAVES));
+    float amp = amplitude * exp2(-float(BASE_OCTAVES));
+    float sum = 0.0;
+    // Total detail octaves = the configured high octaves, plus up to a few extra
+    // from `rough` for rugged biomes. Clamp so it stays bounded/deterministic.
+    uint base_detail = octaves > BASE_OCTAVES ? octaves - BASE_OCTAVES : 0u;
+    uint extra = uint(clamp(rough, 0.0, 4.0) + 0.5);
+    uint oc = base_detail + extra;
+    for (uint o = 0u; o < oc; o++) {
+        sum += amp * value_noise(world_xz * freq, seed + (BASE_OCTAVES + o) * 0x68bc21ebu);
         freq *= 2.0;
         amp *= 0.5;
     }
@@ -185,7 +239,7 @@ float biome_id(float temp, float moist, float alt) {
     uint best = 0u;
     float best_d = 1e30;
     for (uint b = 0u; b < biome_count; b++) {
-        vec3 d = (p - biome_centroid[b].xyz) * w;
+        vec3 d = (p - biome_centroid(b)) * w;
         float dist2 = dot(d, d);
         if (dist2 < best_d) {
             best_d = dist2;
@@ -202,19 +256,31 @@ void main() {
     }
     // absolute world position of this cell (00 §5)
     vec2 world_xz = vec2(origin_x, origin_z) + vec2(cell) * spacing;
-    float h = fbm(world_xz, uint(seed));
-    vec2 c = climate(world_xz, h, uint(seed));
+    uint useed = uint(seed);
 
-    // M2.2: altitude axis = MACRO continental landform (already normalized [0,1]).
-    // Low-frequency by construction -> biomes contiguous at every LOD (full height
-    // would fragment them into confetti at coarse cell spacing).
-    float alt = macro_altitude(world_xz, uint(seed));
+    // Shared base landform (low octaves) — continuous across biome borders.
+    float base_h = base_landform(world_xz, useed);
+
+    // Climate from the BASE elevation (not the biome-shaped detail), so climate
+    // and biome selection never depend on per-biome shaping -> no circularity.
+    vec2 c = climate(world_xz, base_h, useed);
+
+    // M2.2: biome from the MACRO continental landform (independent of shaped
+    // height). Low-frequency -> contiguous at every LOD.
+    float alt = macro_altitude(world_xz, useed);
     float bid = biome_id(c.x, c.y, alt);
+    uint b = uint(bid + 0.5);
+
+    // M2.3: per-biome DETAIL on the shared base. Mountains: high amp + rough;
+    // plains: ~0 amp (flat). Border = a roughness step on a continuous base, no
+    // cliff (M2.4 will blend detail_amp/rough across borders).
+    float detail = biome_detail_amp(b) * detail_landform(world_xz, useed, biome_detail_rough(b));
+    float h = base_h + detail;
 
     // Interleaved [height, temp, moisture, biome_id] per cell (Rust deinterleaves).
-    uint base = (cell.y * page_res + cell.x) * 4u;
-    field[base + 0u] = h;
-    field[base + 1u] = c.x;
-    field[base + 2u] = c.y;
-    field[base + 3u] = bid;
+    uint o = (cell.y * page_res + cell.x) * 4u;
+    field[o + 0u] = h;
+    field[o + 1u] = c.x;
+    field[o + 2u] = c.y;
+    field[o + 3u] = bid;
 }

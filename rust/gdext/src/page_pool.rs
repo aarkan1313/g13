@@ -26,17 +26,22 @@ use godot::prelude::*;
 ///   0 snow/ice  1 tundra  2 taiga  3 mountain rock  4 grassland
 ///   5 temperate forest  6 temperate rainforest  7 desert  8 savanna
 ///   9 tropical rainforest
+// Each row (BIOME_STRIDE=8): [temp_c, moist_c, alt_c, detail_amp,
+//                             detail_rough, _pad, _pad, _pad]
+//   first 3  = M2.2 climate centroid (nearest-centroid classify)
+//   detail_amp   = M2.3 relief intensity (0 ~flat, ~1 = M1 character, >1 tall)
+//   detail_rough = M2.3 extra fine octaves (0 smooth .. 4 very rugged)
 const BIOME_CENTROIDS: [[f32; BIOME_STRIDE]; 10] = [
-    [0.15, 0.50, 0.95, 0.0],  // 0 snow / ice cap
-    [0.18, 0.35, 0.55, 0.0],  // 1 tundra
-    [0.35, 0.62, 0.50, 0.0],  // 2 taiga / boreal
-    [0.50, 0.30, 0.85, 0.0],  // 3 bare mountain rock
-    [0.58, 0.30, 0.30, 0.0],  // 4 grassland / steppe
-    [0.55, 0.70, 0.35, 0.0],  // 5 temperate forest
-    [0.50, 0.92, 0.35, 0.0],  // 6 temperate rainforest
-    [0.88, 0.15, 0.25, 0.0],  // 7 desert
-    [0.85, 0.45, 0.30, 0.0],  // 8 savanna
-    [0.90, 0.90, 0.30, 0.0],  // 9 tropical rainforest
+    [0.15, 0.50, 0.95,  0.5,   1.0, 0.0, 0.0, 0.0],  // 0 snow / ice cap (smooth caps)
+    [0.18, 0.35, 0.55,  0.4,   0.0, 0.0, 0.0, 0.0],  // 1 tundra (low, flat-ish)
+    [0.35, 0.62, 0.50,  0.8,   1.0, 0.0, 0.0, 0.0],  // 2 taiga / boreal (rolling)
+    [0.50, 0.30, 0.85,  1.5,   2.0, 0.0, 0.0, 0.0],  // 3 bare mountain rock (tall, rugged)
+    [0.58, 0.30, 0.30,  0.25,  0.0, 0.0, 0.0, 0.0],  // 4 grassland / steppe (flat plains)
+    [0.55, 0.70, 0.35,  0.7,   1.0, 0.0, 0.0, 0.0],  // 5 temperate forest (rolling)
+    [0.50, 0.92, 0.35,  0.9,   2.0, 0.0, 0.0, 0.0],  // 6 temperate rainforest (hilly)
+    [0.88, 0.15, 0.25,  0.4,   1.0, 0.0, 0.0, 0.0],  // 7 desert (low dunes)
+    [0.85, 0.45, 0.30,  0.3,   0.0, 0.0, 0.0, 0.0],  // 8 savanna (flat)
+    [0.90, 0.90, 0.30,  1.0,   2.0, 0.0, 0.0, 0.0],  // 9 tropical rainforest (varied)
 ];
 const BIOME_W_TEMP: f32 = 1.0;
 const BIOME_W_MOIST: f32 = 1.0;

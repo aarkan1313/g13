@@ -28,10 +28,12 @@ rust/gdext/src/
                     weights are DATA (BIOME_CENTROIDS) pushed to the GPU in
                     initialize(). configure_climate() tunes the climate model.
                     Height path is unchanged (additive).
-  field_gpu.rs (+)  dispatch_page now produces [height,temp,moisture] in ONE
-                    dispatch (FIELD_CHANNELS=3, interleaved) and returns a
-                    deinterleaved FieldPage{heights,temp,moisture}. heights is
+  field_gpu.rs (+)  dispatch_page produces [height,temp,moisture,biome] in ONE
+                    dispatch (FIELD_CHANNELS=4, interleaved) and returns a
+                    deinterleaved FieldPage{heights,temp,moisture,biome}. heights is
                     byte-identical to the M1 single-channel output (M1.7 intact).
+                    Pushes the biome table (binding 2, BIOME_STRIDE=8: centroid +
+                    M2.3 detail_amp/detail_rough) via set_biome_centroids.
 
 wg-13/                          (the Godot project, res://)
   project.godot                 Vulkan; main_scene = scenes/demo.tscn.
@@ -43,8 +45,11 @@ wg-13/                          (the Godot project, res://)
                                 ALL in the SAME dispatch. Output [h,t,m,biome]/cell
                                 interleaved. macro_altitude = a continental low-freq
                                 landform (NOT detailed height) so biomes stay
-                                contiguous at every LOD. Biome centroids pushed as a
-                                uniform table (binding 2). Source of truth (00 §2.1).
+                                contiguous at every LOD. M2.3: height = shared base
+                                landform + per-biome detail (detail_amp/detail_rough
+                                from the table) -> mountains rugged, plains flat,
+                                borders continuous (no cliff). Biome table at binding
+                                2 (2 vec4/biome). Source of truth (00 §2.1).
     ring_displace.gdshader       PRESENTS a height page: displaces a plane, shades.
                                 view_mode uniform: 0 normal / 1 temperature /
                                 2 moisture / 3 BIOME. Tints by climate_tex (RG32F:
@@ -106,6 +111,7 @@ wg-13/                          (the Godot project, res://)
     m1_9b_eager_spread_check.gd never-black holds when mid-coarse eager is bounded+starved (every fine cell covered by some resident level; coarsest floor complete) — earns M1.9.3b
     m2_1_climate_check.gd       (M2.1) climate determinism + range [0,1] + low-freq smoothness (anti-confetti) + latitude gradient, on the real GPU readback
     m2_2_biome_check.gd         (M2.2) biome determinism + valid ids [0,N) + contiguity (low adjacent-differ, no confetti) + global variety + seed sensitivity
+    m2_3_shaping_check.gd       (M2.3) per-biome shaping: determinism + rugged biome is the roughest AND >= 2.2x the flattest + no border cliff (max adjacent step bounded)
     hud_smoke_check.gd          (smoke) perf HUD loads, finds the view, all sections show sane values matching the pool, toggles work
     tour_smoke_check.gd         (smoke) auto-tour starts OFF, drives the real fly-cam, advances steps, pause restores control, resume works
   captures/                     SCREENSHOT TOOLS (evidence, not gates).
@@ -157,3 +163,4 @@ Fly the live world: `.\run.ps1` (agent launches a windowed instance on the user'
 | m1_9b_eager_spread_check.gd | M1.9.3b | bounding mid-coarse eager stays never-black: every fine cell covered by some resident level; coarsest floor complete |
 | m2_1_climate_check.gd | M2.1 | climate determinism (same page+seed → bit-identical); range [0,1]; low-freq/smooth (anti-confetti); latitude gradient real |
 | m2_2_biome_check.gd | M2.2 | biome determinism; valid integer ids [0,N); contiguity (low adjacent-differ); global variety; seed sensitivity |
+| m2_3_shaping_check.gd | M2.3 | per-biome shaping determinism; rugged biome is roughest AND ≥2.2x flattest; no border cliff |
