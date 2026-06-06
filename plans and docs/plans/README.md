@@ -9,7 +9,8 @@ Attempt #13. The previous twelve failed on **architecture tangle** and **plan dr
 4. **MILESTONE_1_land.md** — contiguous infinite land, gated step by step. Start here for building.
 5. **MILESTONE_2_biomes.md** — untextured biomes + how DEMs inform the terrain.
 6. **03_DEM_CATALOG.md** — inventory of the 135 labeled reference DEMs M2 draws on.
-7. **ROADMAP.md** — everything else, as headers, in dependency order.
+7. **04_CODE_MAP.md** — what's implemented, what runs what, how to run each gate. Read before touching code.
+8. **ROADMAP.md** — everything else, as headers, in dependency order.
 
 ## Live tracking files
 - **PROGRESS.md** — where we are, one line per step.

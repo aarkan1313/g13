@@ -12,11 +12,9 @@
 
 use std::collections::HashMap;
 
-use godot::classes::rendering_device::UniformType;
-use godot::classes::{
-    Image, ImageTexture, RdShaderSource, RdUniform, RenderingDevice, RenderingServer,
-};
+use crate::field_gpu::{FieldGpu, PageParams};
 use godot::classes::image::Format;
+use godot::classes::{Image, ImageTexture};
 use godot::prelude::*;
 
 /// Identifies a page in the world: ring level + integer grid coordinates.
@@ -50,9 +48,7 @@ impl Default for FieldConfig {
 #[class(base = RefCounted)]
 pub struct PagePool {
     base: Base<RefCounted>,
-    rd: Option<Gd<RenderingDevice>>,
-    shader: Rid,
-    pipeline: Rid,
+    gpu: Option<FieldGpu>,
     cfg: FieldConfig,
 
     cache: HashMap<PageKey, Gd<ImageTexture>>,
@@ -75,9 +71,7 @@ impl IRefCounted for PagePool {
     fn init(base: Base<RefCounted>) -> Self {
         Self {
             base,
-            rd: None,
-            shader: Rid::Invalid,
-            pipeline: Rid::Invalid,
+            gpu: None,
             cfg: FieldConfig::default(),
             cache: HashMap::new(),
             pinned: std::collections::HashSet::new(),
@@ -93,31 +87,11 @@ impl IRefCounted for PagePool {
 
 #[godot_api]
 impl PagePool {
-    /// Compile the field shader and build the compute pipeline on a local RD.
+    /// Compile the field shader on a local RD (shared FieldGpu machinery).
     #[func]
     fn initialize(&mut self, shader_glsl_path: GString) -> bool {
-        let server = RenderingServer::singleton();
-        let Some(mut rd) = server.create_local_rendering_device() else {
-            godot_error!("PagePool: no local RenderingDevice (need --rendering-driver vulkan).");
-            return false;
-        };
-        let src = load_glsl(&shader_glsl_path);
-        let mut shader_source = RdShaderSource::new_gd();
-        shader_source.set_language(godot::classes::rendering_device::ShaderLanguage::GLSL);
-        shader_source.set_stage_source(godot::classes::rendering_device::ShaderStage::COMPUTE, &src);
-        let Some(spirv) = rd.shader_compile_spirv_from_source(&shader_source) else {
-            godot_error!("PagePool: SPIR-V compile returned null."); return false;
-        };
-        let err = spirv.get_stage_compile_error(godot::classes::rendering_device::ShaderStage::COMPUTE);
-        if !err.is_empty() {
-            godot_error!("PagePool: shader compile error: {}", err); return false;
-        }
-        let shader = rd.shader_create_from_spirv(&spirv);
-        let pipeline = rd.compute_pipeline_create(shader);
-        self.rd = Some(rd);
-        self.shader = shader;
-        self.pipeline = pipeline;
-        true
+        self.gpu = FieldGpu::new(&shader_glsl_path);
+        self.gpu.is_some()
     }
 
     /// Configure field params (tunable from GDScript / inspector).
@@ -206,71 +180,27 @@ impl PagePool {
         Some(tex)
     }
 
-    /// World origin of a page (level scales span by 2^level — M1.5c uses levels).
-    fn page_origin(&self, key: PageKey) -> (f32, f32) {
-        let span = self.page_span() * (1 << key.level.max(0)) as f32;
-        (key.gx as f32 * span, key.gz as f32 * span)
-    }
-
-    /// Produce one page on the GPU and pack it into an R32F ImageTexture.
+    /// Produce one page on the GPU (via shared FieldGpu) and pack it R32F.
+    /// Coarser levels stretch origin stride AND spacing by 2^level, so a coarse
+    /// page covers more world at the same resolution (the clipmap blanket).
     fn produce(&mut self, key: PageKey) -> Option<Gd<ImageTexture>> {
-        let (ox, oz) = self.page_origin(key);
-        // Coarser levels stretch spacing so a page covers more world at lower res.
-        let spacing = self.cfg.spacing * (1 << key.level.max(0)) as f32;
-        let heights = self.dispatch(ox, oz, spacing)?;
+        let scale = (1 << key.level.max(0)) as f32;
+        let span = self.page_span() * scale;
+        let params = PageParams {
+            origin_x: key.gx as f32 * span,
+            origin_z: key.gz as f32 * span,
+            spacing: self.cfg.spacing * scale,
+            seed: self.cfg.seed,
+            page_res: self.cfg.page_res,
+            octaves: self.cfg.octaves,
+            base_freq: self.cfg.base_freq,
+            amplitude: self.cfg.amplitude,
+        };
+        let heights = self.gpu.as_mut()?.dispatch_page(params)?;
         let res = self.cfg.page_res as i32;
         let bytes = heights.to_byte_array();
         let img = Image::create_from_data(res, res, false, Format::RF, &bytes)?;
         ImageTexture::create_from_image(&img)
-    }
-
-    /// GPU dispatch + readback for one page at a world origin & spacing.
-    fn dispatch(&mut self, origin_x: f32, origin_z: f32, spacing: f32) -> Option<PackedFloat32Array> {
-        let rd = self.rd.as_mut()?;
-        let res = self.cfg.page_res;
-        let n = (res * res) as usize;
-
-        let out_bytes = PackedByteArray::from(vec![0u8; n * 4]);
-        let out_buf = rd.storage_buffer_create_ex(out_bytes.len() as u32).data(&out_bytes).done();
-
-        let mut pv: Vec<u8> = Vec::with_capacity(32);
-        pv.extend_from_slice(&origin_x.to_le_bytes());
-        pv.extend_from_slice(&origin_z.to_le_bytes());
-        pv.extend_from_slice(&spacing.to_le_bytes());
-        pv.extend_from_slice(&self.cfg.seed.to_le_bytes());
-        pv.extend_from_slice(&res.to_le_bytes());
-        pv.extend_from_slice(&self.cfg.octaves.to_le_bytes());
-        pv.extend_from_slice(&self.cfg.base_freq.to_le_bytes());
-        pv.extend_from_slice(&self.cfg.amplitude.to_le_bytes());
-        let pbytes = PackedByteArray::from(pv.as_slice());
-        let param_buf = rd.storage_buffer_create_ex(pbytes.len() as u32).data(&pbytes).done();
-
-        let mut u_out = RdUniform::new_gd();
-        u_out.set_uniform_type(UniformType::STORAGE_BUFFER);
-        u_out.set_binding(0);
-        u_out.add_id(out_buf);
-        let mut u_param = RdUniform::new_gd();
-        u_param.set_uniform_type(UniformType::STORAGE_BUFFER);
-        u_param.set_binding(1);
-        u_param.add_id(param_buf);
-
-        let uniforms = array![&u_out, &u_param];
-        let uniform_set = rd.uniform_set_create(&uniforms, self.shader, 0);
-
-        let groups = (res + 7) / 8;
-        let cl = rd.compute_list_begin();
-        rd.compute_list_bind_compute_pipeline(cl, self.pipeline);
-        rd.compute_list_bind_uniform_set(cl, uniform_set, 0);
-        rd.compute_list_dispatch(cl, groups, groups, 1);
-        rd.compute_list_end();
-        rd.submit();
-        rd.sync();
-
-        let result = rd.buffer_get_data(out_buf).to_float32_array();
-        rd.free_rid(uniform_set);
-        rd.free_rid(out_buf);
-        rd.free_rid(param_buf);
-        Some(result)
     }
 
     /// Grid index of the level-0 page containing a world X (or Z) coordinate.
@@ -289,16 +219,4 @@ impl PagePool {
     #[func] fn evicted_count(&self) -> i64 { self.evicted }
     #[func] fn pinned_count(&self) -> i64 { self.pinned.len() as i64 }
     #[func] fn had_pin_violation(&self) -> bool { self.pin_violation }
-}
-
-fn load_glsl(path: &GString) -> GString {
-    use godot::classes::FileAccess;
-    use godot::classes::file_access::ModeFlags;
-    let Some(f) = FileAccess::open(path, ModeFlags::READ) else {
-        godot_error!("PagePool: cannot open shader {}", path);
-        return GString::new();
-    };
-    let raw = f.get_as_text().to_string();
-    let cleaned: String = raw.lines().filter(|l| !l.trim_start().starts_with("#[")).collect::<Vec<_>>().join("\n");
-    GString::from(cleaned.as_str())
 }

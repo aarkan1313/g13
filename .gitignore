@@ -27,6 +27,11 @@ Cargo.lock.bak
 *.pdb
 *.exp
 
+# ── Capture output (scratch evidence, regenerable) ───────────────────────
+# PNGs from capture scripts are reviewable scratch, not source. Gate evidence
+# lives in DRIFT_LOG narrative + the live scene. Don't bloat the repo with them.
+wg-13/_captures/
+
 # ── OS / editor noise ────────────────────────────────────────────────────
 Thumbs.db
 desktop.ini

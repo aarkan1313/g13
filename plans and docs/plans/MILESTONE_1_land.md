@@ -47,8 +47,9 @@ Each step is small on purpose and ends in a gate. Follow `02_WORKFLOW.md`. Build
 - **GATE (test):** pool invariants — never exceeds max pages/frame; never evicts a pinned/displayed page; coverage rule holds (every visible cell has at least a coarse page).
 
 ### M1.6 — LOD to the horizon at frame budget
+- **View-distance goal: ~30 km** ("see as far as you can see," Skyrim-scale; this has worked in past attempts). This is the target M1.6 tunes toward. It's reached by **scaling `num_levels`** on the clipmap built in M1.5c (each coarser level doubles per-page span, so a handful of levels cover 30 km cheaply — a fine-only ring at 30 km would be millions of pages, impossible). M1.5c builds the mechanism with `num_levels` as a parameter (default 2); M1.6 raises it and tunes per-level radii to reach 30 km — **no rewrite, just bigger numbers.**
 - Tune ring levels / page resolution so render distance reads as "to the horizon." Handle inter-level seams with skirts for now (geomorph polish is later). Minor popping acceptable at this milestone; cracks and black are NOT.
-- **Name the target hardware** (resolve the open item in `01_TOOLCHAIN.md §6`) before trusting the number.
+- **Name the target hardware** (resolve the open item in `01_TOOLCHAIN.md §6`) before trusting the frame-time number. (View distance is now pinned: 30 km.)
 - **GATE (test):** a scripted fly-path at fixed speed samples frame time; max and 99th-percentile under budget (16.6 ms) on the named machine. Measured, not eyeballed (`01_TOOLCHAIN.md §6`).
 - **GATE (visual):** horizon reads as far; LOD transitions don't read as broken. Park for visual.
 

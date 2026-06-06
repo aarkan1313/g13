@@ -19,7 +19,7 @@ M1.4 [ ] NxN page block, zero seams (visual + edge-readback test)
 M1.5 [ ] bounded page pool + clipmap rings + read-only view; stream, no black, no leak   <- CURRENT
   M1.5a [x] Rust PagePool: caches by (level,gx,gz), bounded new-per-frame; pool-driven static ring renders (test PASS)
   M1.5b [x] camera-following streaming: ring recenters, evicts behind, pins displayed; flat memory (test PASS)
-  M1.5c [ ] clipmap rings + never-black coverage + display pins   <- CURRENT
+  M1.5c [~] multi-level clipmap built (num_levels param, coarse-under-fine layering); never-black coverage test RED — exposed coarse-blanket budget-starvation; budget-allocation decision pending   <- CURRENT
 M1.6 [ ] LOD to horizon at frame budget, frame-time test passes
 M1.7 [ ] near-page collision, character doesn't fall through
 M1.8 [ ] MILESTONE GATE — full definition of done, tag m1-complete

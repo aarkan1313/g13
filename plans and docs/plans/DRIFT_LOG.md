@@ -64,3 +64,20 @@ HOW TO RESOLVE THIS GATE (human): glance at _captures/m1_4_grid3x3.png (continuo
 EXACT ERROR / STATE: green and compiling.
 CODEBASE STATE: green at the M1.4 commit.
 WHAT I DID NOT DO: Did not start M1.5. Did not change the contract. Did not introduce CPU meshing.
+
+## [2026-06-06] — M1.5b live visual PASS
+Human flew the live streaming world: "looks good, its fast." Confirmed the page checkerboard reads as intentional debug (not a defect) and that area scale is just WorldConfig tuning. M1.5b visually signed off. Two known cosmetic items, both deferred-by-design: (1) page_tint checkerboard is a debug aid — now a `show_page_tint` toggle; (2) faint per-page corrugation is the capped mesh subdivision (160/side) at close range — smooths with production subdivision / M1.6 LOD. Proceeding to M1.5c.
+
+## [2026-06-06] — Discipline pass (organization + docs) + M1.5c WIP
+TYPE: (refactor + cleanup, verified green) + BLOCKED-FOR-DECISION on M1.5c
+DISCIPLINE PASS (done, all 4 prior gates still PASS — clean refactor):
+  - De-duplicated GPU dispatch into rust/gdext/src/field_gpu.rs (the ONE place that runs the field on the GPU). FieldCompute (test oracle) and PagePool (runtime) both use it. field_compute.rs 234→~75 lines; page_pool lost its duplicate dispatch.
+  - Deleted superseded view scripts (m1_3_view.gd, m1_4_grid_view.gd); world_view.gd is the single live view (demo.tscn runs it).
+  - Split wg-13/tests (gates only) from wg-13/captures (screenshot tools); removed stale one-off capture scripts; renamed the keeper to captures/stream_capture.gd.
+  - _captures/ PNGs now gitignored (regenerable scratch; gate evidence = DRIFT_LOG narrative + live scene).
+  - Wrote 04_CODE_MAP.md: index of files, conventions, and how to run every gate. Added to README read-order.
+  - page_tint is now a show_page_tint toggle on world_view.
+M1.5c (multi-level clipmap) built but never-black coverage test (m1_5c_coverage_check.gd) is RED — and correctly so: it exposed that the coarse blanket can be BUDGET-STARVED. With num_levels=2, ring_radius=3, a coarse ring is 49 pages; at a bounded few-per-frame it can't fully populate before being relied on, so under fast motion some fine cells have neither fine nor coarse coverage → would show black. The coverage GEOMETRY is correct (equal-radius coarse ring reaches 2× as far, covers the fine ring); the GAP is throughput/budget allocation across levels.
+DECISION NEEDED (surfaced to human): how to guarantee the coarse blanket is always complete — (a) coarse levels produced unbounded/eagerly (few & cheap), (b) per-level budget with coarse guaranteed first, (c) shrink coarse ring radius. Did NOT pick unilaterally; this sets the streaming budget model.
+CODEBASE STATE: green and compiling (the RED is a test asserting a not-yet-satisfied property, intentionally committed red to track the gap honestly).
+WHAT I DID NOT DO: Did not fake the coverage gate green. Did not change the contract.

@@ -1,10 +1,14 @@
 extends Node3D
-# M1.5 world view — pool-driven terrain. Thin assembly only (00 §4): owns a Rust
-# PagePool, requests a ring of pages around the focus, and presents each as a
-# displaced plane via ring_displace. Launch-and-fly (fly_camera).
+# M1.5 world view — pool-driven, multi-level clipmap with never-black coverage.
+# Thin assembly only (00 §4): owns a Rust PagePool, keeps a ring of pages PER
+# LEVEL around the camera, presents each as a displaced plane via ring_displace.
+# Launch-and-fly (fly_camera).
 #
-# M1.5a: STATIC ring around origin through the pool (proves pool-driven render).
-# M1.5b will move the ring with the camera; M1.5c adds coarse levels + never-black.
+# M1.5c: NUM_LEVELS rings. Level L pages span base_span * 2^L. Coarse levels
+# render UNDER fine ones (lower render_priority + tiny downward bias), so when a
+# fine page isn't produced yet, the coarse blanket beneath shows through instead
+# of sky -> NEVER BLACK. num_levels is a parameter; M1.6 scales it to ~30 km
+# view distance with no rewrite (just more levels + tuned radii).
 
 const SHADER := "res://shaders/field_height.glsl"
 const RING := "res://shaders/ring_displace.gdshader"
@@ -16,13 +20,15 @@ const FLY := "res://scripts/fly_camera.gd"
 @export var octaves: int = 5
 @export var base_freq: float = 0.0015
 @export var amplitude: float = 240.0
-@export var ring_radius: int = 3           # (2*r+1)^2 pages around the camera
-@export var evict_margin: int = 1          # hysteresis: keep_radius = ring_radius + this
+@export var num_levels: int = 2            # fine (0) + coarse blankets. M1.6 scales up.
+@export var ring_radius: int = 3           # pages each side, per level, around camera
+@export var evict_margin: int = 1          # hysteresis: keep_radius = ring_radius + margin
 @export var max_new_per_frame: int = 4
+@export var show_page_tint: bool = true    # debug checkerboard marking page edges
 
 var _pool: RefCounted
 var _ring_shader: Resource
-var _instances := {}                       # "0:gx:gz" -> MeshInstance3D
+var _instances := {}                       # "L:gx:gz" -> MeshInstance3D
 var _cam: Camera3D
 
 func _ready() -> void:
@@ -33,54 +39,59 @@ func _ready() -> void:
 		push_error("M1.5: PagePool.initialize failed (need --rendering-driver vulkan)."); return
 	_pool.configure(page_res, spacing, seed_val, octaves, base_freq, amplitude, max_new_per_frame)
 	_ring_shader = load(RING)
-
-	# Build a static ring around origin (M1.5a). Production is bounded per frame,
-	# so over the first few frames the ring fills in; _process keeps requesting
-	# missing pages until the static ring is complete.
 	_spawn_camera()
+	print("M1.5c: %d-level clipmap, ring_radius %d, base span %.0fm" % [
+		num_levels, ring_radius, _pool.page_span()])
 
 func _process(_dt: float) -> void:
 	if _cam == null:
 		return
 	_pool.begin_frame()
-	var span: float = _pool.page_span()
-
-	# Page the camera is currently over (level 0).
-	var ccx: int = _pool.world_to_page_index(_cam.global_position.x)
-	var ccz: int = _pool.world_to_page_index(_cam.global_position.z)
-
-	# 1. Request the ring of pages around the camera; build any not yet present.
-	#    Bounded production spreads the work over frames (no stutter).
-	for gz in range(ccz - ring_radius, ccz + ring_radius + 1):
-		for gx in range(ccx - ring_radius, ccx + ring_radius + 1):
-			var key := "0:%d:%d" % [gx, gz]
-			if _instances.has(key):
-				continue
-			var tex = _pool.request_page(0, gx, gz)
-			if tex == null:
-				continue                    # over budget this frame; retry next
-			_instances[key] = _make_page_instance(tex, gx, gz, span)
-
-	# 2. Drop meshes for pages that have left the keep zone (camera moved). Do this
-	#    BEFORE pinning so a stale far page isn't pinned and then refused eviction.
+	var base_span: float = _pool.page_span()
 	var keep: int = ring_radius + evict_margin
-	for key in _instances.keys():
-		var parts: PackedStringArray = key.split(":")
-		var cheb: int = maxi(absi(int(parts[1]) - ccx), absi(int(parts[2]) - ccz))
-		if cheb > keep:
-			_instances[key].queue_free()
-			_instances.erase(key)
+	var cam_x: float = _cam.global_position.x
+	var cam_z: float = _cam.global_position.z
 
-	# 3. Pin everything STILL displayed (all now inside the keep zone).
-	for key in _instances.keys():
-		var parts: PackedStringArray = key.split(":")
-		_pool.pin_page(int(parts[0]), int(parts[1]), int(parts[2]))
+	# Request coarsest FIRST so the blanket is prioritized under the per-frame
+	# budget — the cheap wide coverage wins the budget before fine detail.
+	for level in range(num_levels - 1, -1, -1):
+		var span: float = base_span * pow(2.0, level)
+		var ccx: int = int(floor(cam_x / span))
+		var ccz: int = int(floor(cam_z / span))
+		for gz in range(ccz - ring_radius, ccz + ring_radius + 1):
+			for gx in range(ccx - ring_radius, ccx + ring_radius + 1):
+				var key := "%d:%d:%d" % [level, gx, gz]
+				if _instances.has(key):
+					continue
+				var tex = _pool.request_page(level, gx, gz)
+				if tex == null:
+					continue                  # over budget; coarse blanket covers it
+				_instances[key] = _make_page_instance(tex, level, gx, gz, span)
 
-	# 4. Evict pool pages outside the keep radius. None are pinned (pins are all
-	#    inside the keep zone after step 2), so nothing displayed is dropped.
-	_pool.evict_outside(0, ccx, ccz, keep)
+	# Per level: drop stale meshes -> pin remaining -> evict pool pages outside keep.
+	# (Order matters: drop before pin so a stale page isn't pinned then evicted.)
+	for level in range(num_levels):
+		var span: float = base_span * pow(2.0, level)
+		var ccx: int = int(floor(cam_x / span))
+		var ccz: int = int(floor(cam_z / span))
+		# 1. drop meshes outside keep zone at this level
+		for key in _instances.keys():
+			var p: PackedStringArray = key.split(":")
+			if int(p[0]) != level:
+				continue
+			var cheb: int = maxi(absi(int(p[1]) - ccx), absi(int(p[2]) - ccz))
+			if cheb > keep:
+				_instances[key].queue_free()
+				_instances.erase(key)
+		# 2. pin everything still displayed at this level
+		for key in _instances.keys():
+			var p2: PackedStringArray = key.split(":")
+			if int(p2[0]) == level:
+				_pool.pin_page(level, int(p2[1]), int(p2[2]))
+		# 3. evict pool pages outside keep radius at this level
+		_pool.evict_outside(level, ccx, ccz, keep)
 
-func _make_page_instance(tex, gx: int, gz: int, span: float) -> MeshInstance3D:
+func _make_page_instance(tex, level: int, gx: int, gz: int, span: float) -> MeshInstance3D:
 	var plane := PlaneMesh.new()
 	plane.size = Vector2(span, span)
 	plane.subdivide_width = mini(page_res - 1, 160)
@@ -91,14 +102,18 @@ func _make_page_instance(tex, gx: int, gz: int, span: float) -> MeshInstance3D:
 	mat.set_shader_parameter("height_tex", tex)
 	mat.set_shader_parameter("page_world_size", span)
 	mat.set_shader_parameter("height_scale", 1.0)
-	mat.set_shader_parameter("cell_spacing", spacing)
-	mat.set_shader_parameter("page_tint", 1.0 if (gx + gz) % 2 == 0 else 0.82)
-
+	mat.set_shader_parameter("cell_spacing", spacing * pow(2.0, level))
+	mat.set_shader_parameter("page_tint",
+		(1.0 if (gx + gz) % 2 == 0 else 0.82) if show_page_tint else 1.0)
+	# Never-black layering: finer levels draw on top of coarser. Fine = higher
+	# priority; coarse gets a tiny downward bias so fine wins z-fighting where both
+	# exist, and coarse shows through only where fine is absent.
+	mat.render_priority = level * -1            # level 0 highest, coarser lower
 	var mi := MeshInstance3D.new()
 	mi.mesh = plane
 	mi.material_override = mat
-	# Page world origin (shared-boundary-cell stride = span). Plane is centered.
-	mi.position = Vector3(gx * span + span * 0.5, 0.0, gz * span + span * 0.5)
+	var y_bias := -float(level) * 0.5           # coarse sits just under fine
+	mi.position = Vector3(gx * span + span * 0.5, y_bias, gz * span + span * 0.5)
 	mi.custom_aabb = AABB(Vector3(-span, -amplitude, -span),
 		Vector3(2.0 * span, 4.0 * amplitude, 2.0 * span))
 	add_child(mi)
@@ -108,10 +123,9 @@ func _spawn_camera() -> void:
 	var span: float = _pool.page_span()
 	var terrain_y := amplitude * 1.2
 	var cam := Camera3D.new()
-	cam.far = span * 40.0                       # see far enough across many pages
+	cam.far = span * 60.0
 	cam.set_script(load(FLY))
 	add_child(cam)
-	# Start above origin looking out over the terrain; fly with WASD to stream.
 	cam.global_position = Vector3(0.0, terrain_y + span * 0.5, span * 0.8)
 	cam.look_at(Vector3(0.0, terrain_y * 0.9, -span), Vector3.UP)
 	cam.make_current()
@@ -131,6 +145,3 @@ func _spawn_camera() -> void:
 	e.ambient_light_energy = 0.6
 	env.environment = e
 	add_child(env)
-
-	print("M1.5a: pool-driven %dx%d ring, page span %.0fm" % [
-		2 * ring_radius + 1, 2 * ring_radius + 1, span])
