@@ -29,6 +29,19 @@ When two pillars conflict, the higher one wins. Write this order down; an agent 
 
 Note that Quality is LAST. This is deliberate. Every previous attempt chased quality and sacrificed survivability. Quality is meaningless if the project is dead.
 
+### 1.1 The "build it right once" rule (governs HOW we satisfy the pillars)
+
+**Never build something you intend to replace.** If a more-performant, longer-term-correct approach is known, build *that* the first time — do not build a throwaway prototype "to move fast" and port it later.
+
+Why this is a rule, not a preference:
+- Throwaway code *feels* faster but **balloons the project**: you write it, then write it again, and the half-migrated state between the two is exactly the un-troubleshootable tangle that killed past attempts. So this rule **serves Survivability (#1) and Modularity (#2)** — it is not "chase Quality first."
+- It is the same reasoning that made us go **GPU-first** instead of CPU-then-rewrite (`§3`), and that keeps the field as **one GLSL implementation** instead of CPU+GPU (`§4`).
+
+What it concretely means:
+- **The most performant correct setup is the one we build.** For WG13 that is **Rust (deterministic runtime/policy) + GPU compute (the field/heavy production)**, with GDScript only assembling scenes. We do not prototype hot-path logic (page pool, streaming, scheduling) in GDScript to "get it flying," because that code would be thrown away — it lives in Rust from the start.
+- **This does NOT license over-building.** "Build it right once" means *pick the right target and build toward it incrementally through the gates* — not "build the whole page pool in one step." Survivability still wins: each step is small, gated, green. The rule forbids *throwaway direction*, not *incremental delivery*.
+- When unsure whether something is "throwaway" vs "a deliberate small first step": a first step is fine if the next step *builds on it*; it's throwaway if the next step *deletes and replaces it*. Build the former, never the latter.
+
 ---
 
 ## 2. THE STRUCTURAL RULE: the Field/Renderer boundary

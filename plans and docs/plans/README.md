@@ -15,10 +15,11 @@ Attempt #13. The previous twelve failed on **architecture tangle** and **plan dr
 - **PROGRESS.md** — where we are, one line per step.
 - **DRIFT_LOG.md** — what the agent hit while you were away. Read first each session.
 
-## The three things to never forget
+## The things to never forget
 1. **Field is the "what," Renderer is the "how it looks." They never know each other's internals.** (00 §2)
 2. **Every step ends in a gate. Unsupervised work crosses test gates and PARKS at visual gates.** (02 §2)
 3. **Quality is the LAST pillar. Survivability is the first.** A live, troubleshootable project beats a beautiful dead one. (00 §1)
+4. **Build it right once — never build what you'll replace.** Pick the most-performant, long-term-correct approach (Rust + GPU here) the first time; throwaway prototypes balloon the project. Incremental ≠ throwaway. (00 §1.1)
 
 ## Confirmed technical baseline (verified 2026-06-06 on this machine)
 - Godot **4.6.2-stable-mono**, Forward+ / **Vulkan** (`project.godot` set to vulkan). Mono build, but **no C#** — gdext + GDScript only; `[dotnet]` stripped. See `01_TOOLCHAIN.md §1`.
