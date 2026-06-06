@@ -35,9 +35,22 @@ layout(set = 0, binding = 0, std430) restrict writeonly buffer FieldBuffer {
 // stride keeps std430 happy). DATA pushed from Rust (00 §6) — adding a biome is
 // a row here, never a code branch. The field outputs only the id; the display
 // shader owns the debug color table.
+// M2.4: each biome row is 4 vec4 (BIOME_STRIDE=16 floats):
+//   row[0] = (temp_c, moist_c, alt_c, slope_p95)
+//   row[1] = spectrum[0..4)   row[2] = spectrum[4..8)   row[3] = pad
+// Spectrum = the biome archetype's MEASURED radial amplitude spectrum (M2.3),
+// coarse band 0 -> fine band 7, summing ~1.0. slope_p95 = real steepness ceiling.
 layout(set = 0, binding = 2, std430) restrict readonly buffer BiomeTable {
-    vec4 biome_centroid[];   // .xyz = (temp_c, moist_c, alt_c), .w unused
+    vec4 biome_row[];
 };
+vec3  biome_centroid(uint b) { return biome_row[b * 4u].xyz; }
+float biome_slope(uint b)    { return biome_row[b * 4u].w; }
+float biome_spec(uint b, uint o) {
+    // o in [0,8): row[1] holds 0..3, row[2] holds 4..7.
+    vec4 r = (o < 4u) ? biome_row[b * 4u + 1u] : biome_row[b * 4u + 2u];
+    uint k = o & 3u;
+    return (k == 0u) ? r.x : (k == 1u) ? r.y : (k == 2u) ? r.z : r.w;
+}
 
 // Params pushed from Rust. Kept as a UBO-style block for clarity; bound as a
 // small storage/uniform buffer.
@@ -101,18 +114,6 @@ float value_noise(vec2 p, uint seed) {
     return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
 }
 
-float fbm(vec2 world_xz, uint seed) {
-    float freq = base_freq;
-    float amp = amplitude;
-    float sum = 0.0;
-    for (uint o = 0u; o < octaves; o++) {
-        // vary the seed per octave so octaves are decorrelated but deterministic
-        sum += amp * value_noise(world_xz * freq, seed + o * 0x68bc21ebu);
-        freq *= 2.0;
-        amp *= 0.5;
-    }
-    return sum;
-}
 
 // --- M2.1 climate (world-space, low-frequency, deterministic) ----------------
 // Per-feature seeds are DERIVED by hashing the master seed (00 §5), never by
@@ -139,10 +140,10 @@ vec2 climate(vec2 world_xz, float height, uint seed) {
     float wobble = (value_noise(world_xz * climate_temp_freq, temp_seed) - 0.5)
                    * 2.0 * climate_temp_noise;
 
-    // Altitude cooling: only ground ABOVE the lowlands cools (else the fBM's high
-    // mean would subtract from everywhere and clamp half the world to 0). Normalize
-    // height over [lowland..peak] so lowlands get ~0 cooling, peaks get full lapse.
-    float alt_norm = clamp((height - 150.0) / 200.0, 0.0, 1.0);
+    // Altitude cooling: higher REGIONAL ground is colder. `height` here is the
+    // regional altitude proxy alt*amplitude (~[0,amplitude]); normalize over that
+    // span so low land gets ~0 cooling and the highest regions get full lapse.
+    float alt_norm = clamp(height / max(amplitude, 1.0), 0.0, 1.0);
     float alt_cool = alt_norm * climate_lapse;
 
     float temp = clamp(lat_temp + wobble - alt_cool, 0.0, 1.0);
@@ -185,7 +186,7 @@ float biome_id(float temp, float moist, float alt) {
     uint best = 0u;
     float best_d = 1e30;
     for (uint b = 0u; b < biome_count; b++) {
-        vec3 d = (p - biome_centroid[b].xyz) * w;
+        vec3 d = (p - biome_centroid(b)) * w;
         float dist2 = dot(d, d);
         if (dist2 < best_d) {
             best_d = dist2;
@@ -195,6 +196,41 @@ float biome_id(float temp, float moist, float alt) {
     return float(best);
 }
 
+// M2.4 spectral synthesis. Domain-warped octave sum where octave o's amplitude is
+// the biome archetype's MEASURED spectrum weight (M2.3 fingerprint), not a generic
+// 0.5^o. This makes each biome carry real-Earth structure (mountains ridged +
+// macro-heavy, plains fine-and-flat). 8 octaves from base_freq. The per-octave
+// weight is also slope-bounded by the biome's measured slope_p95 so synthesis
+// can't produce near-vertical cliffs (M2.4 Task 6).
+vec2 warp2(vec2 p, uint seed) {
+    return vec2(value_noise(p, seed), value_noise(p, seed ^ 0x9e3779b9u)) - 0.5;
+}
+
+const uint SPEC_OCTAVES = 8u;
+float spectral_height(vec2 world_xz, uint seed, uint biome) {
+    // Domain warp the low frequencies for organic shapes (warp amount scales with
+    // amplitude so it bends features, not pixels).
+    vec2 wp = world_xz + (amplitude * 0.6) * warp2(world_xz * (base_freq * 0.5), seed ^ 0x57415250u);
+    float freq = base_freq;
+    float sum = 0.0;
+    float slope_ceiling = biome_slope(biome);    // rise/run, from the DEM
+    for (uint o = 0u; o < SPEC_OCTAVES; o++) {
+        // Low octaves warped (organic), high octaves plain (crisp + cheap).
+        vec2 p = (o < 2u) ? wp : world_xz;
+        float n = value_noise(p * freq, seed + o * 0x68bc21ebu);
+        float w = biome_spec(biome, o);          // amplitude = measured spectrum weight
+        // Cap this octave's weight so its worst-case per-cell slope can't exceed
+        // the measured ceiling (×1.5 margin -> steep but not vertical-walled).
+        float oct_slope = w * 2.0 * (spacing * freq);
+        float cap = (slope_ceiling * 1.5) / max(oct_slope, 1e-6);
+        if (cap < 1.0) w *= cap;
+        sum += w * n;
+        freq *= 2.0;
+    }
+    // spectrum sums ~1.0, so sum is ~[0,1]; scale to world height units.
+    return sum * amplitude;
+}
+
 void main() {
     uvec2 cell = gl_GlobalInvocationID.xy;
     if (cell.x >= page_res || cell.y >= page_res) {
@@ -202,19 +238,27 @@ void main() {
     }
     // absolute world position of this cell (00 §5)
     vec2 world_xz = vec2(origin_x, origin_z) + vec2(cell) * spacing;
-    float h = fbm(world_xz, uint(seed));
-    vec2 c = climate(world_xz, h, uint(seed));
+    uint useed = uint(seed);
 
-    // M2.2: altitude axis = MACRO continental landform (already normalized [0,1]).
-    // Low-frequency by construction -> biomes contiguous at every LOD (full height
-    // would fragment them into confetti at coarse cell spacing).
-    float alt = macro_altitude(world_xz, uint(seed));
+    // Biome + climate from the biome-INDEPENDENT macro altitude (no circularity,
+    // 00 §5): height never feeds back into biome selection.
+    float alt = macro_altitude(world_xz, useed);
+    vec2 c = climate(world_xz, alt * amplitude, useed);
     float bid = biome_id(c.x, c.y, alt);
+    uint b = uint(bid + 0.5);
+
+    // M2.4: height = shared continental base (biome-independent, continuous across
+    // borders) + this biome's SPECTRAL relief (octave amplitudes from the DEM
+    // fingerprint). Different biomes carry different real-Earth structure; the
+    // shared base keeps borders continuous (a relief-character step, not a cliff).
+    float base_h = alt * amplitude * 0.5;
+    float relief = spectral_height(world_xz, useed, b);
+    float h = base_h + relief;
 
     // Interleaved [height, temp, moisture, biome_id] per cell (Rust deinterleaves).
-    uint base = (cell.y * page_res + cell.x) * 4u;
-    field[base + 0u] = h;
-    field[base + 1u] = c.x;
-    field[base + 2u] = c.y;
-    field[base + 3u] = bid;
+    uint o = (cell.y * page_res + cell.x) * 4u;
+    field[o + 0u] = h;
+    field[o + 1u] = c.x;
+    field[o + 2u] = c.y;
+    field[o + 3u] = bid;
 }
