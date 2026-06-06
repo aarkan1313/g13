@@ -128,6 +128,8 @@ This keeps visual gates first-class (a `WG10_MOUNTAIN_DEEP_DIVE.md` "What WG13 S
 
 > Note: a saved PNG is the baseline. Hot-reload tuning and final 60-FPS feel still need a live human session — the capture is evidence, not a substitute for the desk pass.
 
+> **Limitation (M1.4 finding):** in `--script` mode the offscreen viewport renders at a small default size regardless of `project.godot` window size, so capture PNGs can be low-res (~640×360) even when saved into a larger file. Window-size manipulation from the script is unreliable. Captures are therefore *confirmatory* (is the surface continuous? any cracks?) — the **definitive visual pass is the human flying the live editor scene**, which uses the real viewport and a free camera to inspect boundaries up close. Don't sink effort into pixel-perfect captures; lean on (a) the readback test for correctness and (b) the live desk pass for the aesthetic/seam eyeball.
+
 ---
 
 ## 6. Performance measurement (M1.6 perf gate)

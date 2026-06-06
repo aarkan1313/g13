@@ -13,7 +13,8 @@ S.6 [x] WG10 reclassified as reference-only (00 §3.1) — rebuild clean, copy n
 ## Milestone 1 — Contiguous infinite land (GPU-first)
 M1.1 [x] gdext skeleton loads; WorldRoot prints on _ready; edit→rebuild→new string verified (output-proven)
 M1.2 [x] GPU page produced + read back; determinism/seed/continuity/seam tests PASS (output-proven)
-M1.3 [~] page renders on screen (PNGs captured: non-blocky, seed-driven); PARKED-FOR-VISUAL aesthetic   <- CURRENT (see DRIFT_LOG)
+M1.3 [x] page renders on screen — smooth, non-blocky, seed-driven; human visual PASS 2026-06-06
+M1.4 [~] edge-readback test PASS (bit-identical E/S seams + teeth check); 3x3 visual PARKED-FOR-VISUAL   <- CURRENT (see DRIFT_LOG)
 M1.4 [ ] NxN page block, zero seams (visual + edge-readback test)
 M1.5 [ ] bounded page pool + clipmap rings + read-only view; stream, no black, no leak
 M1.6 [ ] LOD to horizon at frame budget, frame-time test passes

@@ -155,6 +155,13 @@ A standalone Rust lib called over FFI fragments the code across a boundary you'd
 - Noise is sampled in **world coordinates**, never page/chunk-local coordinates. (Local-coordinate sampling is the #1 cause of seams — almost certainly a culprit in past attempts.) The compute shader receives each page's world-space origin and samples absolute world positions.
 - A page's content depends ONLY on its world position + seed. Two players, two sessions, two machines: identical. This is also what later makes save/load trivial — you only store *diffs* from the deterministic baseline.
 
+### 5.1 Page abutment convention (the off-by-one that makes seams impossible)
+A page has `N` cells per side and cell `spacing s`. **A page covers world span `(N-1)*s`, and adjacent pages SHARE their boundary cell** (they overlap by exactly one row/column):
+- Page at grid index `(gx, gz)` has world origin `(gx*(N-1)*s, gz*(N-1)*s)`.
+- So the east neighbor's column `0` samples the *same world X* as this page's column `N-1`. Same world point + same seed ⇒ identical height by determinism ⇒ **the shared edge matches to the bit, with no stitching.**
+
+If instead pages stride by `N*s` (no shared cell), neighbors' nearest columns are one `spacing` apart — different world points — and the edges will *not* match; you'd get a visible seam/crack. **The shared-boundary-cell convention is mandatory.** This is established and tested at M1.4; all page-producing/streaming code must honor it. Violating it is a seam bug — STOP and log, don't paper over it.
+
 ---
 
 ## 6. What "modular / plug-and-play" concretely means

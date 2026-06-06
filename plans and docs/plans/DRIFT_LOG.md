@@ -46,3 +46,21 @@ NOTE (must use vulkan, not headless): GPU compute needs a real driver (see M1.2 
 EXACT ERROR / STATE: green and compiling.
 CODEBASE STATE: green at the M1.3 commit.
 WHAT I DID NOT DO: Did not start M1.4 (seamless NxN). Did not change the contract. Did not introduce a CPU meshing path (heights go GPU → texture → displacement shader).
+
+## [2026-06-06] — M1.3 RESOLVED
+TYPE: PARKED-FOR-VISUAL → PASS
+Human ran the demo live (editor, F5, 2481×1396) and confirmed: "looks good." M1.3 visual gate PASSED. PROGRESS marked [x]. Proceeding to M1.4.
+(Note: editor re-added [dotnet] to project.godot on save — Mono build, harmless, no C# written; left as-is per earlier decision. Viewport set to 2560×1440 by the user; capture scripts will follow project window size going forward.)
+
+## [2026-06-06] — M1.4
+TYPE: PARKED-FOR-VISUAL (test gate already PASS)
+WHAT I WAS DOING: Make pages tile seamlessly. Documented the shared-boundary-cell convention (00 §5.1: page covers (N-1)*spacing; neighbors share their boundary cell, so the shared edge is the same world points → identical by determinism). Wrote the edge-readback test and a 3×3 visual.
+WHAT HAPPENED:
+  - TEST GATE PASS (self-certified): east seam + south seam shared edges are bit-identical across all 128 cells; a "teeth" check confirms the WRONG stride does NOT match (so the test is discriminating, not vacuous). Seams are structurally impossible, not patched.
+  - 3×3 visual: terrain is continuous across all page boundaries — no cracks. Capture at res://_captures/m1_4_grid3x3.png.
+DEBUGGING NOTE (root-caused, not guessed): early 3×3 captures rendered flat/white. Root cause via systematic debugging: m1_4_grid_view.gd created the ShaderMaterial but never assigned it (`mi.material_override = mat` was missing) → mesh drew default white, undisplaced. One-line fix. (Lesson: I burned several capture iterations adjusting the camera before reading both view scripts line-by-line; should have diffed first.)
+FINDING (01_TOOLCHAIN §5): `--script`-mode captures render small (~640×360) regardless of window size; window-size scripting is unreliable. Captures are confirmatory; the definitive seam/aesthetic pass is the human flying the live editor scene.
+HOW TO RESOLVE THIS GATE (human): glance at _captures/m1_4_grid3x3.png (continuous, no cracks), OR — better — run live and fly to a page boundary: `& $env:GODOT --rendering-driver vulkan --path "D:\world gen 13\wg-13"` then load scripts/m1_4_grid_view.gd in a scene (or temporarily set it as the M1_3_View script) and inspect boundaries up close. The faint checkerboard marks page edges; confirm the surface crosses them with no crack.
+EXACT ERROR / STATE: green and compiling.
+CODEBASE STATE: green at the M1.4 commit.
+WHAT I DID NOT DO: Did not start M1.5. Did not change the contract. Did not introduce CPU meshing.

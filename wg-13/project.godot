@@ -15,10 +15,15 @@ run/main_scene="res://scenes/demo.tscn"
 config/features=PackedStringArray("4.6", "Forward Plus")
 config/icon="res://icon.svg"
 
+[display]
+
+window/size/viewport_width=2560
+window/size/viewport_height=1440
+
+[dotnet]
+
+project/assembly_name="wg13"
+
 [physics]
 
 3d/physics_engine="Jolt Physics"
-
-[rendering]
-
-rendering_device/driver.windows="vulkan"

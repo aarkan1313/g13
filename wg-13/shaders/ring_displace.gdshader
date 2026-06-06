@@ -39,11 +39,15 @@ void vertex() {
 
 uniform float height_lo = 60.0;   // approx low end of the page's height range
 uniform float height_hi = 360.0;  // approx high end (for tint contrast only)
+// Per-page debug tint multiplier (1.0 = none). A faint checkerboard across
+// pages makes the page layout visible so seams are verifiable: if the SURFACE
+// is continuous across a tint change, there's no crack. Set to 1.0 for clean.
+uniform float page_tint = 1.0;
 
 void fragment() {
 	// Flat untextured look: low ground green -> high ground tan, so shape reads
 	// in screenshots without textures (those are M3). Tint only; not gameplay.
 	float t = clamp((v_height - height_lo) / max(height_hi - height_lo, 1.0), 0.0, 1.0);
-	ALBEDO = mix(vec3(0.26, 0.40, 0.20), vec3(0.55, 0.50, 0.40), t);
+	ALBEDO = mix(vec3(0.26, 0.40, 0.20), vec3(0.55, 0.50, 0.40), t) * page_tint;
 	ROUGHNESS = 0.95;
 }

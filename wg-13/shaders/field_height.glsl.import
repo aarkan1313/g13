@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://c5riklq1q0j3i"
+path="res://.godot/imported/field_height.glsl-480286bb66c7fe4621c1d891f6bd5bb4.res"
+
+[deps]
+
+source_file="res://shaders/field_height.glsl"
+dest_files=["res://.godot/imported/field_height.glsl-480286bb66c7fe4621c1d891f6bd5bb4.res"]
+
+[params]
+
