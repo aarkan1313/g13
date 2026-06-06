@@ -4,6 +4,20 @@ The human reads this FIRST every session. The agent appends here whenever it blo
 
 ---
 
+## [2026-06-06] — M1.7 design + M1.7a (heights retention) PASS
+TYPE: (design decision + test gate passed, self-certified)
+CONTEXT: User set the MINIMUM TARGET HARDWARE = RTX 3070+ (dev box stays RTX 5090 laptop). Recorded in 01_TOOLCHAIN §6/§7 (open item resolved) + project memory. Frame-budget gates must now hold on a 3070; the 5090 number is a dev baseline. M1.6's steady-state (2.4ms, ~7x under budget) is expected to clear 60fps on a 3070, but anything landing NEAR budget on the 5090 must be re-checked against the 3070 margin (margin discipline — we can't measure a 3070 from here).
+M1.7 DESIGN (brainstormed, pillars applied, user approved): collision for NEAR (level-0) pages only, radius 1 (3x3 fine pages), async off-main-thread, reading the SAME resident page heights the view uses.
+  - Verified Godot API facts (HeightMapShape3D): vertices 1 unit apart on X/Z -> scale body by cell_spacing; grid CENTERED on node origin -> body position = page center (same formula the mesh uses); map_data row-major width*depth with X=width,Z=depth -> our field's z*res+x array drops in untransposed.
+  - Verified threading: build the HeightMapShape3D + StaticBody3D OFF the tree on a WorkerThreadPool task (thread-safe — data, not active tree), then call_deferred add_child on the main thread (the documented Godot pattern). On a 3070 this keeps the array->shape packing off the render/physics critical path.
+  - Split (pillars): Rust PagePool OWNS heights (get_page_heights returns the cached array, no readback/re-dispatch); GDScript world_view OWNS collision as a renderer concern (00 §2.2). Rust never wrangles the Godot node tree across threads (avoids the "resource tweaked by multiple threads" footgun).
+  - Sub-steps: M1.7a heights retention (test) -> M1.7b collision build (test) -> M1.7c capsule + F/G fly/walk toggle (VISUAL, park).
+M1.7a RESULT: PASS (output-proven). PagePool now caches each page as ResidentPage{texture, heights} — ONE production fills both, so collision and the view can't disagree. New get_page_heights(L,gx,gz) returns that same array. m1_7a_heights_check.gd PASS: returned 16384 floats; texture R32F bytes BIT-IDENTICAL to get_page_heights (no drift); matches an independent FieldCompute production of the same page and differs for a different seed (discriminating); non-resident page returns empty (no fabrication). Eviction drops texture+heights together (one truth). cargo build clean.
+CODEBASE STATE: green at the M1.7a commit.
+WHAT I DID NOT DO: Did not start M1.7b's collision build yet. Did not add a second field path (collision reads the cached array). Did not change the Field/Renderer contract.
+
+---
+
 ## [2026-06-06] — M1.1
 TYPE: PARKED-FOR-VISUAL
 WHAT I WAS DOING: Building the M1.1 skeleton — gdext crate + WorldRoot node + .gdextension + demo scene; proving the Rust↔Godot bridge and hot reload.

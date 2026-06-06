@@ -17,6 +17,10 @@ rust/gdext/src/
                     produce_page / produce_page_texture. Used by the M1.2/M1.4 gates.
   page_pool.rs      PagePool (RefCounted) — the runtime: bounded production,
                     page cache by (level,gx,gz), pins, eviction. Over field_gpu.
+                    Each resident page caches the texture AND the CPU height
+                    array it was packed from (ResidentPage); get_page_heights()
+                    returns that same array for collision (M1.7, 00 §2.2) — no
+                    re-dispatch, no readback, can't drift from the view.
 
 wg-13/                          (the Godot project, res://)
   project.godot                 Vulkan; main_scene = scenes/demo.tscn.
@@ -40,6 +44,7 @@ wg-13/                          (the Godot project, res://)
     m1_5b_stream_check.gd       streaming invariants: pins honored, eviction, flat memory
     m1_5c_coverage_check.gd     never-black: coarse blanket covers starved fine cells
     m1_5c_overlap_check.gd      annulus: no visible coarse overlaps covered fine (no z-fight)
+    m1_7a_heights_check.gd      get_page_heights == texture bytes (same source), matches FieldCompute, empty if non-resident
   captures/                     SCREENSHOT TOOLS (evidence, not gates).
     stream_capture.gd           fly the world_view, save _captures/streamed.png
   _captures/                    PNG output — gitignored scratch (regenerable).
@@ -82,4 +87,5 @@ Fly the live world: `.\run.ps1` (agent launches a windowed instance on the user'
 | m1_5b_stream_check.gd | M1.5b | no pinned page evicted; eviction happens; residency bounded |
 | m1_5c_coverage_check.gd | M1.5c | never-black: coarse covers fine cells starved by tight budget |
 | m1_5c_overlap_check.gd | M1.5c | annulus: no visible coarse page overlaps a fully-covered fine area |
+| m1_7a_heights_check.gd | M1.7a | get_page_heights returns the same array behind the texture; matches FieldCompute; empty when non-resident |
 | m1_5b_stream_check.gd | M1.5b | no pinned page evicted; eviction happens; residency bounded |

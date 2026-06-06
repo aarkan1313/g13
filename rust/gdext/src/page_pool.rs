@@ -26,6 +26,16 @@ struct PageKey {
     gz: i32,
 }
 
+/// A resident page: the displayed texture AND the CPU height array it was packed
+/// from. ONE production fills both, so collision (which reads `heights`) and the
+/// view (which displaces `texture`) can never disagree — the M1.7 contract
+/// ("collision reads the same resident page heights the view uses, never a second
+/// field path", 00 §2.2 / MILESTONE_1 M1.7). They cache and evict together.
+struct ResidentPage {
+    texture: Gd<ImageTexture>,
+    heights: PackedFloat32Array,
+}
+
 /// fBM + page geometry config. Mirrors the GLSL Params block (page_pool dispatches
 /// the same field_height.glsl the M1.2/M1.3 path used).
 #[derive(Clone, Copy)]
@@ -51,7 +61,7 @@ pub struct PagePool {
     gpu: Option<FieldGpu>,
     cfg: FieldConfig,
 
-    cache: HashMap<PageKey, Gd<ImageTexture>>,
+    cache: HashMap<PageKey, ResidentPage>,
     /// Pages currently displayed — must NOT be evicted out from under the mesh
     /// (00 §3 never-black discipline). Rebuilt each frame by the view.
     pinned: std::collections::HashSet<PageKey>,
@@ -184,9 +194,9 @@ impl PagePool {
 
     fn request(&mut self, level: i64, gx: i64, gz: i64, eager: bool) -> Option<Gd<ImageTexture>> {
         let key = PageKey { level: level as i32, gx: gx as i32, gz: gz as i32 };
-        if let Some(tex) = self.cache.get(&key) {
+        if let Some(page) = self.cache.get(&key) {
             self.cache_hits += 1;
-            return Some(tex.clone());
+            return Some(page.texture.clone());
         }
         // Coarse blanket (eager) is UNBOUNDED: it must be complete in the frame
         // it's requested so never-black holds (the coverage gate fills it in one
@@ -197,17 +207,36 @@ impl PagePool {
         if !eager && self.produced_this_frame >= self.max_new_per_frame {
             return None; // fine over budget this frame; caller falls back to coarse
         }
-        let tex = self.produce(key)?;
+        let page = self.produce(key)?;
         if eager { self.eager_this_frame += 1; } else { self.produced_this_frame += 1; }
         self.total_produced += 1;
-        self.cache.insert(key, tex.clone());
+        let tex = page.texture.clone();
+        self.cache.insert(key, page);
         Some(tex)
     }
 
-    /// Produce one page on the GPU (via shared FieldGpu) and pack it R32F.
-    /// Coarser levels stretch origin stride AND spacing by 2^level, so a coarse
-    /// page covers more world at the same resolution (the clipmap blanket).
-    fn produce(&mut self, key: PageKey) -> Option<Gd<ImageTexture>> {
+    /// Heights of a RESIDENT page, row-major (z*page_res + x) — the SAME array
+    /// produced for the page's texture (00 §2.2 / M1.7: collision reads the same
+    /// resident heights the view uses, never a second field path). Returns the
+    /// cached array with NO re-dispatch and NO GPU readback; empty if the page
+    /// isn't resident (caller must have a displayed page = a produced page).
+    /// PackedFloat32Array is copy-on-write, so the returned value is a cheap
+    /// shared handle until the caller mutates it.
+    #[func]
+    fn get_page_heights(&self, level: i64, gx: i64, gz: i64) -> PackedFloat32Array {
+        let key = PageKey { level: level as i32, gx: gx as i32, gz: gz as i32 };
+        match self.cache.get(&key) {
+            Some(page) => page.heights.clone(),
+            None => PackedFloat32Array::new(),
+        }
+    }
+
+    /// Produce one page on the GPU (via shared FieldGpu): the height array AND
+    /// the R32F texture packed from it, kept together as a ResidentPage so they
+    /// can't drift (M1.7 one-source-of-truth). Coarser levels stretch origin
+    /// stride AND spacing by 2^level, so a coarse page covers more world at the
+    /// same resolution (the clipmap blanket).
+    fn produce(&mut self, key: PageKey) -> Option<ResidentPage> {
         let scale = (1 << key.level.max(0)) as f32;
         let span = self.page_span() * scale;
         let params = PageParams {
@@ -224,7 +253,8 @@ impl PagePool {
         let res = self.cfg.page_res as i32;
         let bytes = heights.to_byte_array();
         let img = Image::create_from_data(res, res, false, Format::RF, &bytes)?;
-        ImageTexture::create_from_image(&img)
+        let texture = ImageTexture::create_from_image(&img)?;
+        Some(ResidentPage { texture, heights })
     }
 
     /// Grid index of the level-0 page containing a world X (or Z) coordinate.
