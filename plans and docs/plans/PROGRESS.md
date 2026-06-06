@@ -16,7 +16,7 @@ M1.2 [x] GPU page produced + read back; determinism/seed/continuity/seam tests P
 M1.3 [x] page renders on screen — smooth, non-blocky, seed-driven; human visual PASS 2026-06-06
 M1.4 [~] edge-readback test PASS (bit-identical E/S seams + teeth check); 3x3 visual PARKED-FOR-VISUAL   <- CURRENT (see DRIFT_LOG)
 M1.4 [ ] NxN page block, zero seams (visual + edge-readback test)
-M1.5 [~] bounded pool + clipmap rings + read-only view; sub-steps all test-PASS; full 5-min live fly PARKED-FOR-VISUAL   <- CURRENT
+M1.5 [~] IMPLEMENTATION COMPLETE (a/b/c, 6 gates green, z-fight fixed, never-black, clean tint); full 5-min live fly PARKED-FOR-VISUAL to tag   <- CURRENT
   M1.5a [x] Rust PagePool: caches by (level,gx,gz), bounded new-per-frame; pool-driven static ring renders (test PASS)
   M1.5b [x] camera-following streaming: ring recenters, evicts behind, pins displayed; flat memory (test PASS)
   M1.5c [x] annulus clipmap: coarse blanket EAGER, fine BOUNDED; coarse HIDDEN where fine covers (no overlap -> no z-fight) yet shown over holes (never-black). coverage + overlap tests PASS

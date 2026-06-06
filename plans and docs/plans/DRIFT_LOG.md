@@ -90,6 +90,14 @@ M1.5 milestone now awaits its FULL live visual gate (human): fly 5+ min, confirm
 CODEBASE STATE: green at the M1.5c commit.
 WHAT I DID NOT DO: Did not start M1.6. Did not change the contract.
 
+## [2026-06-06] — Pillar reorder + M1.5 implementation complete
+PILLAR CORRECTION: user intended Quality as the #1 pillar; docs still had the old order (Survivability #1, Quality last) and I'd been applying it. Reconciled: Quality #1 = "do it right, no slop" (not "chase visuals at any cost"). Order now Quality > Survivability > Modularity > Performance. This ALIGNS with the attempt #1-12 lesson (polish on a broken base IS slop). Committed (00 §1, §1.1, README).
+COLORATION-BAND (human spotted in live fly): root-caused to the debug checkerboard (page_tint) differing between fine and coarse rings — confirmed by capturing with tint off (band largely gone). Defaulted show_page_tint = false (clean look). The FAINT residual is the genuine LOD detail difference: coarse pages sample height at 2x spacing, so they inherently carry less detail and shade smoother. A "normal tweak" can't recover detail that isn't in the coarse data — the only real fix is geomorph blending across the ring boundary.
+DECISION (Quality-first applied): defer the LOD seam to the geomorph pass. Reasoning under the NEW order: geomorph is roadmap-scheduled as a later pass; doing it piecemeal now would be throwaway = SLOP, which Quality #1 forbids. M1.5's gate is "no cracks, no black" — both met (the seam is shading softness, not a crack). So deferring is the high-quality move here, not a quality compromise.
+M1.5 IMPLEMENTATION COMPLETE: a/b/c done, all 6 test gates green, z-fighting fixed, never-black holds, tint clean by default. Awaits only the human's full live fly-through (5+ min: no black at speed, no stutter, flat memory) to tag the milestone.
+CODEBASE STATE: green.
+WHAT I DID NOT DO: Did not pull geomorph forward (would be slop). Did not start M1.6.
+
 ## [2026-06-06] — M1.5c z-fighting fixed (annulus clipmap)
 TYPE: bug fix (systematic debugging) — human spotted it in live fly
 SYMPTOM: human flying the live world saw blotchy patches + ghost contours on near terrain (screenshot). Read as "detail shifts/changes of the same area."
