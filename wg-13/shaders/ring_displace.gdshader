@@ -14,9 +14,9 @@ render_mode cull_back, diffuse_burley;
 
 // The height page as an R32F texture (one height per texel).
 uniform sampler2D height_tex : filter_linear, repeat_disable;
-// M2.1 climate pages (R32F), bound per page alongside height_tex.
-uniform sampler2D temp_tex : filter_linear, repeat_disable;
-uniform sampler2D moist_tex : filter_linear, repeat_disable;
+// M2.1 climate page (RG32F): R = temperature, G = moisture. One texture for both
+// channels, bound per page alongside height_tex.
+uniform sampler2D climate_tex : filter_linear, repeat_disable;
 // View mode: 0 = normal height shading, 1 = temperature, 2 = moisture.
 uniform int view_mode = 0;
 // World extent the page covers (page_res * spacing), so UVs map to the plane.
@@ -95,13 +95,13 @@ vec3 moist_color(float m) {
 
 void fragment() {
 	if (view_mode == 1) {
-		// Temperature view: tint by the field's temperature channel.
-		float tv = texture(temp_tex, clamp(UV, vec2(0.0), vec2(1.0))).r;
+		// Temperature view: tint by the climate texture's R channel.
+		float tv = texture(climate_tex, clamp(UV, vec2(0.0), vec2(1.0))).r;
 		ALBEDO = temp_color(tv) * page_tint;
 		ROUGHNESS = 0.95;
 	} else if (view_mode == 2) {
-		// Moisture view: tint by the field's moisture channel.
-		float mv = texture(moist_tex, clamp(UV, vec2(0.0), vec2(1.0))).r;
+		// Moisture view: tint by the climate texture's G channel.
+		float mv = texture(climate_tex, clamp(UV, vec2(0.0), vec2(1.0))).g;
 		ALBEDO = moist_color(mv) * page_tint;
 		ROUGHNESS = 0.95;
 	} else {

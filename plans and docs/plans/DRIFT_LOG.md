@@ -4,6 +4,20 @@ The human reads this FIRST every session. The agent appends here whenever it blo
 
 ---
 
+## [2026-06-06] — Post-M2.1 review audit: climate textures packed (RG32F); deferrals logged
+TYPE: (workload-independent cleanup from a code review; 14/14 gates green) + DEVIATION-AVERTED notes
+A review audited the fresh M2.1 code. Verified each point against the code before acting (receiving-code-review discipline — not blind implementation).
+DID NOW (audit #1 — best near-term win, and it tidies what I just built): packed temperature + moisture from TWO R32F textures per page into ONE RG32F texture (R=temp, G=moisture). Cuts one texture object + one upload + one sampler + one getter per page. page_pool.rs: ResidentPage.climate_tex (was temp_tex+moist_tex); new rg32f_texture() interleaves [t,m,...]; get_page_climate_tex() (was two getters). ring_displace.gdshader: one climate_tex uniform (.r/.g). world_view.gd: bind one texture. The HEIGHT R32F texture/array is untouched (M1.7 intact). VERIFY: build clean (Format::RGF compiles), all 14 gates PASS incl. m1_7a (height bit-identical), live recapture shows temp (R) and moisture (G) render correctly with the right palettes (channels not swapped). 
+DEFERRED (logged so they aren't rediscovered as bugs — each has a real reason to wait):
+  - #2 GPU page production still does rd.sync()+CPU readback per page (field_gpu.rs). This is the real long-term cost but passes with huge headroom (HUD prod 0.00ms). Future-correct direction = GPU-resident page textures for RENDER, CPU readback only for near collision/test. It's a MEASUREMENT-TRIGGERED M2/M3/M6 refactor (the field gets heavy with biomes/erosion) — already deferred in HANDOFF; do NOT do it blind against the placeholder field.
+  - #3 GDScript per-frame string churn: M1.9.3c already removed string PARSING (the _inst_meta Vector3i cache). What REMAINS is string FORMATTING — world_view.gd:111 (request loop "%d:%d:%d" for the _instances.has check) and esp. :299 (annulus builds a key 4x per coarse page for displayed.has). Converting live keys to Vector3i/encoded-int + precomputing per-level spans (pow recompute) is workload-independent BUT touches never-black logic, so it needs its OWN gated step re-running coverage+overlap. NOT folded into M2.1. (Candidate small step before/around M2.2 if a frame budget pressure shows up.)
+  - #4 Far-level mesh subdivision: coarse levels still use up to page_res-1 subdivisions (world_view _level_plane_mesh). Drawing fewer verts for distant levels could save vertex work, but it can worsen LOD softness -> needs a HUMAN VISUAL gate. Defer; not blind.
+  - #6 perf_hud remove_at(0) + small-window sort: negligible (tiny ring buffer). Godot gates also print ObjectDB leak warnings — not runtime perf; worth cleaning later so real leaks stand out. Low priority.
+GUARDRAIL CONFIRMED (audit #5): do NOT remove climate from page production even though normal view doesn't display it — M2.2 biome id + M2.3 shaping need field-owned climate (00 §2.1), not renderer recompute or debug-only data. Architecture stays.
+ALSO fixed handoff drift the audit caught: PROGRESS.md had a stale M1.6 "<- CURRENT" marker alongside M2.1 — M1.6 is done (M1.8 milestone flythrough confirmed it), marker removed.
+CODEBASE STATE: green at the packing commit.
+WHAT I DID NOT DO: Did not implement #2/#3/#4/#6 (each deferred with a stated reason). Did not change the field/contract. Did not fold the never-black-touching #3 into this commit.
+
 ## [2026-06-06] — M2.1 VISUAL GATE PASS (human) + climate-viz color retune
 TYPE: PARKED-FOR-VISUAL -> PASS (human), then a viz-only tuning fix
 HUMAN VISUAL PASS: user flew the live world, pressed V to cycle normal/temp/moisture. Temperature read clearly as a large-scale gradient on the first look. Two viz issues surfaced and were fixed (GDSHADER-ONLY, no field/Rust change — the climate DATA was already correct/deterministic; this was purely how it's painted):

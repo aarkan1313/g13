@@ -37,8 +37,10 @@ struct PageKey {
 struct ResidentPage {
     texture: Gd<ImageTexture>,
     heights: PackedFloat32Array,
-    temp_tex: Gd<ImageTexture>,
-    moist_tex: Gd<ImageTexture>,
+    // M2.1 climate packed into ONE RG32F texture per page (R = temperature,
+    // G = moisture) — one texture/upload/sampler instead of two. Same single
+    // production as height; the height R32F texture/array is unchanged (M1.7).
+    climate_tex: Gd<ImageTexture>,
 }
 
 /// How a page request is budgeted this frame (M1.9.3b).
@@ -332,21 +334,14 @@ impl PagePool {
         }
     }
 
-    /// M2.1: the temperature texture (R32F) of a RESIDENT page — the SAME
-    /// production behind that page's height texture (one source of truth). Null
-    /// if the page isn't resident. The view binds it for the climate view-mode
-    /// tint; the field/collision paths don't depend on it.
+    /// M2.1: the climate texture (RG32F, R=temperature G=moisture) of a RESIDENT
+    /// page — the SAME production behind that page's height texture (one source
+    /// of truth). Null if the page isn't resident. The view binds it for the
+    /// climate view-mode tint; the field/collision paths don't depend on it.
     #[func]
-    fn get_page_temp_tex(&self, level: i64, gx: i64, gz: i64) -> Option<Gd<ImageTexture>> {
+    fn get_page_climate_tex(&self, level: i64, gx: i64, gz: i64) -> Option<Gd<ImageTexture>> {
         let key = PageKey { level: level as i32, gx: gx as i32, gz: gz as i32 };
-        self.cache.get(&key).map(|p| p.temp_tex.clone())
-    }
-
-    /// M2.1: the moisture texture (R32F) of a RESIDENT page (see get_page_temp_tex).
-    #[func]
-    fn get_page_moist_tex(&self, level: i64, gx: i64, gz: i64) -> Option<Gd<ImageTexture>> {
-        let key = PageKey { level: level as i32, gx: gx as i32, gz: gz as i32 };
-        self.cache.get(&key).map(|p| p.moist_tex.clone())
+        self.cache.get(&key).map(|p| p.climate_tex.clone())
     }
 
     /// Produce one page on the GPU (via shared FieldGpu): the height array AND
@@ -380,19 +375,36 @@ impl PagePool {
         let res = self.cfg.page_res as i32;
         // Height texture: R32F, byte-identical to `heights` (M1.7 contract).
         let texture = Self::r32f_texture(res, &heights)?;
-        // Climate textures: same R32F format, separate per channel, for the
-        // display shader's view-mode tint (M2.1). One production, all channels.
-        let temp_tex = Self::r32f_texture(res, &temp)?;
-        let moist_tex = Self::r32f_texture(res, &moisture)?;
-        Some(ResidentPage { texture, heights, temp_tex, moist_tex })
+        // Climate: temp + moisture packed into ONE RG32F texture (R=temp,
+        // G=moisture) — one upload/sampler for both channels (one production).
+        let climate_tex = Self::rg32f_texture(res, &temp, &moisture)?;
+        Some(ResidentPage { texture, heights, climate_tex })
     }
 
     /// Pack a per-cell float array into an R32F ImageTexture (the format the M1
-    /// height path used; reused for the M2.1 climate channels). Bytes are the LE
-    /// float bytes, so the texture is bit-identical to the source array.
+    /// height path used). Bytes are the LE float bytes, so the texture is
+    /// bit-identical to the source array.
     fn r32f_texture(res: i32, data: &PackedFloat32Array) -> Option<Gd<ImageTexture>> {
         let bytes = data.to_byte_array();
         let img = Image::create_from_data(res, res, false, Format::RF, &bytes)?;
+        ImageTexture::create_from_image(&img)
+    }
+
+    /// Pack two per-cell float arrays into ONE RG32F ImageTexture (R = `r_data`,
+    /// G = `g_data`), interleaved [r,g,r,g,...]. Used for the M2.1 climate
+    /// channels (temperature, moisture) so a page carries one climate texture.
+    fn rg32f_texture(res: i32, r_data: &PackedFloat32Array, g_data: &PackedFloat32Array)
+        -> Option<Gd<ImageTexture>> {
+        let n = (res * res) as usize;
+        let r = r_data.as_slice();
+        let g = g_data.as_slice();
+        let mut bytes: Vec<u8> = Vec::with_capacity(n * 8);
+        for i in 0..n {
+            bytes.extend_from_slice(&r[i].to_le_bytes());
+            bytes.extend_from_slice(&g[i].to_le_bytes());
+        }
+        let pba = PackedByteArray::from(bytes.as_slice());
+        let img = Image::create_from_data(res, res, false, Format::RGF, &pba)?;
         ImageTexture::create_from_image(&img)
     }
 

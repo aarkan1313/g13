@@ -334,11 +334,10 @@ func _make_page_instance(tex, level: int, gx: int, gz: int, span: float) -> Mesh
 
 	mi.mesh = _level_plane_mesh(level, span)                # shared per-level geometry
 	mat.set_shader_parameter("height_tex", tex)
-	# M2.1: bind this page's climate textures (same production as height_tex) so
-	# the climate view modes can tint by them. Resident here (we just produced
-	# or cache-hit the page), so the getters return the matching textures.
-	mat.set_shader_parameter("temp_tex", _pool.get_page_temp_tex(level, gx, gz))
-	mat.set_shader_parameter("moist_tex", _pool.get_page_moist_tex(level, gx, gz))
+	# M2.1: bind this page's climate texture (RG32F, same production as height_tex)
+	# so the climate view modes can tint by it. Resident here (we just produced or
+	# cache-hit the page), so the getter returns the matching texture.
+	mat.set_shader_parameter("climate_tex", _pool.get_page_climate_tex(level, gx, gz))
 	mat.set_shader_parameter("view_mode", _view_mode)       # current mode (recycled mats too)
 	mat.set_shader_parameter("page_world_size", span)       # span differs by level on reuse
 	mat.set_shader_parameter("cell_spacing", spacing * pow(2.0, level))

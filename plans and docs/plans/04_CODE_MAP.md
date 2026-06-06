@@ -21,9 +21,9 @@ rust/gdext/src/
                     array it was packed from (ResidentPage); get_page_heights()
                     returns that same array for collision (M1.7, 00 §2.2) — no
                     re-dispatch, no readback, can't drift from the view. M2.1: the
-                    page ALSO carries temp_tex + moist_tex (R32F climate channels,
-                    same production); get_page_temp_tex/get_page_moist_tex expose
-                    them to the view for the climate view-mode tint. configure_climate()
+                    page ALSO carries ONE climate_tex (RG32F: R=temperature,
+                    G=moisture, same production); get_page_climate_tex() exposes it
+                    to the view for the climate view-mode tint. configure_climate()
                     tunes the climate model. Height path is unchanged (additive).
   field_gpu.rs (+)  dispatch_page now produces [height,temp,moisture] in ONE
                     dispatch (FIELD_CHANNELS=3, interleaved) and returns a
@@ -40,8 +40,10 @@ wg-13/                          (the Godot project, res://)
                                 Source of truth (00 §2.1). Sampled in world coords.
     ring_displace.gdshader       PRESENTS a height page: displaces a plane, shades.
                                 M2.1: view_mode uniform (0 normal / 1 temperature /
-                                2 moisture) tints by the climate textures it's
-                                handed. Not a generator (00 §4) — only reads/draws.
+                                2 moisture) tints by the climate_tex it's handed
+                                (RG32F: .r=temp, .g=moisture). Distinct palettes
+                                (temp=thermal blue->red; moist=earth brown->blue).
+                                Not a generator (00 §4) — only reads/draws.
   scripts/
     world_view.gd               LIVE view: owns PagePool, multi-level clipmap,
                                 camera-following streaming, never-black layering.
