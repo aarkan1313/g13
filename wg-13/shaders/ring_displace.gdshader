@@ -56,29 +56,41 @@ uniform float height_hi = 360.0;  // approx high end (for tint contrast only)
 // is continuous across a tint change, there's no crack. Set to 1.0 for clean.
 uniform float page_tint = 1.0;
 
-// Map normalized temperature [0,1] to a perceptual cold->hot ramp
-// (blue -> cyan -> green -> yellow -> red). Cold=0, hot=1.
+// Map normalized temperature [0,1] to a THERMAL ramp: cold blue -> hot red,
+// through purple/magenta (NOT green/yellow — those are reserved for moisture so
+// the two view modes read as distinct color languages). Cold=0, hot=1.
 vec3 temp_color(float t) {
 	t = clamp(t, 0.0, 1.0);
-	vec3 cold = vec3(0.15, 0.25, 0.75);   // deep cold blue
-	vec3 cool = vec3(0.20, 0.65, 0.75);   // cyan
-	vec3 mild = vec3(0.30, 0.70, 0.30);   // temperate green
-	vec3 warm = vec3(0.85, 0.75, 0.25);   // warm yellow
-	vec3 hot  = vec3(0.80, 0.20, 0.15);   // hot red
+	vec3 cold = vec3(0.10, 0.20, 0.85);   // deep cold blue
+	vec3 cool = vec3(0.45, 0.30, 0.85);   // blue-violet
+	vec3 mild = vec3(0.75, 0.30, 0.70);   // magenta
+	vec3 warm = vec3(0.92, 0.35, 0.30);   // warm coral
+	vec3 hot  = vec3(0.85, 0.12, 0.10);   // hot red
 	if (t < 0.25) return mix(cold, cool, t / 0.25);
 	if (t < 0.50) return mix(cool, mild, (t - 0.25) / 0.25);
 	if (t < 0.75) return mix(mild, warm, (t - 0.50) / 0.25);
 	return mix(warm, hot, (t - 0.75) / 0.25);
 }
 
-// Map normalized moisture [0,1] to dry tan -> wet blue.
+// Map normalized moisture to dry -> wet. The field's moisture mostly lives in
+// ~[0.1, 0.6] (rarely hits the extremes), so we REMAP that band across the full
+// ramp and use a high-contrast, well-separated palette (arid orange -> deep
+// blue) so a gently-varying field still reads as a clear gradient, not a wash.
+uniform float moist_lo = 0.12;   // map this moisture -> driest color
+uniform float moist_hi = 0.55;   // map this moisture -> wettest color
 vec3 moist_color(float m) {
-	m = clamp(m, 0.0, 1.0);
-	vec3 dry = vec3(0.78, 0.70, 0.45);    // arid tan
-	vec3 mid = vec3(0.45, 0.62, 0.40);    // grassy
-	vec3 wet = vec3(0.15, 0.40, 0.65);    // wet blue
-	if (m < 0.5) return mix(dry, mid, m / 0.5);
-	return mix(mid, wet, (m - 0.5) / 0.5);
+	float t = clamp((m - moist_lo) / max(moist_hi - moist_lo, 0.001), 0.0, 1.0);
+	// EARTH/WATER ramp: dry brown -> tan -> grass green -> cyan -> wet blue.
+	// No red/magenta (those are temperature), so the two modes never look alike.
+	vec3 arid = vec3(0.50, 0.34, 0.16);   // dry brown earth
+	vec3 dry  = vec3(0.80, 0.72, 0.42);   // dusty tan
+	vec3 mid  = vec3(0.42, 0.68, 0.30);   // grass green
+	vec3 damp = vec3(0.20, 0.72, 0.72);   // damp cyan
+	vec3 wet  = vec3(0.10, 0.40, 0.80);   // wet blue
+	if (t < 0.25) return mix(arid, dry, t / 0.25);
+	if (t < 0.50) return mix(dry, mid, (t - 0.25) / 0.25);
+	if (t < 0.75) return mix(mid, damp, (t - 0.50) / 0.25);
+	return mix(damp, wet, (t - 0.75) / 0.25);
 }
 
 void fragment() {

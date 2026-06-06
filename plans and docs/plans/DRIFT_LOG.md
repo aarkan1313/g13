@@ -4,6 +4,17 @@ The human reads this FIRST every session. The agent appends here whenever it blo
 
 ---
 
+## [2026-06-06] — M2.1 VISUAL GATE PASS (human) + climate-viz color retune
+TYPE: PARKED-FOR-VISUAL -> PASS (human), then a viz-only tuning fix
+HUMAN VISUAL PASS: user flew the live world, pressed V to cycle normal/temp/moisture. Temperature read clearly as a large-scale gradient on the first look. Two viz issues surfaced and were fixed (GDSHADER-ONLY, no field/Rust change — the climate DATA was already correct/deterministic; this was purely how it's painted):
+  1. Moisture looked like a flat wash. ROOT CAUSE (probed, not guessed): the field's moisture in the flown region spans only ~0.14-0.55 and clusters ~0.2-0.4, but the ramp mapped 0..1, so the wet (blue) end was never reached -> everything rendered in one mid-tone band. FIX: remap the moisture ramp to the real ~[0.12,0.55] range (moist_lo/moist_hi uniforms) so the full palette is used.
+  2. After that, temp and moisture used the SAME blue->green->yellow->orange family, so you couldn't tell which mode you were in. FIX: gave them DISTINCT color languages — temperature = thermal blue->violet->magenta->red (no green/yellow); moisture = earth/water brown->tan->green->cyan->blue (no red/magenta). Now reds/purples = temp, browns/greens = moisture, unmistakable.
+User confirmed: "looks good." M2.1 visual gate ("two smooth, large-scale gradients across the world") SATISFIED.
+PERF during the live flight (HUD): 240 fps / 4.17 ms, prod 0.00 ms (climate added ZERO measurable production cost), view ~1.2 ms, mem ~130 MB. The single-dispatch climate decision cost nothing on the budget.
+LESSON kept: did NOT retune the climate MODEL (lat scale, lapse, freqs) against a zoomed static capture; the fix was the VIZ ramp, found by probing the field's actual value range first (measure before cutting). The model stays as designed for M2.2 to consume.
+CODEBASE STATE: green; ring_displace.gdshader color retune committed on top of the M2.1 commit.
+WHAT I DID NOT DO: Did not touch the field/Rust/contract (viz-only). Did not retune the climate model on a static capture.
+
 ## [2026-06-06] — M2.1 climate fields implemented — test gate PASS, visual gate PARKED
 TYPE: PARKED-FOR-VISUAL (output-provable core self-certified; 14/14 gates green)
 WHAT I WAS DOING: Built M2.1 per M2_DESIGN (decisions were already locked, so I built, didn't re-decide): temperature + moisture climate fields in the GLSL, produced in the SAME GPU dispatch as height, visualized by a V-key view-mode toggle.
