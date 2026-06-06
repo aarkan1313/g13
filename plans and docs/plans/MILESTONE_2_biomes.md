@@ -31,25 +31,27 @@ Adding a biome = adding a row. If adding a biome requires new Rust logic, the de
 ### Steps
 - **M2.1** — Temperature & moisture fields exist and are tunable; visualize them as debug color. GATE (visual): two smooth, large-scale gradients across the world.
 - **M2.2** — Whittaker mapping → biome id per location; render biome as flat debug color. GATE (visual): large contiguous color regions, no confetti. GATE (test): same seed → identical biome id at fixed test coords.
-- **M2.3** — Per-biome height shaping wired into the field. GATE (visual): mountains are mountainous, plains are flat, visibly different terrain per biome. *(Built; test gate green. Live flyover showed the underlying SHAPE was "Perlin oatmeal" — see M2.3b.)*
-- **M2.3b** *(inserted 2026-06-06)* — **Real macro-landform field.** Replace plain value-noise fBM with a **domain-warped + ridged** macro-elevation field: actual ridgelines, connected valleys, organic (non-blobby) continental structure. Per-biome character = ridge intensity (mountains sharp, plains smooth) on the shared continuous base. This is the PERMANENT shape infrastructure (erosion M6 carves into it, DEM-stats M2.5/6 tune it, textures M3 drape it, scatter M4 reads its slope); high-freq detail kept minimal (erosion's job). GATE (test): ridge structure exists + differs per biome + deterministic + no border cliff. GATE (visual): reads as real terrain, not oatmeal. Spec: `docs/superpowers/specs/2026-06-06-m2-3b-macro-landform-field-design.md`.
-- **M2.4** — Border blending. GATE (visual): no hard square borders; transitions read as natural.
+- **M2.3 (REPLANNED 2026-06-06)** — Hand-tuned procedural noise (original M2.3 + an inserted M2.3b ridged attempt) FAILED to make believable shape ("Perlin oatmeal" -> "mesa cliffs", the attempt #1-12 trap); reverted to M2.2. M2 shape is now **DEM-spectral-informed synthesis** (spec: `docs/superpowers/specs/2026-06-06-m2-dem-spectral-terrain-design.md`). **M2.3 is now the offline DEM distillation tool:** a separate Rust binary reads the 135 tiles -> per-archetype fingerprint (radial amplitude spectrum + slope ceiling + ridge character), emits a small params file. Runtime never opens a `.tif`. GATE (test): tool runs, sane numbers.
+- **M2.4** — Spectral-shaped runtime field: synthesize procedural height with each biome archetype's MEASURED octave spectrum (+ ridge character + slope ceiling). Mountain+grassland+desert first, then all 12. GATE (test): determinism, spectra match fingerprints, no cliffs. GATE (visual): believable landforms, distinct per biome.
+- **M2.5** — Border blending (spectral params + color). GATE (visual): no hard square borders; natural transitions.
+- **M2.6** — Efficiency/performance pass (LAST, M1.9-style): profile the real spectral field, optimize synthesis. GATE (test): frame budget held on RTX 3070.
 
 ## 3. How DEMs inform the field (the part you wanted but didn't fully understand)
 
 You have DEM (Digital Elevation Model) data — real-world heightmaps from sources like SRTM/Copernicus. You don't want to *place* real Earth in the game; you want real Earth's *statistical character* to make the procedural terrain believable. Here's the plan, in plain terms:
 
-**The idea:** Pure noise looks like noise. Real terrain has structure — valleys connect, ridges have a characteristic spacing, slopes have a typical distribution. We extract those *statistical fingerprints* from DEMs and use them to bias the procedural field, without copying the actual landscape.
+**The idea (REPLANNED 2026-06-06):** Pure noise looks like noise — proven the hard way when hand-tuned procedural noise (M2.3/M2.3b) failed to make believable landforms. Real terrain has structure noise lacks. We don't *place* real Earth (no .tif at runtime, would repeat); we distill each DEM archetype's **terrain FINGERPRINT** offline and synthesize procedural terrain SHAPED to it.
 
-**Concretely, in priority order:**
-1. **Slope/roughness statistics (easiest, do first):** From a DEM of, say, a mountain range, measure the distribution of slopes and the typical feature spacing (via frequency analysis). Feed those into the **M2.3b ridged macro field's per-biome params** (warp amplitude/frequency, ridge sharpness, octave gain) so the procedural mountains match the measured slope/ridge-spacing distribution. Result: your procedural mountains have the *texture of realness* of real mountains. This is parameter-fitting onto a noise that already makes ridges — low risk, high payoff. *(This is why M2.3b had to come first: DEM stats tune a ridged field; they cannot rescue plain fBM, which has no ridges to tune.)*
-2. **DEM tiles as noise kernels:** Use small, tileable patches derived from DEMs as an additional noise layer blended into a biome's shaping. The procedural layer places the macro structure; the DEM kernel adds believable meso-detail.
-3. **(Later, optional) Feature templates:** Extract characteristic landforms (a valley cross-section, a ridge profile) and use them as profiles the field can stamp/blend along procedural skeletons. Higher complexity — defer.
+**The fingerprint (what the offline tool measures per archetype):**
+1. **Radial amplitude spectrum** — the dominant "looks real" lever. How relief amplitude falls off across spatial scales (continental → ~10 m), measured by FFT. Real mountains/deserts/plains each have a distinct spectrum; generic `0.5^octave` fBM matches none. The runtime synthesizes octaves weighted by the MEASURED spectrum, so the procedural output carries the real type's structure.
+2. **Slope ceiling** — real steepness bound (p95), so synthesis structurally cannot make the vertical-cliff garbage the noise attempts produced.
+3. **Ridge character** — ridged vs rounded, from local-curvature distribution; sets the smooth↔ridged blend per archetype from data.
 
-**M2 only does #1**, and only as much as needed to make biomes look plausible. #2 and #3 are flagged as future enhancements so the agent doesn't over-build. The DEM preprocessing (downloading, normalizing, computing statistics) is an **offline tool** that outputs numbers/small textures into `WorldConfig` — it is NOT part of the runtime field and must never be, or you'll couple the generator to gigabytes of data.
+**Output:** a small per-archetype params file (a few KB) into config. The DEM `.tif`s stay OUTSIDE the runtime (the hard rule below); only the distilled fingerprint ships.
 
-- **M2.5** — Offline DEM-stats tool produces slope/roughness/ridge-spacing params for 2–3 reference terrain types. GATE (test): tool runs, outputs a small params file. *(Redefined 2026-06-06: these stats TUNE the M2.3b ridged macro field — its warp/ridge/octave params — rather than rescue placeholder noise. The tool's job is unchanged; what it feeds is now a noise that can actually use ridge-spacing/slope numbers.)*
-- **M2.6** — Mountain/hill biomes use DEM-derived params **fed into the M2.3b ridged-field params** (per-biome warp/ridge/octave coefficients from measured DEM statistics). GATE (visual): side-by-side, DEM-tuned terrain reads as more believable than the hand-tuned-ridged version. (Human visual call.)
+**Deferred (not M2, flagged so we don't over-build):** richer exemplar/texture-synthesis guided by DEM patches, and feature-template stamping. M2 does spectrum + slope + ridge character only. Erosion (M6) later carves real hydraulic detail into this already-real macro shape.
+
+(Step list with gates is in §2 above: M2.3 distill tool → M2.4 spectral field → M2.5 border blend → M2.6 perf pass.)
 
 ## 4. Milestone gate
 Run the Definition of Done. Tag `m2-complete`.
