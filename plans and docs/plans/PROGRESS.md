@@ -14,13 +14,12 @@ S.6 [x] WG10 reclassified as reference-only (00 §3.1) — rebuild clean, copy n
 M1.1 [x] gdext skeleton loads; WorldRoot prints on _ready; edit→rebuild→new string verified (output-proven)
 M1.2 [x] GPU page produced + read back; determinism/seed/continuity/seam tests PASS (output-proven)
 M1.3 [x] page renders on screen — smooth, non-blocky, seed-driven; human visual PASS 2026-06-06
-M1.4 [~] edge-readback test PASS (bit-identical E/S seams + teeth check); 3x3 visual PARKED-FOR-VISUAL   <- CURRENT (see DRIFT_LOG)
-M1.4 [ ] NxN page block, zero seams (visual + edge-readback test)
-M1.5 [~] IMPLEMENTATION COMPLETE (a/b/c, 6 gates green, z-fight fixed, never-black, clean tint); full 5-min live fly PARKED-FOR-VISUAL to tag   <- CURRENT
+M1.4 [x] NxN page block, zero seams (edge-readback test PASS + teeth; human visual PASS)
+M1.5 [x] bounded pool + clipmap rings + read-only view; streams, no black, no z-fight; human live fly PASS 2026-06-06 (slight LOD seam = deferred geomorph)
   M1.5a [x] Rust PagePool: caches by (level,gx,gz), bounded new-per-frame; pool-driven static ring renders (test PASS)
   M1.5b [x] camera-following streaming: ring recenters, evicts behind, pins displayed; flat memory (test PASS)
   M1.5c [x] annulus clipmap: coarse blanket EAGER, fine BOUNDED; coarse HIDDEN where fine covers (no overlap -> no z-fight) yet shown over holes (never-black). coverage + overlap tests PASS
-M1.6 [ ] LOD to horizon at frame budget, frame-time test passes
+M1.6 [ ] LOD to horizon (~30km) at frame budget, frame-time test passes   <- CURRENT
 M1.7 [ ] near-page collision, character doesn't fall through
 M1.8 [ ] MILESTONE GATE — full definition of done, tag m1-complete
 
