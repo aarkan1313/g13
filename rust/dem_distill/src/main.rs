@@ -6,6 +6,8 @@
 
 #[allow(dead_code)] // wired into the pipeline in Task 7
 mod archetype;
+#[allow(dead_code)] // wired into the pipeline in Task 7
+mod sidecar;
 
 use std::process::ExitCode;
 
