@@ -33,18 +33,22 @@ D:\world gen 13\
 ├─ wg-13\                     # the Godot project (res://)
 │  ├─ project.godot
 │  ├─ wg13.gdextension        # created M1.1 — points at the built Rust lib
+│  ├─ shaders\                # GLSL: field producer (compute) + ring_displace (render)
 │  ├─ scenes\                 # demo + review scenes (.tscn)
-│  ├─ scripts\                # thin GDScript orchestration only
-│  └─ addons\... (none yet)
+│  ├─ scripts\                # thin GDScript assembly only
+│  └─ tests\                  # *_check.gd / *_capture.gd headless gate scripts
 ├─ rust\                      # the gdext crate (workspace)
 │  ├─ Cargo.toml              # workspace
-│  ├─ field\                  # PURE field crate — no godot dep (00 §2.1)
-│  │  └─ src\lib.rs
-│  └─ gdext\                  # the GDExtension — depends on `field` + `godot`
-│     └─ src\lib.rs
+│  └─ gdext\                  # the GDExtension — depends on `godot`
+│     └─ src\
+│        ├─ lib.rs
+│        ├─ page_pool/        # bounded residency, acquire/evict, pins
+│        ├─ rings.rs          # clipmap ring geometry
+│        ├─ terrain_view.rs   # read-only view over resident pages
+│        └─ field_compute.rs  # dispatches the GLSL producer; readback for tests
 └─ plans and docs\...
 ```
-**Boundary enforced by crate structure:** the `field` crate has **no `godot` dependency** — that is the `00_ARCHITECTURE.md §2` boundary made physical. If `field/Cargo.toml` ever gains `godot`, that is a contract violation; STOP and log it.
+**Boundary made physical (`00 §2`):** the world math lives in **`wg-13/shaders/` GLSL**, the only implementation of the field. Rust dispatches it and owns scheduling/residency/view/tests; Rust never re-implements the world math on the CPU. The render shader (`ring_displace`) only presents pages — it is not a terrain generator. If a CPU copy of the field math appears in `rust/`, that's the "two worlds" violation; STOP and log it.
 
 ---
 
@@ -68,11 +72,11 @@ gdext supports hot reload. The loop is: edit Rust → `cargo build` → Godot pi
 
 ## 4. Tests (test gates — agent can self-certify)
 
-### Field / Rust unit tests (no Godot)
+### Field determinism/seam tests (Rust drives the real GPU compute, reads back)
 ```powershell
 cargo test --manifest-path "D:\world gen 13\rust\Cargo.toml"
 ```
-This is the oracle for `00_ARCHITECTURE.md §2.1`: determinism, continuity, edge-vertex equality (M1.2, M1.4). These run with no Godot in the loop — the agent runs them unsupervised and proceeds across the gate.
+These exercise the **real compute path** (`00_ARCHITECTURE.md §2.1`): Rust spins up a `RenderingDevice`, runs the field GLSL over a page, reads it back, and asserts determinism (same seed → identical bytes), continuity, and adjacent-page edge equality (M1.2, M1.4). The GPU output is the oracle — there is no CPU field to compare against. Note: these need a GPU/RenderingDevice available, so they are not pure-CPU unit tests; on a headless agent box confirm a usable device or run them via the headless Godot path below.
 
 ### Godot-side tests (headless)
 For gates that need the engine (e.g. a scene loads, a mesh has N vertices), run a GDScript check headless and exit:

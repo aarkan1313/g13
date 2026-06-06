@@ -39,21 +39,25 @@ This is the single most important rule in the entire project. Almost every past 
 
 ### 2.1 The World Field (the "what")
 
-A pure, deterministic, side-effect-free function:
+The Field answers exactly these questions about any point in continuous world space, given a seed:
 
 ```
-sample_density(world_pos: Vec3, seed: u64) -> f32      // < 0 = solid, > 0 = air (signed distance-ish)
-sample_surface(world_xz: Vec2, seed: u64) -> f32       // convenience: surface height at x,z
-sample_material(world_pos: Vec3, seed: u64) -> MaterialId
+density(world_pos: Vec3, seed: u64) -> f32       // < 0 = solid, > 0 = air (signed distance-ish)
+surface(world_xz: Vec2, seed: u64) -> f32        // convenience: surface height at x,z
+material(world_pos: Vec3, seed: u64) -> MaterialId
 ```
+
+These are the **contract** — the questions the renderer is allowed to ask. They are stable regardless of *how* they're computed.
+
+**The Field's canonical implementation is a GPU compute shader (GLSL), authored in WG13 as the source of truth.** It produces height/density/material **pages** (tiles of world space) on the GPU. There is no separate CPU implementation of the world math to keep in sync — that "two worlds" duplication is exactly what `00 §4` warns against, so we don't create it.
 
 Properties that MUST hold forever:
 
-- **Deterministic:** same input + same seed → same output, always, on any machine, in any session. No global mutable state. No time dependence. No frame dependence.
-- **Chunk-agnostic:** the field does not know what a chunk is, how big it is, or that meshing exists. You can query any point in continuous space.
-- **3D-capable from day one:** even though Milestone 1 only reads the *surface*, the canonical model is a 3D density field. This is what makes caves, overhangs, and editable terrain possible later WITHOUT a rewrite. (See Section 3 for why this is the chosen representation.)
-- **Pure Rust, GPU-mirrorable:** the field is authored in Rust and written so its math can also run as a GLSL/compute shader. CPU and GPU paths must produce matching results (within float tolerance). The CPU path is the source of truth and the test oracle.
-- **Independently testable:** the field has unit tests that never open Godot. "Does height at (1000, 1000) equal X" is a test, not a thing you check by looking at the screen.
+- **Deterministic:** same world position + same seed → same output, always, on any machine, in any session. No global mutable state, no time dependence, no frame dependence, no chunk/page-local coordinates (sample in world space — see §5). This is the rule that makes seams, save/load, and multiplayer possible.
+- **Page/chunk-agnostic in meaning:** the *math* does not depend on how the renderer tiles the world. A page is a unit of *production* (a tile the compute shader fills), never a unit that changes the *answer*. Two different page layouts over the same world point must yield the same value.
+- **3D-capable from day one:** even though Milestone 1 only renders the *surface*, the canonical model is a 3D density field. `density(...)` exists from the start so caves, overhangs, and editable terrain arrive later WITHOUT a rewrite. (See §3.)
+- **Verified by GPU readback, not by a CPU oracle:** determinism and continuity are proven by **reading the GPU's output back and asserting on it** — "produce the page at world origin twice, same seed, get identical bytes"; "the shared edge of two adjacent pages matches to the bit." These are automated test gates (`02_WORKFLOW.md`) that run the real compute path. The screen is never the determinism check.
+- **Rust owns everything around the field that isn't the math:** seed derivation, page scheduling, residency, route/carve/condition facts, and the readback-based tests are deterministic Rust (`§4`). The GLSL owns only the per-point world math.
 
 ### 2.2 The Renderer / Streaming layer (the "how it looks")
 
@@ -86,57 +90,61 @@ A change on one side cannot force a refactor on the other side **as long as the 
 
 ---
 
-## 3. Terrain representation: density field, surface-only rendering (for now)
+## 3. Terrain representation: GPU-produced density/height pages, surface-only rendering (for now)
 
-**Decision: A signed-distance / density field is the canonical data model from day one. Milestone 1 renders only its surface layer as a heightfield-style mesh. Caves/overhangs are unlocked later by sampling the full 3D field — with no change to the field's contract.**
+**Decision: A signed-distance / density field is the canonical data model from day one, produced on the GPU as world-space pages. Milestone 1 renders only the surface layer (a height page displaced onto a mesh). Caves/overhangs are unlocked later by reading the full 3D density — with no change to the field's contract.**
+
+### Why GPU-first (and not a CPU heightfield first)
+We are not building a throwaway CPU meshing path. A GPU compute producer is the runtime we actually want — it's how an infinite, high-detail world hits the frame budget — and we already learned its shape in WG10 (reference only; we are rebuilding clean). Starting CPU-first would mean writing a heightfield path we'd delete the moment performance bit, then re-deriving the field math in GLSL anyway. That is the duplicated effort, not the safe choice. So the field is GLSL from step one.
 
 ### Why not pure heightmap?
-A heightmap (`height = f(x,z)`) is simpler and faster, but it structurally cannot represent caves, overhangs, or arbitrary editable terrain. Choosing it now would guarantee a rewrite later. Rejected for that reason.
+A 2D heightmap (`height = f(x,z)`) is structurally incapable of caves, overhangs, or arbitrary editable terrain. The **page** we render in M1 is a height page (the surface), but the underlying contract is `density(...)` in 3D, so the surface page is a *view* of a 3D field, not the field itself. This is what avoids the rewrite later.
 
-### Why not full voxel meshing everywhere right now?
-Full 3D surface extraction across an infinite world (with LOD, seams, and collision on a 3D field) is exactly the class of difficulty that has wrecked previous attempts. It violates Pillar #1 (Survivability) to take it all on at once.
+### Why not full 3D voxel meshing everywhere right now?
+Full volumetric surface extraction (Surface Nets / Dual Contouring) across an infinite world, with LOD/seams/collision on a 3D field, is the class of difficulty that wrecked past attempts. We don't take it on in M1. We render the **top surface** of the GPU field as a displaced page — fast, smooth, non-blocky — and add full-volume extraction only when caves arrive (later milestone). The field's GLSL doesn't change then; the renderer learns a new way to read it.
 
-### The hybrid (chosen)
-- The field is **3D and density-based** from the start. `sample_density` exists from day one.
-- Milestone 1's renderer extracts only the **top surface** of that field — effectively asking "where does density cross zero, scanning down from the sky?" — and meshes it like a heightfield. This is fast, gives gorgeous smooth (non-blocky) land, and has none of the full-voxel complexity.
-- When caves arrive (later milestone), the renderer gains a full-volume surface-extraction path (**Surface Nets / Dual Contouring** — smooth, non-Minecraft) for chunks that contain interior air pockets. The field does not change. Only the renderer learns a new way to read it.
+### The chosen path
+- The field is **3D and density-based**, authored as **GPU compute (GLSL)** from the start. `density(...)` exists day one.
+- M1's renderer asks the GPU for **height pages** (the surface) and displaces them onto a clipmap/ring mesh. The producer runs bounded work per frame; pages are held in a pool and the view is read-only over resident pages.
+- Determinism/seams are proven by **reading pages back** (`§2.1`), not by eyeballing.
 
-This gives the AAA, non-blocky, cave-capable future without paying its full cost on attempt #13.
+### 3.1 What we take from WG10, and what we don't
+`WG10_MOUNTAIN_DEEP_DIVE.md` is **reference only** — a record of what the previous attempt learned, not a codebase to port and not a spine to inherit. WG13 starts over with a clean implementation.
 
-### 3.1 CPU source of truth vs the WG10 GPU page machinery (resolving the tension)
+- **We adopt the *shape* of the runtime** because it's the right one: GPU page producer → Rust facts (routes/carve/condition) → bounded page pool residency → read-only terrain view → explicit review modes → visual promotion gate. We rebuild it ourselves, cleanly, gated step by step — we do not copy WG10 files.
+- **We adopt the *discipline*:** bounded pages per frame, never-black coverage (coarse blanket under fine, hold-last-good, display pins), accepted/candidate/diagnostic lanes kept separate, tests that encode the failure modes, visual gates as first-class.
+- **We do not inherit WG10's accumulated baggage:** no porting its god-files, no WG11 spike-tune drift, no assumption that any WG10 number is correct until a WG13 gate re-proves it.
 
-`WG10_MOUNTAIN_DEEP_DIVE.md` documents a GPU-centric runtime: GPU page producers, clipmap rings, a bounded page pool, off-frame readback. That is **not** how WG13 starts, and the two must not be confused:
-
-- **WG13 M1 starts CPU-first.** The Rust `field` (this section's contract) is the **source of truth**, sampled on the CPU. The renderer meshes the surface into per-chunk `ArrayMesh`es on worker threads. Simple, debuggable, no GPU/CPU two-worlds problem. This honors Pillar #1 (Survivability).
-- **The WG10 GPU page-pool spine is a *later performance path*, not a foundation.** When CPU meshing stops meeting the perf budget at the render distance we want, *then* we consider mirroring the field math into a GPU compute path — and `00 §4`'s rule applies: the CPU field stays the oracle, the GPU path must match it within tolerance, verified by a test. We never start with two implementations.
-- **What we copy from WG10 now is the *discipline*, not the machinery:** bounded work per frame, never-black coverage, read-only terrain view, explicit review modes, visual promotion gates. The discipline is portable to a CPU renderer.
-
-If a step ever seems to require building the GPU page pool to pass an M1 gate, STOP and log it — that is a foundation-level decision, not an in-step fix.
+If a step's gate seems to require importing WG10 code wholesale, STOP and log it — reference means learn-from, not copy-from.
 
 ---
 
 ## 4. Rust / Godot split
 
-**Decision: gdext (godot-rust) v0.5+. Rust owns the field and the meshing. GDScript owns scene orchestration and editor-facing tuning.**
+**Decision: gdext (godot-rust) v0.5+. Rust owns the runtime (scheduling, residency, facts, tests) and drives the GPU field. GLSL compute owns the world math. GDScript owns thin scene assembly and editor-facing tuning only.**
 
+- **GLSL compute (the field's implementation — Section 2.1, 3):**
+  - The world math: `density`/`surface`/`material` per world point, producing pages.
+  - Run via Godot's `RenderingDevice` compute pipeline.
+  - This is the source of truth. There is no second (CPU) copy of this math.
 - **Rust (the GDExtension):**
-  - The World Field (Section 2.1)
-  - Surface extraction / meshing
-  - Chunk streaming math and the WorkerThreadPool jobs
-  - Anything performance-critical or correctness-critical
-  - Exposes a small set of Godot nodes/resources with `#[export]` tunables
+  - Everything around the field that must be deterministic and correct: seed derivation, page scheduling (bounded work/frame), residency/pool, the read-only terrain view, and later route/carve/condition **facts**.
+  - Dispatching the compute, and **reading pages back** for the determinism/seam test gates.
+  - Anything performance- or correctness-critical that isn't the per-point math.
+  - Exposes a small set of Godot nodes/resources with `#[export]` tunables.
 - **GDScript / Godot scene:**
-  - The test/demo scene
-  - Wiring the viewer (camera/character) to the streaming node
-  - Exposed tuning knobs in the inspector (seed, render distance, noise params)
-  - Nothing that decides world shape
+  - The demo + review scenes (assembly only).
+  - Wiring the viewer (camera/character) to the runtime node.
+  - Exposed tuning knobs in the inspector (seed, render distance, recipe params).
+  - **Nothing that decides world shape.**
 
 ### Why gdext and not a separate compute lib
-A standalone Rust lib called over FFI fragments the code across a boundary you'd fight forever. gdext gives real Godot nodes, inspector integration, and **hot reload** — which is essential to the visual-gate workflow (`02_WORKFLOW.md`). As of v0.5 (March 2026) it is production-usable, hot-reload is tested in their CI, and extensions built for API ≥4.2 run on Godot 4.6.
+A standalone Rust lib called over FFI fragments the code across a boundary you'd fight forever. gdext gives real Godot nodes, inspector integration, and **hot reload** — essential to the visual-gate workflow (`02_WORKFLOW.md`). As of v0.5 (March 2026) it is production-usable, hot-reload is tested in their CI, and extensions built for API ≥4.2 run on Godot 4.6.
 
-### GPU compute
-- Use Godot's `RenderingDevice` compute pipeline for the GPU field path and (later) erosion.
-- **Rule:** the CPU Rust field is the source of truth. The GPU path must match it within tolerance, verified by a test. Never let the GPU path drift into being a separate, second implementation of the world — that is two worlds, and they will disagree.
+### The one-implementation rule
+- The GLSL field is the only implementation of the world math. We deliberately do **not** keep a parallel CPU version — that "two worlds that drift apart" duplication is the trap, not the safeguard.
+- Determinism is enforced instead by **reading the GPU's own output back** and asserting on it (same seed → identical page bytes; adjacent page edges match). The real compute path is what the test exercises.
+- A Rust-side render shader (`ring_displace`) only *presents* produced pages; it is never a second terrain generator. The render shader and the field-producer compute shader are separate and must stay separate.
 
 ---
 
@@ -144,8 +152,8 @@ A standalone Rust lib called over FFI fragments the code across a boundary you'd
 
 - One `u64` master seed for the world.
 - Per-feature seeds are **derived** from the master seed by hashing (e.g. `hash(master_seed, "erosion")`), never by incrementing a shared counter, so adding a new feature never shifts the seed stream of existing features.
-- Noise is sampled in **world coordinates**, never chunk-local coordinates. (Chunk-local sampling is the #1 cause of seams — it was almost certainly a culprit in past attempts.)
-- A chunk's content depends ONLY on its world position + seed. Two players, two sessions, two machines: identical. This is also what later makes save/load trivial — you only store *diffs* from the deterministic baseline.
+- Noise is sampled in **world coordinates**, never page/chunk-local coordinates. (Local-coordinate sampling is the #1 cause of seams — almost certainly a culprit in past attempts.) The compute shader receives each page's world-space origin and samples absolute world positions.
+- A page's content depends ONLY on its world position + seed. Two players, two sessions, two machines: identical. This is also what later makes save/load trivial — you only store *diffs* from the deterministic baseline.
 
 ---
 

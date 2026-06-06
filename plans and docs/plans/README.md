@@ -25,4 +25,5 @@ Attempt #13. The previous twelve failed on **architecture tangle** and **plan dr
 - Rust `1.94.1` / cargo `1.94.1`; git `2.52`. Repo root = `D:\world gen 13` (archive + manifests gitignored).
 - gdext (godot-rust) v0.5+, `compatibility_minimum = 4.2`; hot reload supported (essential for the tuning loop). Exact crate version pinned at M1.1.
 - Canonical data model: 3D signed-distance/density field; M1 renders surface-only; caves later use Surface Nets/Dual Contouring with no field rewrite.
-- **CPU field is the source of truth.** M1 meshes the surface on the CPU (per-chunk `ArrayMesh`). The GPU page-pool/clipmap machinery described in `WG10_MOUNTAIN_DEEP_DIVE.md` is a *later* performance path and a source of lessons — **not** how M1 starts. We do not begin with GPU page producers. See `00_ARCHITECTURE.md §3`.
+- **GPU is the source of truth.** The field is a **GLSL compute shader** producing world-space pages; there is no parallel CPU copy of the world math. M1 builds the GPU page-pool/clipmap shell from step one (one page proof → flyable rings → seams → streaming → LOD → collision). Determinism is proven by **reading pages back** and asserting, never by eyeballing. See `00_ARCHITECTURE.md §2.1, §3, §4`.
+- **`WG10_MOUNTAIN_DEEP_DIVE.md` is reference only** — learn from its ladder and discipline; rebuild clean; copy no files. See `00 §3.1`.
