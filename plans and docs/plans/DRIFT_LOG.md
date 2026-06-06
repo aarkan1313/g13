@@ -4,6 +4,14 @@ The human reads this FIRST every session. The agent appends here whenever it blo
 
 ---
 
+## [2026-06-06] — M1.8 MILESTONE GATE PASS — m1-complete tagged
+TYPE: (milestone gate met, tagged)
+M1 Definition of Done verified in two halves: (1) OUTPUT-PROVABLE/MEASURED — all 9 structural gates green (determinism, seams, pool bounding, streaming invariants, never-black coverage, annulus no-overlap, collision heights/build/stand) PLUS the m1_6 frame-time gate (steady-state ~2.5ms, p99 2.78ms << 16.6 budget). (2) VISUAL — human flew the live world via the auto-tour (cruise/boost/pan/ascend/orbit/walk-drop) with the perf HUD up and signed off: continuous to horizon, no seams, no black even outrunning the streamer, no fall-through on the walk step, memory flat. Known-deferred far-edge items (LOD detail-step + streaming pop-in) are within M1's "no popping that reads as broken" allowance.
+PERF NOTE (-> M1.9): user observed occasional p99/max/frame-time jumps when moving fast (240->210 fps dips, ~4ms baseline). These are WITHIN M1's under-budget gate (4ms vs 16.6), so they do NOT block the tag — but the user wants the foundational infra as efficient as possible. DECISION (pillars): tag M1 now (every gate green = a real checkpoint; denying it would discard proven state), then do performance as its OWN gated milestone M1.9 before M2 — evidence-first (instrument, then cut), optimizing workload-independent things only (defer content-dependent tuning so we don't optimize a placeholder field). See PROGRESS M1.9.
+TAGGED: m1-complete.
+CODEBASE STATE: green at the m1-complete tag.
+WHAT I DID NOT DO: Did not start M2. Did not begin optimizing before instrumenting (M1.9.1 is measurement first).
+
 ## [2026-06-06] — Dev tooling: perf HUD + data-driven auto-tour (smoke PASS)
 TYPE: (tooling — demo-side, not milestone work; smoke-verified, all 9 gates still green)
 Built two DEMO dev tools (no engine/contract impact; world_view/Rust/GLSL untouched), brainstormed + user-approved:

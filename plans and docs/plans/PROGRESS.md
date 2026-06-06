@@ -24,7 +24,14 @@ M1.7 [x] near-page collision, character doesn't fall through (human live PASS 20
   M1.7a [x] PagePool retains CPU heights; get_page_heights() returns the SAME array behind the texture (no readback, no second path). Test PASS (bit-identical to texture, matches FieldCompute, empty when non-resident)
   M1.7b [x] collision build in world_view: level-0 only, radius 1, WorkerThreadPool off-thread -> deferred add_child; bodies evict with the ring. Test PASS (shape map_data bit-identical to pool heights; dims + page-centre transform + cell_spacing scale correct; 9 bodies for 294 meshes = near pages only)
   M1.7c [x] capsule character + fly/walk (F/G) toggle. Output-provable core PASS + human live PASS ("didnt fall through, you fixed it"). Fix: walk/fly mutually exclusive (no input bleed) + spawn just above resident terrain. Controls: Space rise/jump, C descend, Shift sprint
-M1.8 [ ] MILESTONE GATE — full definition of done, tag m1-complete   <- CURRENT
+M1.8 [x] MILESTONE GATE — full DoD met: 9/9 structural gates + frame-time gate green; human live flythrough (auto-tour) PASS 2026-06-06. Tagged m1-complete.
+
+## M1.9 — Performance hardening (foundation pass, before M2)
+A careful, EVIDENCE-FIRST pass: make the foundational infra as efficient as it can be WITHOUT sacrificing features/quality ("build it right once"). Optimize workload-INDEPENDENT things (per-frame waste, allocations, reuse, the streaming hitch); DEFER workload-dependent tuning (LOD radii, texture/scatter batching) to when real M2+ content exists. Measure before cutting.
+M1.9.1 [ ] instrument per-system frame breakdown (GPU dispatch / mesh build / pool / GDScript ms) — the profiler   <- CURRENT
+M1.9.2 [ ] root-cause + fix the fast-motion streaming spikes (p99/max jumps when moving fast)
+M1.9.3 [ ] sweep workload-independent inefficiencies (per-frame GDScript, allocations, mesh/material reuse)
+M1.9.x [ ] perf gate: smooth under motion, no per-frame waste, all M1 gates still green
 
 ## Milestone 2 — Untextured biomes + DEM-informed shape
 M2.1 [ ] temperature & moisture debug-color fields

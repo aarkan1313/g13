@@ -19,11 +19,11 @@ Then, only if you need them: `00_ARCHITECTURE.md` (the rules), `04_CODE_MAP.md` 
 - **Use the brainstorming/debugging/etc. skills** when they apply (the harness reminds you). They've been load-bearing here.
 
 ## 3. Current state (update this in every handoff refresh)
-- **As of commit `1a12331`** (pushed to `github.com/aarkan1313/g13`, `main`). Tree clean.
-- **Done: M1.1–M1.6.** Skeleton+hot-reload, GPU field (determinism/seam tests), on-screen render, seamless page tiling, full streaming shell (bounded pool, camera-following, annulus clipmap, never-black, no z-fight), LOD to ~49 km horizon @ ~420 fps steady-state (frame gate passing).
-- **6 test gates green:** `wg-13/tests/m1_{2,4,5a,5b,5c_coverage,5c_overlap,6_frametime}_check.gd` (run via vulkan, see CODE_MAP).
-- **NEXT STEP: M1.7 — collision.** Generate `HeightMapShape3D` for **near pages only**, async/off-main-thread, reading the **same resident page heights** the view uses (never a second field path). Gate: a character stands on the terrain anywhere, including freshly-streamed pages, without falling through. Then M1.8 (run full DoD, tag `m1-complete`).
-- **Then M2** (biomes + DEM stats; 135 labeled DEMs already inventoried in `03_DEM_CATALOG.md`).
+- **As of the `m1-complete` tag** (on `main`, `github.com/aarkan1313/g13`). Tree clean.
+- **Done: M1 COMPLETE (M1.1–M1.8), tagged `m1-complete`.** Skeleton+hot-reload, GPU field, on-screen render, seamless tiling, full streaming shell (bounded pool, annulus clipmap, never-black, no z-fight), LOD to ~49 km @ ~400 fps, near-page collision (HeightMapShape3D off-thread, character stands on it), full DoD met + human live flythrough PASS.
+- **10 gates green:** `wg-13/tests/m1_{2,4,5a,5b,5c_coverage,5c_overlap,6_frametime,7a_heights,7b_collision,7c_stand}_check.gd` (run via vulkan, see CODE_MAP). Plus demo dev tools: perf HUD (H) + data-driven auto-tour (T) with `hud_smoke_check`/`tour_smoke_check`.
+- **NEXT STEP: M1.9 — performance hardening** (a gated foundation pass before M2). Evidence-first: M1.9.1 INSTRUMENT a per-system frame breakdown (GPU dispatch / mesh build / pool / GDScript ms) BEFORE optimizing; M1.9.2 root-cause + fix the fast-motion streaming spikes (p99/max jumps when moving fast — user-reported, within budget but to be smoothed); M1.9.3 sweep workload-INDEPENDENT inefficiencies. Defer workload-dependent tuning (LOD radii, texture/scatter batching) to when real M2+ content exists — don't optimize a placeholder. (See PROGRESS M1.9; rationale in DRIFT_LOG.)
+- **Then M2** (biomes + DEM stats; 135 labeled DEMs inventoried in `03_DEM_CATALOG.md`).
 
 ## 4. Known deferred items (don't "rediscover" these as bugs)
 - **LOD transition seams** between clipmap levels (faint shading/detail steps as you fly) — roadmap-deferred **geomorph** polish. Not a crack, not z-fighting. Don't fix piecemeal (that's slop); it's a dedicated later pass. (Human confirmed 2026-06-06: still slightly present — fine to fix later.)
