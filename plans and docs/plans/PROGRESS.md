@@ -19,7 +19,7 @@ M1.5 [x] bounded pool + clipmap rings + read-only view; streams, no black, no z-
   M1.5a [x] Rust PagePool: caches by (level,gx,gz), bounded new-per-frame; pool-driven static ring renders (test PASS)
   M1.5b [x] camera-following streaming: ring recenters, evicts behind, pins displayed; flat memory (test PASS)
   M1.5c [x] annulus clipmap: coarse blanket EAGER, fine BOUNDED; coarse HIDDEN where fine covers (no overlap -> no z-fight) yet shown over holes (never-black). coverage + overlap tests PASS
-M1.6 [ ] LOD to horizon (~30km) at frame budget, frame-time test passes   <- CURRENT
+M1.6 [~] LOD to horizon: 6 levels -> ~49km reach (30km goal +margin), fog hides edge; frame-time gate PASS (steady-state 2.4ms/420fps, p99 2.7ms << 16.6); startup ~150ms one-time transient (deferred async-load). Live horizon PARKED-FOR-VISUAL   <- CURRENT
 M1.7 [ ] near-page collision, character doesn't fall through
 M1.8 [ ] MILESTONE GATE — full definition of done, tag m1-complete
 

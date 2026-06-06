@@ -20,7 +20,10 @@ const FLY := "res://scripts/fly_camera.gd"
 @export var octaves: int = 5
 @export var base_freq: float = 0.0015
 @export var amplitude: float = 240.0
-@export var num_levels: int = 2            # fine (0) + coarse blankets. M1.6 scales up.
+# M1.6: 6 levels @ base span 508m, radius 3 -> coarsest reaches ~49km (30km goal
+# with margin). Each coarser level doubles per-page span, so reach is exponential
+# for linear page cost. (level span = base_span * 2^level.)
+@export var num_levels: int = 6            # fine (0) + coarse blankets, out to the horizon
 @export var ring_radius: int = 3           # pages each side, per level, around camera
 @export var evict_margin: int = 1          # hysteresis: keep_radius = ring_radius + margin
 @export var max_new_per_frame: int = 4
@@ -40,8 +43,10 @@ func _ready() -> void:
 	_pool.configure(page_res, spacing, seed_val, octaves, base_freq, amplitude, max_new_per_frame)
 	_ring_shader = load(RING)
 	_spawn_camera()
-	print("M1.5c: %d-level clipmap, ring_radius %d, base span %.0fm" % [
-		num_levels, ring_radius, _pool.page_span()])
+	var span: float = _pool.page_span()
+	var reach: float = ring_radius * span * pow(2.0, num_levels - 1)
+	print("M1.6: %d-level clipmap, ring_radius %d, base span %.0fm -> reach ~%.1f km" % [
+		num_levels, ring_radius, span, reach / 1000.0])
 
 func _process(_dt: float) -> void:
 	if _cam == null:
@@ -151,9 +156,11 @@ func _make_page_instance(tex, level: int, gx: int, gz: int, span: float) -> Mesh
 
 func _spawn_camera() -> void:
 	var span: float = _pool.page_span()
+	# Outer reach of the coarsest level (where the loaded world ends).
+	var reach: float = ring_radius * span * pow(2.0, num_levels - 1)
 	var terrain_y := amplitude * 1.2
 	var cam := Camera3D.new()
-	cam.far = span * 60.0
+	cam.far = reach * 1.3                       # see the whole loaded extent + margin
 	cam.set_script(load(FLY))
 	add_child(cam)
 	cam.global_position = Vector3(0.0, terrain_y + span * 0.5, span * 0.8)
@@ -169,9 +176,19 @@ func _spawn_camera() -> void:
 	var env := WorldEnvironment.new()
 	var e := Environment.new()
 	e.background_mode = Environment.BG_COLOR
-	e.background_color = Color(0.52, 0.62, 0.74)
+	e.background_color = Color(0.62, 0.70, 0.80)
 	e.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	e.ambient_light_color = Color(0.5, 0.55, 0.6)
 	e.ambient_light_energy = 0.6
+	# Distance fog matched to the loaded extent: the coarsest edge fades into the
+	# sky so the boundary of the loaded world is never a visible hard line
+	# (WG10 lesson: match fog/far to loaded extent). Fog starts well out so near
+	# terrain stays crisp; ends near the reach so the far edge dissolves.
+	e.fog_enabled = true
+	e.fog_mode = Environment.FOG_MODE_DEPTH
+	e.fog_light_color = Color(0.62, 0.70, 0.80)  # match sky so it reads as haze->horizon
+	e.fog_depth_begin = reach * 0.45
+	e.fog_depth_end = reach * 0.98
+	e.fog_density = 0.0                          # depth fog drives it, not exponential
 	env.environment = e
 	add_child(env)

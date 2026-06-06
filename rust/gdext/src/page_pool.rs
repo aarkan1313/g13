@@ -55,9 +55,11 @@ pub struct PagePool {
     /// Pages currently displayed — must NOT be evicted out from under the mesh
     /// (00 §3 never-black discipline). Rebuilt each frame by the view.
     pinned: std::collections::HashSet<PageKey>,
-    /// Bounded production: at most this many NEW pages produced per frame.
+    /// Bounded production: at most this many NEW FINE pages produced per frame.
+    /// (Coarse/eager production is intentionally unbounded — see request().)
     max_new_per_frame: i32,
     produced_this_frame: i32,
+    eager_this_frame: i32,  // diagnostics: eager pages produced this frame
     /// Counters for tests/diagnostics.
     total_produced: i64,
     cache_hits: i64,
@@ -77,6 +79,7 @@ impl IRefCounted for PagePool {
             pinned: std::collections::HashSet::new(),
             max_new_per_frame: 4,
             produced_this_frame: 0,
+            eager_this_frame: 0,
             total_produced: 0,
             cache_hits: 0,
             evicted: 0,
@@ -116,6 +119,7 @@ impl PagePool {
     #[func]
     fn begin_frame(&mut self) {
         self.produced_this_frame = 0;
+        self.eager_this_frame = 0;
         self.pinned.clear();
     }
 
@@ -184,11 +188,17 @@ impl PagePool {
             self.cache_hits += 1;
             return Some(tex.clone());
         }
+        // Coarse blanket (eager) is UNBOUNDED: it must be complete in the frame
+        // it's requested so never-black holds (the coverage gate fills it in one
+        // begin_frame). Only the expensive FINE level is per-frame bounded.
+        // (An eager per-frame cap was tried to smooth startup; it broke
+        // never-black AND made startup worse — the startup spike is one-time
+        // engine/shader init, not the eager page burst. Reverted.)
         if !eager && self.produced_this_frame >= self.max_new_per_frame {
-            return None; // over budget this frame; caller falls back to coarse
+            return None; // fine over budget this frame; caller falls back to coarse
         }
         let tex = self.produce(key)?;
-        self.produced_this_frame += 1; // counted even when eager (diagnostics)
+        if eager { self.eager_this_frame += 1; } else { self.produced_this_frame += 1; }
         self.total_produced += 1;
         self.cache.insert(key, tex.clone());
         Some(tex)

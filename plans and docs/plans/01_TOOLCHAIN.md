@@ -144,5 +144,6 @@ The M1.6 test gate ("frame time < budget while flying across many chunk loads") 
 
 ## 7. Open verification items (resolve at the step that needs them)
 - ~~**gdext version pin**~~ — RESOLVED at M1.1: `godot = "0.5"` → 0.5.3, loads on 4.6.2 with `compatibility_minimum = 4.2`. See §1.
-- **Target hardware for 60 FPS:** undefined in the milestone docs. Name it before M1.6.
+- **Target hardware for 60 FPS:** dev machine is an RTX 5090 Laptop GPU (verified via Vulkan init log). Name the *minimum* target before shipping; for now perf is measured on this machine. (Frame-time gate measures true per-frame `delta`, vsync off — NOT `Performance.TIME_PROCESS` (script-only) or `TIME_FPS` (smoothed); both hide spikes. M1.6 finding.)
+- **Startup transient (M1.6 known item):** at launch the 6-level clipmap fills + the GPU pipeline/shaders warm up — worst single frame ~150 ms, ~2 frames over budget, then steady-state ~2.4 ms (420 FPS at script res). This is one-time *load* lag, not stutter-on-movement (the gate measures steady-state, which passes). Proper fix = async page production off the main thread / loading screen — a later concern, not M1.6.
 - **`extension_list.cfg` is under `.godot/` (gitignored):** so a fresh clone must run the editor import scan once before game runs work. Documented in §3; not a bug.
