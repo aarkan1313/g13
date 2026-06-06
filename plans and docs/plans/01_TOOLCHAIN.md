@@ -142,6 +142,17 @@ The M1.6 test gate ("frame time < budget while flying across many chunk loads") 
 
 ---
 
+## 6.1 The frame budget is real; today's NUMBERS are not representative (read before trusting a perf number)
+The 16.6 ms / 60 FPS budget is the real, fixed target. But the current readings against it (~4 ms steady, worst frame ~11 ms under max-boost streaming, after M1.9) are measured on an **almost-empty world**: simple fBM field, flat vertex color, no textures, no scatter, no water, no real fragment work. So today's ~4 ms is a **floor, not a representative frame** — it WILL climb as real content lands:
+- **M2 biomes** → more field math per page (`prod` up).
+- **M3 textures** → triplanar/splat fragment shading = the first real render cost.
+- **M4 scatter** → thousands of instances, draw calls, vertex load.
+- **M5+ water / M6 erosion** → more passes.
+
+What M1.9 actually bought (and what's permanent): it removed the **structural** per-frame costs of the streaming machinery itself — per-page mesh/material allocation, string-key churn, and the eager-production burst. Those would have taxed EVERY frame of EVERY future feature on top of the feature's own cost. So the streaming shell now contributes ~nothing and the whole budget is free for content. The *absolute* 4 ms is not meaningful; **"the shell itself is now free" is.**
+
+Consequence for future milestones: the frame budget is a **live, watched thing** during M2–M6 — that's what the perf HUD is for. Do NOT read "4 ms today" as "performance is solved forever." When a feature pushes a frame toward 16.6 ms, THAT is the informed moment to optimize — against the real cost, not the placeholder. (E.g. async/double-buffered GPU page production is deferred for exactly this reason: tuning it now optimizes a placeholder field; the field's real cost arrives with biomes/erosion.)
+
 ## 7. Open verification items (resolve at the step that needs them)
 - ~~**gdext version pin**~~ — RESOLVED at M1.1: `godot = "0.5"` → 0.5.3, loads on 4.6.2 with `compatibility_minimum = 4.2`. See §1.
 - **Target hardware for 60 FPS:** dev machine is an RTX 5090 Laptop GPU (verified via Vulkan init log). **Minimum target = RTX 3070+** (user-stated 2026-06-06). The dev-machine number is a *baseline*, not the gate pass — the gate must hold on a 3070. The 3070 has roughly a third of the 5090-laptop's raster/compute throughput, so a gate that passes with large headroom on the 5090 (M1.6 steady-state was 2.4 ms / 420 fps, ~7x under the 16.6 ms budget) is expected to clear 60 FPS on a 3070, but anything that lands *near* budget on the 5090 must be re-checked against the 3070 margin before it counts as passed. (Frame-time gate measures true per-frame `delta`, vsync off — NOT `Performance.TIME_PROCESS` (script-only) or `TIME_FPS` (smoothed); both hide spikes. M1.6 finding.)

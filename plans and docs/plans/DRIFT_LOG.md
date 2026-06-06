@@ -4,6 +4,13 @@ The human reads this FIRST every session. The agent appends here whenever it blo
 
 ---
 
+## [2026-06-06] — M1.9 live confirm + "is the budget real?" framing recorded
+TYPE: (human visual confirm + doc honesty pass)
+Human flew the M1.9 build ~49 km from origin (HUD: page -6,-97, xz -2773/-48898) and read the HUD: 240 fps / 4.17 ms, p99 4.55 == max 4.55 (worst frame == median, DEAD FLAT, no spikes), prod 0.00 / mesh 0.00 / view 1.13 ms steady, mem 132 MB flat (made 1831 / evict 1485 -> eviction working), vram 155 MB. HUD backing panel reads cleanly. Visual + perf confirmed good.
+HONEST FRAMING (user asked "is the frame budget even real / will it just be 4ms no matter what?" — good instinct): the 16.6ms budget is real and fixed, but today's ~4ms is measured on an ALMOST-EMPTY world and is a FLOOR, not representative — it climbs with M2 biomes (field math), M3 textures (fragment work), M4 scatter, M5/M6 water/erosion. What M1.9 permanently bought is that the STREAMING SHELL itself is now ~free (structural alloc/churn/burst removed), so the whole budget is available for content. Don't read "4ms today" as "perf solved forever." Recorded this in 01_TOOLCHAIN §6.1. Async GPU production stays deferred precisely because tuning it now optimizes a placeholder field.
+NEXT: M2.1 (temperature & moisture debug-color fields).
+CODEBASE STATE: green.
+
 ## [2026-06-06] — M1.9.3c string-churn removal + M1.9 CLOSED
 TYPE: (workload-independent waste removed; M1.9 perf milestone done; 13/13 gates green)
 M1.9.3c: the per-frame drop/pin/annulus loops re-split the "L:gx:gz" string key and re-iterated _instances ONCE PER LEVEL (6x). Fix: parse the key ONCE at instance creation into a parallel _inst_meta[key]=Vector3i(level,gx,gz); drop+pin is now a SINGLE pass reading meta (no per-level re-iteration, no string parsing); annulus visibility reads meta too. Churn (view minus prod minus mesh) dropped ~3.6ms -> ~1.8ms on the worst frame. The annulus overlap/coverage gates pass, so the visibility refactor preserved behavior exactly.
