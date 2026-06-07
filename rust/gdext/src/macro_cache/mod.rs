@@ -3,3 +3,5 @@ mod region;
 pub use region::{MacroBakeConfig, RegionMacro};
 mod bake;
 pub use bake::MacroBake;
+mod cache;
+pub use cache::RegionCache;
