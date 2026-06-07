@@ -22,6 +22,7 @@ use crate::field_gpu::PageParams;
 
 /// The four render textures a page produces, as MAIN-device RD texture RIDs. The
 /// pool wraps each in a Texture2DRD for material binding and frees them on evict.
+#[derive(Clone, Copy)]
 pub struct RenderTextures {
     pub height: Rid,   // R32F  — vertex displacement
     pub climate: Rid,  // RG32F — temperature, moisture
