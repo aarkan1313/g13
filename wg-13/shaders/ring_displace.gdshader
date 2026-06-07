@@ -67,15 +67,28 @@ void vertex() {
 	// PlaneMesh lies in XZ with VERTEX.xz in [-size/2, size/2]. Map to UV [0,1].
 	vec2 uv = (VERTEX.xz / page_world_size) + vec2(0.5);
 	UV = uv;
-	float h = sample_h(uv);
+
+	// M2.4 geomorph: blend this vertex (and its normal taps) between full detail
+	// and a half-res coarse tap, by camera distance. World-space vertex position
+	// via MODEL_MATRIX (PlaneMesh local -> world). morph_factor() is 0 (no change)
+	// unless world_view.gd supplied a real band for this page's level.
+	vec3 world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	float cam_dist = distance(world_pos.xz, CAMERA_POSITION_WORLD.xz);
+	float a = morph_factor(cam_dist);
+
+	float h_full = sample_h(uv);
+	float h = mix(h_full, sample_h_coarse(uv), a);
 	v_height = h;
 	VERTEX.y = h;
 
-	// Finite-difference normal from neighboring texels.
+	// Finite-difference normal — blend each tap the SAME way as the height so the
+	// shaded surface matches the morphed geometry (no shading seam reappearing).
 	float du = cell_spacing / page_world_size;
-	float hx = sample_h(uv + vec2(du, 0.0)) - sample_h(uv - vec2(du, 0.0));
-	float hz = sample_h(uv + vec2(0.0, du)) - sample_h(uv - vec2(0.0, du));
-	vec3 n = normalize(vec3(-hx, 2.0 * cell_spacing, -hz));
+	float hxp = mix(sample_h(uv + vec2(du, 0.0)), sample_h_coarse(uv + vec2(du, 0.0)), a);
+	float hxm = mix(sample_h(uv - vec2(du, 0.0)), sample_h_coarse(uv - vec2(du, 0.0)), a);
+	float hzp = mix(sample_h(uv + vec2(0.0, du)), sample_h_coarse(uv + vec2(0.0, du)), a);
+	float hzm = mix(sample_h(uv - vec2(0.0, du)), sample_h_coarse(uv - vec2(0.0, du)), a);
+	vec3 n = normalize(vec3(-(hxp - hxm), 2.0 * cell_spacing, -(hzp - hzm)));
 	NORMAL = n;
 }
 
