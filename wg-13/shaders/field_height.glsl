@@ -321,10 +321,10 @@ OscSegment osc_range_segment(int style, OscStyleParams params, int gx, int gz, i
     uint slane = uint(lane);
     float center_x = (float(gx) + 0.12 + osc_rand01(gx, gz, seed, 11u + slane) * 0.76) * cell_size;
     float center_z = (float(gz) + 0.12 + osc_rand01(gx, gz, seed, 31u + slane) * 0.76) * cell_size;
-    float coherent = osc_value_noise(vec2(center_x, center_z), 1.0 / 150000.0, seed ^ 0x7311cafeu, 0u);
+    float coh = osc_value_noise(vec2(center_x, center_z), 1.0 / 150000.0, seed ^ 0x7311cafeu, 0u);
     float local = osc_rand01(gx, gz, seed, 53u + slane);
     float style_bias = ((style == 0) ? 0.16 : (style == 1) ? 0.08 : (style == 2) ? 0.28 : 0.20) * OSC_TAU;
-    float angle = style_bias + (coherent * 0.70 + local * 0.30) * OSC_TAU;
+    float angle = style_bias + (coh * 0.70 + local * 0.30) * OSC_TAU;
     float length_m = params.range_len_min
         + osc_rand01(gx, gz, seed, 71u + slane) * (params.range_len_max - params.range_len_min);
     float dx = cos(angle) * length_m * 0.5;
@@ -402,10 +402,10 @@ float osc_tributary_channel_dist(int style, OscStyleParams params, vec2 p, uint 
             int gz = cz + dz;
             float center_x = (float(gx) + 0.12 + osc_rand01(gx, gz, seed ^ 0x93ab41e9u, 23u) * 0.76) * cell_size;
             float center_z = (float(gz) + 0.12 + osc_rand01(gx, gz, seed ^ 0x93ab41e9u, 29u) * 0.76) * cell_size;
-            float coherent = osc_value_noise(vec2(center_x, center_z), 1.0 / 74000.0, seed ^ 0x44c291afu, 0u);
+            float coh = osc_value_noise(vec2(center_x, center_z), 1.0 / 74000.0, seed ^ 0x44c291afu, 0u);
             float local = osc_rand01(gx, gz, seed ^ 0x93ab41e9u, 31u);
             float style_turn = (style == 0) ? 0.35 : (style == 1) ? 0.18 : (style == 2) ? 0.50 : 0.72;
-            float angle = (coherent * (1.0 - style_turn) + local * style_turn) * OSC_TAU;
+            float angle = (coh * (1.0 - style_turn) + local * style_turn) * OSC_TAU;
             float length_m = params.tributary_len_m * (0.55 + osc_rand01(gx, gz, seed ^ 0x93ab41e9u, 37u) * 0.85);
             float ax = center_x - cos(angle) * length_m * 0.5;
             float az = center_z - sin(angle) * length_m * 0.5;
