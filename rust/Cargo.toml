@@ -7,7 +7,7 @@
 # runtime never opens a .tif (03_DEM_CATALOG hard rule).
 [workspace]
 resolver = "2"
-members = ["gdext", "dem_distill"]
+members = ["gdext", "dem_distill", "structural_scaffold"]
 
 [profile.dev]
 # Faster iterate-rebuild loop for the hot-reload tuning workflow.

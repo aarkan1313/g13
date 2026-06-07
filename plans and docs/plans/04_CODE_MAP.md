@@ -8,6 +8,17 @@
 ## Layout
 
 ```
+rust/structural_scaffold/src/
+  lib.rs            M2.4b prototype lane: deterministic Rust RegionFact oracle
+                    (range/ridge/channel/pass/style/material facts) sampled from
+                    world coords. Unit-gated for determinism, seam agreement,
+                    connected channel routes, and bounded finite values. CPU-only
+                    review/prototype; not wired into the accepted runtime yet.
+  main.rs           Static review harness. Writes
+                    wg-13/_captures/m2_4b_scaffold_review.png + .md from the
+                    fact oracle. This is the cheap visual filter before live
+                    page-pool integration.
+
 rust/gdext/src/
   lib.rs            WorldRoot node + extension entry; registers modules.
   field_gpu.rs      THE ONE place that runs the field on the GPU: compile shader,
@@ -124,6 +135,8 @@ wg-13/                          (the Godot project, res://)
     climate_capture.gd          (M2.1) high wide vantage, save _captures/climate_{normal,temperature,moisture}.png — evidence for the parked visual gate
     shape_capture.gd            (M2.3) ground-aware terrain shape captures for tall composed terrain
   _captures/                    PNG output — gitignored scratch (regenerable).
+    m2_4b_scaffold_review.png    Static 3x3 scaffold sheet: preview/range/channel/style panels.
+    m2_4b_scaffold_review.md     Companion report: seam deltas + route metrics.
 
 run.ps1                         Launcher: agent runs the windowed scene on the user's
                                 desktop via a PS Job (.\run.ps1 / .\run.ps1 -Stop).
@@ -153,6 +166,12 @@ cargo build --manifest-path "D:\world gen 13\rust\Cargo.toml"
 ```
 Fly the live world: `.\run.ps1` (agent launches a windowed instance on the user's desktop via a PS Job; `.\run.ps1 -Stop` to close). The editor is only for inspector tuning or when a Rust rebuild needs the DLL lock released.
 
+M2.4b structural scaffold prototype gate + review sheet:
+```powershell
+cargo test --manifest-path "D:\world gen 13\rust\Cargo.toml" -p structural_scaffold
+cargo run --manifest-path "D:\world gen 13\rust\Cargo.toml" -p structural_scaffold -- review --seed 13 --radius 1 --tile-px 128
+```
+
 ## Gate ↔ milestone
 
 | Gate file | Milestone | Asserts |
@@ -170,3 +189,4 @@ Fly the live world: `.\run.ps1` (agent launches a windowed instance on the user'
 | m2_1_climate_check.gd | M2.1 | climate determinism (same page+seed → bit-identical); range [0,1]; low-freq/smooth (anti-confetti); latitude gradient real |
 | m2_2_biome_check.gd | M2.2 | biome determinism; valid integer ids [0,N); contiguity (low adjacent-differ); global variety; seed sensitivity |
 | m2_3_composition_check.gd | M2.3 | composition-machine determinism; relief spread proves lowlands+ranges are not uniform; no-cliff max step guardrail |
+| cargo test -p structural_scaffold | M2.4b prototype | RegionFact determinism; adjacent-region border agreement; connected channel route; bounded finite fact values |

@@ -4,6 +4,13 @@ The human reads this FIRST every session. The agent appends here whenever it blo
 
 ---
 
+## [2026-06-06] - M2.4b structural oracle prototype + static review sheet
+TYPE: PROTOTYPE GATE PASS + VISUAL REVIEW PENDING
+WHAT: added `rust/structural_scaffold`, a CPU-only RegionFact oracle for the M2.4b candidate lane. It samples deterministic world-coordinate facts: range mask, ridge axis/distance, channel mask/distance, pass floor, style id/weight, material hints, and a review-only preview height. It is not wired into `field_height.glsl`, `PagePool`, or the accepted M2.3 runtime.
+VERIFY: `cargo test --manifest-path rust\Cargo.toml -p structural_scaffold` PASS (4/4): same seed+region determinism, adjacent-region border agreement, connected channel route, bounded finite values. Generated `wg-13/_captures/m2_4b_scaffold_review.png` and `.md`; report shows zero seam deltas and no weak route regions for the 3x3 seed-13 sheet.
+HONEST VISUAL STATE: first generated sheet technically passed but looked too much like a regular grid, so it was tuned immediately. Current sheet is better (meandering trunk valleys + tributary segments, less all-mountain bias), but still a prototype review artifact. Do not promote it to runtime terrain until the sheet is visually reviewed/tuned against WG10 references.
+NEXT: inspect the review sheet with the human. If accepted as a useful scaffold direction, add a runtime candidate/diagnostic lane separate from the M2.3 reference terrain; if not, tune the fact vocabulary here before touching the live shader.
+
 ## [2026-06-06] - M2.4b reframed: DEMs should feed structural scaffold facts, not local knob tuning
 TYPE: DESIGN PIVOT + PLAN UPDATE
 HUMAN INSIGHT: the WG10 mountain synthesis outputs look much closer to the desired DEM use. They were effectively baked reference/world-layer products, but the useful part is not "static bake"; it is explicit mountain structure: range fields, channel/pass networks, valley corridors, style families, and material hints.

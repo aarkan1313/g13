@@ -6,6 +6,13 @@ Planning checkpoint after M2.4a failed visual review twice. This plan supersedes
 the scalar DEM-character idea. Do not restart parameter tuning against
 `dem_fingerprints.json` until this scaffold path has been evaluated.
 
+Implementation checkpoint: Step 2/3 prototype exists in `rust/structural_scaffold`.
+It generates deterministic CPU-only RegionFacts and writes
+`wg-13/_captures/m2_4b_scaffold_review.png/.md`. The unit gate is green for
+determinism, adjacent-region seam agreement, connected channel routes, and
+bounded finite values. This is not runtime-integrated and not M2.4 visual
+acceptance.
+
 ## Diagnosis
 
 M2.4a used DEM fingerprints as scalar controls for local ridge/detail/relief
@@ -197,3 +204,7 @@ Visual gates:
 Build Step 2 as a small Rust-side oracle plus Step 3 static review output before
 touching the live page producer. The first visible target should be a
 seam-aware structural scaffold sheet, not the full streaming runtime.
+
+Current next bite after the prototype: review/tune the sheet against the WG10
+reference targets, then build the runtime candidate lane separately from the
+accepted M2.3 baseline.

@@ -1,0 +1,14 @@
+[package]
+name = "structural_scaffold"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# M2.4b offline/prototype lane. This crate generates small deterministic
+# structural facts and review sheets. It does not load DEM files at runtime and
+# is not linked into the accepted Godot terrain path yet.
+[[bin]]
+name = "structural_scaffold"
+path = "src/main.rs"
+
+[dependencies]
