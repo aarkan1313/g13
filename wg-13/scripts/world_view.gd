@@ -325,13 +325,22 @@ func _update_annulus_visibility() -> void:
 
 # Shared PlaneMesh for a level — identical geometry for every page at that level,
 # so it's built once and referenced by all (no per-page mesh alloc). Cached.
+# M2.6 perf: subdivision DECREASES with level. A coarse (distant) page covers huge
+# ground; at the altitude/range it's seen, its vertices are near/sub-pixel, so the
+# fine 127x127 grid is wasted triangles (the profiled cost: ~6.5M tris/frame, most
+# on coarse pages). Level 0 keeps full detail (you stand on it); each coarser level
+# halves the subdivision, floored so the surface still reads smooth at its range.
+# This is the standard clipmap density taper — big triangle cut, no visible change.
 func _level_plane_mesh(level: int, span: float) -> PlaneMesh:
 	if _level_mesh.has(level):
 		return _level_mesh[level]
 	var plane := PlaneMesh.new()
 	plane.size = Vector2(span, span)
-	plane.subdivide_width = mini(page_res - 1, 160)
-	plane.subdivide_depth = mini(page_res - 1, 160)
+	var full: int = mini(page_res - 1, 160)
+	# Halve per coarser level, floor at 16 (a 16x16 page still reads smooth far off).
+	var subdiv: int = maxi(full >> level, 16)
+	plane.subdivide_width = subdiv
+	plane.subdivide_depth = subdiv
 	_level_mesh[level] = plane
 	return plane
 
