@@ -69,4 +69,27 @@ M2.7 [ ] CHARACTER/COLLISION CONTROLLER PASS (its own gated step, pillar call 20
 M2.x [ ] MILESTONE GATE — tag m2-complete
 LATER (not M2, each its own gated step): per-biome SHAPE modulation (one biome at a time); erosion (M6) carves AAA hydraulic realism into the macro.
 
+## dem-grounded branch — streaming work (2026-06-07, IN PROGRESS, UNRESOLVED)
+On branch `dem-grounded` (off main d56220c). The DEM-grounded terrain prototype.
+USER VERDICT THIS SESSION: terrain SHAPE is acceptable ("we know terrain is ok").
+The OPEN, UNRESOLVED problem the user wants fixed: streaming POP-IN and the world
+not feeling consistently CENTERED on the camera while flying. User states it is not
+better after the changes below, and is still wrong.
+
+What was changed on dem_grounded_world_view.gd this session (committed):
+- 215b8f6: num_levels 6->8, nearest-first page production, thin edge fog.
+- 16295ee: ring_radius 3->5, evict_margin 1->2, max_new_per_frame 8->32,
+  max_eager_per_frame 24->128, travel-direction bias on production. (Reach ~162km.)
+- Part A (round() instead of floor() for ring centering): IMPLEMENTED, user flew it,
+  reported "not really any different/better and now its laggy" -> REVERTED (not committed).
+- Design spec 1b26175: docs/superpowers/specs/2026-06-07-clipmap-continuous-centering-design.md
+  (Part A round-centering + Part B fade-in). Part A reverted as above; Part B not done.
+
+Current config on the branch (committed at 1b26175): num_levels 7, ring_radius 5,
+evict_margin 2, max_new_per_frame 32, max_eager_per_frame 128. User reports this is LAGGY.
+
+STATUS: streaming pop-in / centering NOT fixed. Next steps not decided. Throwaway
+diagnostic captures/popin_probe.gd exists (uncommitted). Untracked editor-regenerated
+files stashed on main earlier ("editor-regenerated uid/tscn files on main, 2026-06-07").
+
 ## Beyond: see ROADMAP.md (headers only, by design)

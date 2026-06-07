@@ -4,6 +4,34 @@ The human reads this FIRST every session. The agent appends here whenever it blo
 
 ---
 
+## [2026-06-07] - dem-grounded: streaming POP-IN / CENTERING work - UNRESOLVED (on branch dem-grounded)
+TYPE: BLOCKED (problem not solved; logged per user request to record state, no presumptions)
+WHAT THE USER WANTS: fix streaming POP-IN and the world feeling not consistently
+CENTERED on the camera while flying the dem-grounded prototype. User confirmed the
+terrain SHAPE itself is acceptable; this is purely the streaming/LOD/centering behavior.
+WHAT WAS TRIED (chronological, all on dem_grounded_world_view.gd):
+  - num_levels 6->8 (~195km), nearest-first production, thin edge fog (commit 215b8f6).
+  - ring_radius 3->5, evict_margin 1->2, max_new 8->32, max_eager 24->128, travel-direction
+    bias (commit 16295ee). Reach ~162km.
+  - Part A: ring center round() instead of floor() (spec 1b26175). User flew it:
+    "not really any different/better and now its laggy." REVERTED per the revert-don't-stack
+    rule (uncommitted revert; floor() restored).
+USER FEEDBACK POINTS (verbatim themes, recorded without interpretation):
+  - "it only loads when you get close" / "I'm catching up too fast."
+  - "even if I go slow there's pop-in and stuff does load in, I think it's an infra issue."
+  - "the center isn't moving" / "the camera isn't consistently at the center of the world."
+  - "maybe a little better, but it's still the same systemic issue."
+  - after Part A: "not really any different/better and now it's laggy."
+  - current committed config (num_levels 7, ring_radius 5, max_eager 128) is LAGGY per user.
+EVIDENCE GATHERED (facts only): an auto-tour capture logged per-level page counts; all
+LOD levels stayed populated (49-63 pages each) at cruise (600) and boost (2400) speeds.
+A single mid-flight screenshot (captures/popin_probe.gd -> _captures/popin_00.png) was taken.
+STATUS: NOT FIXED. No agreed cause, no agreed next step. The agent repeatedly drifted to
+terrain-quality framing instead of the streaming problem the user asked about; user halted it.
+ARTIFACTS: throwaway captures/popin_probe.gd (uncommitted). Design spec 1b26175 exists but
+its Part A was reverted; do not treat the spec as validated.
+CODEBASE STATE: dem-grounded at 1b26175 + uncommitted popin_probe.gd. main untouched/clean.
+
 ## [2026-06-07] - RENDER-FOREVER P1 (reach 6->8 levels, ~195km) - PARKED FOR VISUAL
 TYPE: PARKED-FOR-VISUAL (test gate self-certified; the LOOK awaits human eyes — 02_WORKFLOW §2)
 WHAT: num_levels 6->8 in world_view.gd (GDScript-only, no rebuild). reach = ring_radius*base_span*2^(num_levels-1) = 3*508*128 -> ~195.1 km (was ~48.8 km). The clipmap was built to scale this way; the 2 new levels are coarse and route through the existing BOUNDED mid-coarse path automatically (only the single coarsest stays unbounded for now).
