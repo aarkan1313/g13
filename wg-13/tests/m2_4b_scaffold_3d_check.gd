@@ -1,11 +1,13 @@
 extends SceneTree
 # M2.4b static 3D review smoke gate.
-# Run after exporting the JSON:
+# Run after exporting BOTH JSONs (window + oracle):
 #   cargo run --manifest-path rust\Cargo.toml -p structural_scaffold -- export-godot
+#   cargo run --manifest-path rust\Cargo.toml -p structural_scaffold -- export-godot --source oracle --span-m 64000 --resolution 193 --out wg-13\_captures\m2_4b_scaffold_oracle_3d.json
 #   godot --rendering-driver vulkan --path wg-13 --script res://tests/m2_4b_scaffold_3d_check.gd
 
 const MACRO_SCENE := "res://scenes/m2_4b_scaffold_3d_review.tscn"
 const PLAYABLE_SCALE_SCENE := "res://scenes/m2_4b_scaffold_playable_scale_review.tscn"
+const ORACLE_PLAYABLE_SCENE := "res://scenes/m2_4b_scaffold_oracle_playable_review.tscn"
 
 var _failed := false
 
@@ -19,6 +21,7 @@ func _init() -> void:
 func _run() -> void:
 	await _check_scene(MACRO_SCENE, 4, 100000)
 	await _check_scene(PLAYABLE_SCALE_SCENE, 1, 30000)
+	await _check_scene(ORACLE_PLAYABLE_SCENE, 1, 30000)
 	_finish()
 
 func _check_scene(scene_path: String, expected_panels: int, min_vertices: int) -> void:
