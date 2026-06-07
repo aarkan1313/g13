@@ -100,6 +100,11 @@ mod tests {
         for &h in &rm.height { assert!(h.is_finite()); }
         for &c in &rm.channel_mask { assert!((0.0..=1.0).contains(&c)); }
         for &r in &rm.range_mask { assert!((0.0..=1.0).contains(&r)); }
+        for &v in &rm.rock { assert!((0.0..=1.0).contains(&v)); }
+        for &v in &rm.snow { assert!((0.0..=1.0).contains(&v)); }
+        for &v in &rm.pass_floor { assert!((0.0..=1.0).contains(&v)); }
+        for &v in &rm.massif { assert!((0.0..=1.0).contains(&v)); }
+        for &v in &rm.valley_floor { assert!((0.0..=1.0).contains(&v)); }
     }
 
     #[test]
