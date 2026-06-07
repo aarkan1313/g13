@@ -11,16 +11,18 @@
 rust/structural_scaffold/src/
   lib.rs            M2.4b prototype lane: deterministic Rust RegionFact oracle
                     (range/ridge/channel/pass/style/material facts) sampled from
-                    world coords. Current synthesis path mirrors WG10's shape more
-                    closely than the first toy sheet: style selection, domain warp,
-                    range envelope, massif/base, primary+tributary carve masks,
-                    pass floors, and ridged/detail residuals. Unit-gated for
-                    determinism, seam agreement, connected channel routes, and
-                    bounded finite values. CPU-only review/prototype; not wired
-                    into the accepted runtime yet.
-  main.rs           Static review harness. Writes
-                    wg-13/_captures/m2_4b_scaffold_review.png + .md from the
-                    fact oracle. This is the cheap visual filter before live
+                    world coords. Current synthesis is an adapted Rust port of
+                    WG10's mountain_synthesis_200km recipe family: multi-style
+                    structural ranges, domain warp, massif/base shape, channel/
+                    valley masks, passes, material masks, and residual relief.
+                    Unit-gated for determinism, adjacent-region agreement,
+                    nontrivial drainage signal, and bounded finite values.
+                    CPU-only review/prototype; not wired into the accepted
+                    runtime yet.
+  main.rs           Static review/export harness. `review` writes
+                    wg-13/_captures/m2_4b_scaffold_review.png + .md; `export-godot`
+                    writes wg-13/_captures/m2_4b_scaffold_3d.json for the Godot
+                    3D review scene. This is the cheap visual filter before live
                     page-pool integration.
 
 rust/gdext/src/
@@ -109,6 +111,11 @@ wg-13/                          (the Godot project, res://)
                                 EXISTING rigs (fly-cam + player auto_move), not a
                                 parallel mover. T toggles; any movement input or T
                                 PAUSES + hands you control; T resumes. Starts OFF.
+    scaffold_3d_review.gd       M2.4b static 3D review viewer. Loads the generated
+                                scaffold JSON, builds four ArrayMesh terrain panels,
+                                colors from rock/snow/valley/channel masks, and
+                                uses fly_camera.gd for inspection. Review-only:
+                                it does not change the live page pool.
   scenes/
     demo.tscn                   The launch target: WorldRoot + View + Player +
                                 PerfHUD + AutoTour. F5 = fly.
@@ -118,6 +125,10 @@ wg-13/                          (the Godot project, res://)
                                 sprint. HUD: H toggle, 1-5 sections. Tour: T toggle.
                                 M2.1/M2.2: V cycles view mode
                                 (normal/temp/moisture/biome).
+    m2_4b_scaffold_3d_review.tscn
+                                Static 3D terrain panels generated from the M2.4b
+                                scaffold JSON. Use this to judge the accepted
+                                WG10-like scaffold before runtime/GPU integration.
   tests/                        GATES (PASS/FAIL, exit code). See "Running gates".
     m1_2_field_check.gd         determinism + continuity (GPU readback)
     m1_4_seam_check.gd          adjacent-page edge equality + teeth check
@@ -132,15 +143,19 @@ wg-13/                          (the Godot project, res://)
     m2_1_climate_check.gd       (M2.1) climate determinism + range [0,1] + low-freq smoothness (anti-confetti) + latitude gradient, on the real GPU readback
     m2_2_biome_check.gd         (M2.2) biome determinism + valid ids [0,N) + contiguity (low adjacent-differ, no confetti) + global variety + seed sensitivity
     m2_3_composition_check.gd   (M2.3) composition-machine guardrail: determinism + structure-not-uniform relief spread + no-cliff max step
+    m2_4b_scaffold_3d_check.gd  (M2.4b) static 3D review scene builds four panels
+                                from the exported JSON and produces terrain vertices
     hud_smoke_check.gd          (smoke) perf HUD loads, finds the view, all sections show sane values matching the pool, toggles work
     tour_smoke_check.gd         (smoke) auto-tour starts OFF, drives the real fly-cam, advances steps, pause restores control, resume works
   captures/                     SCREENSHOT TOOLS (evidence, not gates).
     stream_capture.gd           fly the world_view, save _captures/streamed.png
     climate_capture.gd          (M2.1) high wide vantage, save _captures/climate_{normal,temperature,moisture}.png — evidence for the parked visual gate
     shape_capture.gd            (M2.3) ground-aware terrain shape captures for tall composed terrain
-  _captures/                    PNG output — gitignored scratch (regenerable).
-    m2_4b_scaffold_review.png    Static 3x3 scaffold sheet: preview/range/channel/style panels.
-    m2_4b_scaffold_review.md     Companion report: seam deltas + route metrics.
+  _captures/                    Review output - gitignored scratch (regenerable).
+    m2_4b_scaffold_review.png    Static 200 km four-style scaffold sheet.
+    m2_4b_scaffold_review.md     Companion report: style/range/channel metrics.
+    m2_4b_scaffold_3d.json       Static 3D review input: height/range/channel/
+                                 rock/snow/valley arrays for four panels.
 
 run.ps1                         Launcher: agent runs the windowed scene on the user's
                                 desktop via a PS Job (.\run.ps1 / .\run.ps1 -Stop).
@@ -173,7 +188,10 @@ Fly the live world: `.\run.ps1` (agent launches a windowed instance on the user'
 M2.4b structural scaffold prototype gate + review sheet:
 ```powershell
 cargo test --manifest-path "D:\world gen 13\rust\Cargo.toml" -p structural_scaffold
-cargo run --manifest-path "D:\world gen 13\rust\Cargo.toml" -p structural_scaffold -- review --seed 13 --radius 1 --tile-px 128
+cargo run --manifest-path "D:\world gen 13\rust\Cargo.toml" -p structural_scaffold -- review
+cargo run --manifest-path "D:\world gen 13\rust\Cargo.toml" -p structural_scaffold -- export-godot
+& "C:\Godot\v4.6.2\Godot_v4.6.2-stable_mono_win64\Godot_v4.6.2-stable_mono_win64_console.exe" --rendering-driver vulkan --path "D:\world gen 13\wg-13" --script res://tests/m2_4b_scaffold_3d_check.gd
+& "C:\Godot\v4.6.2\Godot_v4.6.2-stable_mono_win64\Godot_v4.6.2-stable_mono_win64.exe" --rendering-driver vulkan --path "D:\world gen 13\wg-13" res://scenes/m2_4b_scaffold_3d_review.tscn
 ```
 
 ## Gate ↔ milestone
@@ -193,4 +211,5 @@ cargo run --manifest-path "D:\world gen 13\rust\Cargo.toml" -p structural_scaffo
 | m2_1_climate_check.gd | M2.1 | climate determinism (same page+seed → bit-identical); range [0,1]; low-freq/smooth (anti-confetti); latitude gradient real |
 | m2_2_biome_check.gd | M2.2 | biome determinism; valid integer ids [0,N); contiguity (low adjacent-differ); global variety; seed sensitivity |
 | m2_3_composition_check.gd | M2.3 | composition-machine determinism; relief spread proves lowlands+ranges are not uniform; no-cliff max step guardrail |
-| cargo test -p structural_scaffold | M2.4b prototype | RegionFact determinism; adjacent-region border agreement; connected channel route; bounded finite fact values |
+| m2_4b_scaffold_3d_check.gd | M2.4b prototype | exported scaffold JSON loads; 3D review scene builds 4 terrain panels and a nonzero vertex count |
+| cargo test -p structural_scaffold | M2.4b prototype | RegionFact determinism; adjacent-region border agreement; nontrivial drainage signal; bounded finite fact values |

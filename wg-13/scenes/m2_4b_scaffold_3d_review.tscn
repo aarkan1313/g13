@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://m24bscaffold3d"]
+
+[ext_resource type="Script" path="res://scripts/scaffold_3d_review.gd" id="1_scaffold"]
+
+[node name="M2_4b_Scaffold3DReview" type="Node3D"]
+script = ExtResource("1_scaffold")

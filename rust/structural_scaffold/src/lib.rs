@@ -62,7 +62,7 @@ impl StyleId {
         match self {
             Self::AlpineBranching => "alpine_branching",
             Self::SierraBlock => "sierra_block",
-            Self::PamirChain => "pamir_chain",
+            Self::PamirChain => "pamir_chains",
             Self::DissectedHighlands => "dissected_highlands",
         }
     }

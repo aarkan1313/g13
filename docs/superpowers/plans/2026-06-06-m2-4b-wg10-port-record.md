@@ -89,11 +89,18 @@ Generated artifacts:
 
 - `wg-13/_captures/m2_4b_scaffold_review.png`
 - `wg-13/_captures/m2_4b_scaffold_review.md`
+- `wg-13/_captures/m2_4b_scaffold_3d.json`
 
 Generation command:
 
 ```powershell
 cargo run --manifest-path rust\Cargo.toml -p structural_scaffold -- review
+```
+
+3D data export command:
+
+```powershell
+cargo run --manifest-path rust\Cargo.toml -p structural_scaffold -- export-godot
 ```
 
 Latest report metrics:
@@ -125,6 +132,34 @@ Structural scaffold unit coverage now checks:
 - adjacent-region border agreement;
 - nontrivial sparse WG10-style drainage signal;
 - bounded finite fact values.
+
+## 3D Review Scene
+
+The first 3D review is deliberately static and separate from the accepted M2.3
+runtime page pool:
+
+- `wg-13/scenes/m2_4b_scaffold_3d_review.tscn`
+- `wg-13/scripts/scaffold_3d_review.gd`
+- `wg-13/tests/m2_4b_scaffold_3d_check.gd`
+
+The scene reads `res://_captures/m2_4b_scaffold_3d.json`, builds four
+`ArrayMesh` terrain panels, and spawns the standard `fly_camera.gd` free-fly
+camera. It uses vertex colors derived from rock/snow/valley/channel facts, so
+the 3D pass exercises more than grayscale height.
+
+3D smoke command:
+
+```powershell
+& "C:\Godot\v4.6.2\Godot_v4.6.2-stable_mono_win64\Godot_v4.6.2-stable_mono_win64_console.exe" --rendering-driver vulkan --path "D:\world gen 13\wg-13" --script res://tests/m2_4b_scaffold_3d_check.gd
+```
+
+Latest 3D smoke result: PASS, `4` panels / `148996` vertices.
+
+Launch command:
+
+```powershell
+& "C:\Godot\v4.6.2\Godot_v4.6.2-stable_mono_win64\Godot_v4.6.2-stable_mono_win64.exe" --rendering-driver vulkan --path "D:\world gen 13\wg-13" res://scenes/m2_4b_scaffold_3d_review.tscn
+```
 
 ## What Not To Do
 

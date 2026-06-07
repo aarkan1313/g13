@@ -18,6 +18,7 @@ fn run() -> Result<(), String> {
     let command = args.first().map(|s| s.as_str()).unwrap_or("review");
     match command {
         "review" => run_review(&args[1..]),
+        "export-godot" => run_export_godot(&args[1..]),
         "-h" | "--help" | "help" => {
             print_usage();
             Ok(())
@@ -28,7 +29,7 @@ fn run() -> Result<(), String> {
 
 fn print_usage() {
     println!(
-        "usage: cargo run -p structural_scaffold -- review [--seed N] [--radius N] [--tile-px N] [--out PATH] [--report PATH]"
+        "usage:\n  cargo run -p structural_scaffold -- review [--seed N] [--radius N] [--tile-px N] [--out PATH] [--report PATH]\n  cargo run -p structural_scaffold -- export-godot [--seed N] [--resolution N] [--span-m M] [--out PATH]"
     );
 }
 
@@ -65,6 +66,79 @@ fn run_review(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+fn run_export_godot(args: &[String]) -> Result<(), String> {
+    let seed = parse_u64(args, "--seed", 177)?;
+    let resolution = parse_usize(args, "--resolution", 193)?;
+    let span_m = parse_f32(args, "--span-m", 200_000.0)?;
+    let out = parse_path(
+        args,
+        "--out",
+        PathBuf::from("wg-13/_captures/m2_4b_scaffold_3d.json"),
+    );
+
+    if resolution < 17 {
+        return Err("--resolution must be at least 17".to_string());
+    }
+    if !span_m.is_finite() || span_m <= 0.0 {
+        return Err("--span-m must be finite and positive".to_string());
+    }
+
+    let styles = [
+        StyleId::AlpineBranching,
+        StyleId::SierraBlock,
+        StyleId::PamirChain,
+        StyleId::DissectedHighlands,
+    ];
+    let maps = styles
+        .iter()
+        .map(|&style| generate_fact_map_style(seed, resolution, 0.0, 0.0, span_m, style))
+        .collect::<Vec<_>>();
+
+    let mut json = String::new();
+    json.push_str("{\n");
+    json.push_str("  \"version\": \"m2_4b_scaffold_3d/v1\",\n");
+    json.push_str(&format!("  \"seed\": {seed},\n"));
+    json.push_str(&format!("  \"resolution\": {resolution},\n"));
+    json.push_str(&format!("  \"span_m\": {:.3},\n", span_m));
+    json.push_str("  \"styles\": [\n");
+    for (style_index, style) in styles.iter().enumerate() {
+        let cells = &maps[style_index];
+        let (min_h, max_h) = cells
+            .iter()
+            .fold((f32::INFINITY, f32::NEG_INFINITY), |acc, c| {
+                (acc.0.min(c.preview_height_m), acc.1.max(c.preview_height_m))
+            });
+        json.push_str("    {\n");
+        json.push_str(&format!("      \"id\": {},\n", style.as_u8()));
+        json.push_str(&format!("      \"key\": \"{}\",\n", style.name()));
+        json.push_str(&format!("      \"height_min\": {:.6},\n", min_h));
+        json.push_str(&format!("      \"height_max\": {:.6},\n", max_h));
+        push_json_cell_array(&mut json, "height", cells, |c| c.preview_height_m, true);
+        push_json_cell_array(&mut json, "range", cells, |c| c.range_mask, true);
+        push_json_cell_array(&mut json, "channel", cells, |c| c.channel_mask, true);
+        push_json_cell_array(&mut json, "rock", cells, |c| c.material.rock, true);
+        push_json_cell_array(&mut json, "snow", cells, |c| c.material.snow, true);
+        push_json_cell_array(
+            &mut json,
+            "valley",
+            cells,
+            |c| c.material.valley_floor,
+            false,
+        );
+        json.push_str("    }");
+        if style_index + 1 != styles.len() {
+            json.push(',');
+        }
+        json.push('\n');
+    }
+    json.push_str("  ]\n");
+    json.push_str("}\n");
+
+    write_text(&out, &json)?;
+    println!("Wrote {}", out.display());
+    Ok(())
+}
+
 fn parse_u64(args: &[String], flag: &str, default: u64) -> Result<u64, String> {
     match arg_value(args, flag) {
         Some(v) => v
@@ -88,6 +162,15 @@ fn parse_usize(args: &[String], flag: &str, default: usize) -> Result<usize, Str
         Some(v) => v
             .parse::<usize>()
             .map_err(|_| format!("{flag} expects an unsigned integer")),
+        None => Ok(default),
+    }
+}
+
+fn parse_f32(args: &[String], flag: &str, default: f32) -> Result<f32, String> {
+    match arg_value(args, flag) {
+        Some(v) => v
+            .parse::<f32>()
+            .map_err(|_| format!("{flag} expects a number")),
         None => Ok(default),
     }
 }
@@ -297,6 +380,29 @@ fn write_text(path: &Path, text: &str) -> Result<(), String> {
         fs::create_dir_all(parent).map_err(|e| format!("create {}: {e}", parent.display()))?;
     }
     fs::write(path, text).map_err(|e| format!("write {}: {e}", path.display()))
+}
+
+fn push_json_cell_array<F>(
+    out: &mut String,
+    name: &str,
+    cells: &[structural_scaffold::FactCell],
+    sample: F,
+    trailing_comma: bool,
+) where
+    F: Fn(structural_scaffold::FactCell) -> f32,
+{
+    out.push_str(&format!("      \"{name}\": ["));
+    for (i, &cell) in cells.iter().enumerate() {
+        if i != 0 {
+            out.push(',');
+        }
+        out.push_str(&format!("{:.6}", sample(cell)));
+    }
+    out.push(']');
+    if trailing_comma {
+        out.push(',');
+    }
+    out.push('\n');
 }
 
 fn write_png_rgb(path: &Path, width: usize, height: usize, rgb: &[u8]) -> Result<(), String> {
