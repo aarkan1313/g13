@@ -1,0 +1,16 @@
+[gd_scene load_steps=2 format=3 uid="uid://m24boracleplay"]
+
+[ext_resource type="Script" path="res://scripts/scaffold_3d_review.gd" id="1_scaffold"]
+
+[node name="M2_4b_ScaffoldOraclePlayableReview" type="Node3D"]
+script = ExtResource("1_scaffold")
+data_path = "res://_captures/m2_4b_scaffold_oracle_3d.json"
+display_span_m = 64000.0
+height_scale = 0.45
+panel_gap_m = 0.0
+style_count = 1
+show_labels = false
+fly_speed = 2200.0
+camera_height_m = 1900.0
+camera_target_height_m = 650.0
+camera_distance_factor = 0.42
