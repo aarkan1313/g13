@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DEM-Grounded Terrain Demo</title>
+  <link rel="stylesheet" href="./dem-grounded-terrain-demo.css">
+</head>
+<body>
+  <main class="app">
+    <header class="topbar">
+      <div>
+        <h1>DEM-Grounded Terrain Layers</h1>
+        <p>Offline-teacher concept: scaffold, structure, residual, and LOD failure.</p>
+      </div>
+      <div class="controls" aria-label="Demo controls">
+        <label class="seed-label">
+          Seed
+          <input id="seedInput" type="number" min="1" max="999999" step="1" value="13013">
+        </label>
+        <div class="segment" role="group" aria-label="Viewing scale">
+          <button type="button" data-view="walk" class="active">Walk</button>
+          <button type="button" data-view="low">Low Fly</button>
+          <button type="button" data-view="high">High Fly</button>
+        </div>
+        <button id="rerollButton" type="button">New Seed</button>
+      </div>
+    </header>
+
+    <section class="grid" aria-label="Terrain layer canvases">
+      <article class="panel">
+        <div class="panel-head">
+          <h2>256 m Cache</h2>
+          <span id="cacheMetric">--</span>
+        </div>
+        <canvas id="cacheCanvas" width="256" height="256"></canvas>
+      </article>
+
+      <article class="panel">
+        <div class="panel-head">
+          <h2>Macro Scaffold</h2>
+          <span id="scaffoldMetric">--</span>
+        </div>
+        <canvas id="scaffoldCanvas" width="256" height="256"></canvas>
+      </article>
+
+      <article class="panel">
+        <div class="panel-head">
+          <h2>Ridge + Drainage</h2>
+          <span id="structureMetric">--</span>
+        </div>
+        <canvas id="structureCanvas" width="256" height="256"></canvas>
+      </article>
+
+      <article class="panel">
+        <div class="panel-head">
+          <h2>DEM Residual</h2>
+          <span id="residualMetric">--</span>
+        </div>
+        <canvas id="residualCanvas" width="256" height="256"></canvas>
+      </article>
+
+      <article class="panel">
+        <div class="panel-head">
+          <h2>Patch Assembly Risk</h2>
+          <span id="patchMetric">--</span>
+        </div>
+        <canvas id="patchCanvas" width="256" height="256"></canvas>
+      </article>
+
+      <article class="panel">
+        <div class="panel-head">
+          <h2>Combined Candidate</h2>
+          <span id="combinedMetric">--</span>
+        </div>
+        <canvas id="combinedCanvas" width="256" height="256"></canvas>
+      </article>
+    </section>
+
+    <section class="gate-strip" aria-label="Prototype gate readouts">
+      <div>
+        <strong id="viewLabel">Walk</strong>
+        <span id="viewDescription">close residual detail enabled</span>
+      </div>
+      <div>
+        <strong id="seamLabel">Seam proxy</strong>
+        <span id="seamMetric">--</span>
+      </div>
+      <div>
+        <strong id="repeatLabel">Repeat proxy</strong>
+        <span id="repeatMetric">--</span>
+      </div>
+      <div>
+        <strong id="lodLabel">LOD proxy</strong>
+        <span id="lodMetric">--</span>
+      </div>
+    </section>
+  </main>
+
+  <script src="./dem-grounded-terrain-demo.js"></script>
+</body>
+</html>
