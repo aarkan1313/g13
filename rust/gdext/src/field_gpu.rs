@@ -50,7 +50,7 @@ pub struct PageParams {
 }
 
 impl PageParams {
-    fn to_bytes(&self) -> PackedByteArray {
+    pub(crate) fn to_bytes(&self) -> PackedByteArray {
         let mut v: Vec<u8> = Vec::with_capacity(80);
         v.extend_from_slice(&self.origin_x.to_le_bytes());
         v.extend_from_slice(&self.origin_z.to_le_bytes());
