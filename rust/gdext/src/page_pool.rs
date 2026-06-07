@@ -76,6 +76,11 @@ struct ResidentPage {
     // was packed from (same production; the array is the gate's source of truth).
     biome_tex: Gd<ImageTexture>,
     biome: PackedFloat32Array,
+    // M2.4 analytic surface-normal gradient (normal_x, normal_z) packed into ONE
+    // RG32F texture per page, same single production as height. Lets the display
+    // shader read a seam-free normal instead of finite-differencing the height
+    // texture (which clamped at page edges and created the per-edge shading seam).
+    normal_tex: Gd<ImageTexture>,
 }
 
 /// How a page request is budgeted this frame (M1.9.3b).
@@ -403,6 +408,16 @@ impl PagePool {
         self.cache.get(&key).map(|p| p.biome_tex.clone())
     }
 
+    /// M2.4: the normal-gradient texture (RG32F: R=normal_x, G=normal_z) of a
+    /// RESIDENT page — the SAME production behind that page's height texture. Null
+    /// if not resident. The view binds it so the display shader uses seam-free
+    /// per-cell normals instead of finite-differencing the height texture.
+    #[func]
+    fn get_page_normal_tex(&self, level: i64, gx: i64, gz: i64) -> Option<Gd<ImageTexture>> {
+        let key = PageKey { level: level as i32, gx: gx as i32, gz: gz as i32 };
+        self.cache.get(&key).map(|p| p.normal_tex.clone())
+    }
+
     /// M2.2: biome id (float-encoded int) of a RESIDENT page, row-major — the
     /// SAME array behind biome_tex (for the gate / future field-side readers).
     /// Empty if not resident.
@@ -446,7 +461,8 @@ impl PagePool {
         };
         // Profiled region: GPU dispatch + blocking readback (rd.sync) — the
         // suspected fast-motion spike source. Accumulated per frame (M1.9.1).
-        let FieldPage { heights, temp, moisture, biome } = self.gpu.as_mut()?.dispatch_page(params)?;
+        let FieldPage { heights, temp, moisture, biome, normal_x, normal_z } =
+            self.gpu.as_mut()?.dispatch_page(params)?;
         self.produce_us_this_frame += t0.elapsed().as_micros() as i64;
         let res = self.cfg.page_res as i32;
         // Height texture: R32F, byte-identical to `heights` (M1.7 contract).
@@ -456,7 +472,10 @@ impl PagePool {
         let climate_tex = Self::rg32f_texture(res, &temp, &moisture)?;
         // Biome id: R32F (float-encoded int), same single production.
         let biome_tex = Self::r32f_texture(res, &biome)?;
-        Some(ResidentPage { texture, heights, climate_tex, biome_tex, biome })
+        // M2.4 normal gradient: (normal_x, normal_z) packed into ONE RG32F texture,
+        // same single production — the display shader reads a seam-free normal.
+        let normal_tex = Self::rg32f_texture(res, &normal_x, &normal_z)?;
+        Some(ResidentPage { texture, heights, climate_tex, biome_tex, biome, normal_tex })
     }
 
     /// Pack a per-cell float array into an R32F ImageTexture (the format the M1

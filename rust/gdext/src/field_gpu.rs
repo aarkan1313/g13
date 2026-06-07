@@ -11,9 +11,12 @@ use godot::classes::{RdShaderSource, RdUniform, RenderingDevice, RenderingServer
 use godot::prelude::*;
 
 /// Number of float channels the field shader writes per cell (M2.2): the page
-/// carries [height, temperature, moisture, biome_id] interleaved (00 §2.1, one
-/// dispatch). biome_id is a float-encoded integer index into the biome table.
-pub const FIELD_CHANNELS: usize = 4;
+/// carries [height, temperature, moisture, biome_id, normal_x, normal_z]
+/// interleaved (00 §2.1, one dispatch). biome_id is a float-encoded integer index
+/// into the biome table; normal_x/normal_z are the analytic surface-gradient
+/// components (M2.4: seam-free per-cell normals computed from the continuous
+/// height function, so adjacent pages agree at the shared edge).
+pub const FIELD_CHANNELS: usize = 6;
 
 /// Floats per biome centroid row in the pushed BiomeTable (vec4 stride for
 /// std430): [temp_c, moist_c, alt_c, _pad].
@@ -83,6 +86,11 @@ pub struct FieldPage {
     pub temp: PackedFloat32Array,
     pub moisture: PackedFloat32Array,
     pub biome: PackedFloat32Array,
+    /// M2.4 analytic surface-normal gradient, deinterleaved: `normal_x` = -(hr-hl),
+    /// `normal_z` = -(hu-hd) per cell. Packed into one RG32F texture for the display
+    /// shader, which reconstructs the +Y component. Seam-free across page edges.
+    pub normal_x: PackedFloat32Array,
+    pub normal_z: PackedFloat32Array,
 }
 
 /// A compiled field-compute pipeline on a dedicated local RenderingDevice.
@@ -200,23 +208,31 @@ impl FieldGpu {
         let mut temp = PackedFloat32Array::new();
         let mut moisture = PackedFloat32Array::new();
         let mut biome = PackedFloat32Array::new();
+        let mut normal_x = PackedFloat32Array::new();
+        let mut normal_z = PackedFloat32Array::new();
         heights.resize(n);
         temp.resize(n);
         moisture.resize(n);
         biome.resize(n);
+        normal_x.resize(n);
+        normal_z.resize(n);
         let src = interleaved.as_slice();
         let h = heights.as_mut_slice();
         let t = temp.as_mut_slice();
         let m = moisture.as_mut_slice();
         let bm = biome.as_mut_slice();
+        let nx = normal_x.as_mut_slice();
+        let nz = normal_z.as_mut_slice();
         for i in 0..n {
             let b = i * FIELD_CHANNELS;
             h[i] = src[b];
             t[i] = src[b + 1];
             m[i] = src[b + 2];
             bm[i] = src[b + 3];
+            nx[i] = src[b + 4];
+            nz[i] = src[b + 5];
         }
-        Some(FieldPage { heights, temp, moisture, biome })
+        Some(FieldPage { heights, temp, moisture, biome, normal_x, normal_z })
     }
 }
 

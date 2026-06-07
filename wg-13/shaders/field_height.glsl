@@ -18,14 +18,17 @@
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
-// Output: PAGE_RES * PAGE_RES cells, 4 floats per cell, interleaved row-major:
-//   field[(z*PAGE_RES + x)*4 + 0] = height (world Y, what M1 produced)
-//   field[(z*PAGE_RES + x)*4 + 1] = temperature  (normalized ~[0,1], M2.1)
-//   field[(z*PAGE_RES + x)*4 + 2] = moisture     (normalized ~[0,1], M2.1)
-//   field[(z*PAGE_RES + x)*4 + 3] = biome id      (float-encoded int, M2.2)
+// Output: PAGE_RES * PAGE_RES cells, 6 floats per cell, interleaved row-major:
+//   field[(z*PAGE_RES + x)*6 + 0] = height (world Y, what M1 produced)
+//   field[(z*PAGE_RES + x)*6 + 1] = temperature  (normalized ~[0,1], M2.1)
+//   field[(z*PAGE_RES + x)*6 + 2] = moisture     (normalized ~[0,1], M2.1)
+//   field[(z*PAGE_RES + x)*6 + 3] = biome id      (float-encoded int, M2.2)
+//   field[(z*PAGE_RES + x)*6 + 4] = normal_x  (analytic gradient -(hr-hl), M2.4)
+//   field[(z*PAGE_RES + x)*6 + 5] = normal_z  (analytic gradient -(hu-hd), M2.4)
 // Rust deinterleaves channel 0 to keep the M1.7 height-array/R32F-texture
 // contract intact (collision still reads height-only), packs temp+moisture into
-// one RG32F texture and the biome id into an R32F texture for the display shader.
+// one RG32F texture, the biome id into an R32F texture, and the normal gradient
+// (channels 4-5) into an RG32F texture for the display shader (seam-free normals).
 layout(set = 0, binding = 0, std430) restrict writeonly buffer FieldBuffer {
     float field[];
 };
@@ -293,10 +296,32 @@ void main() {
     float alt = macro_altitude(world_xz, uint(seed));
     float bid = biome_id(c.x, c.y, alt);
 
-    // Interleaved [height, temp, moisture, biome_id] per cell (Rust deinterleaves).
-    uint base = (cell.y * page_res + cell.x) * 4u;
+    // Analytic surface normal from the CONTINUOUS height function, evaluated at the
+    // true world neighbors (+/- spacing). Because composition_height is pure world
+    // math (no texture, no clamp), an edge cell of THIS page and the matching edge
+    // cell of the adjacent page compute the SAME neighbor heights -> identical
+    // normals across the shared boundary -> the per-page-edge shading seam is gone
+    // BY CONSTRUCTION. (The old display-side finite difference clamped UV at page
+    // borders, going one-sided, which created the seam.) We store the gradient as
+    // (nx, nz); the display reconstructs ny (surface always faces +Y). Central
+    // difference matches the old normal's slope convention: dh/dx = (hr-hl)/(2*sp).
+    float hl = composition_height(world_xz - vec2(spacing, 0.0), uint(seed));
+    float hr = composition_height(world_xz + vec2(spacing, 0.0), uint(seed));
+    float hd = composition_height(world_xz - vec2(0.0, spacing), uint(seed));
+    float hu = composition_height(world_xz + vec2(0.0, spacing), uint(seed));
+    // Match the display shader's normal = normalize(vec3(-(hr-hl), 2*spacing, -(hu-hd))).
+    // Store the raw -(slope) components; display normalizes with the 2*spacing term.
+    float nx = -(hr - hl);
+    float nz = -(hu - hd);
+
+    // Interleaved [height, temp, moisture, biome_id, normal_x, normal_z] per cell
+    // (Rust deinterleaves). Channels 0-3 are byte-identical to before (M1.7 height
+    // contract intact); 4-5 are the new analytic-normal gradient.
+    uint base = (cell.y * page_res + cell.x) * 6u;
     field[base + 0u] = h;
     field[base + 1u] = c.x;
     field[base + 2u] = c.y;
     field[base + 3u] = bid;
+    field[base + 4u] = nx;
+    field[base + 5u] = nz;
 }
