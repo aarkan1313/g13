@@ -12,20 +12,15 @@
 
 ---
 
-## EXECUTION STATUS (2026-06-07)
+## EXECUTION STATUS (2026-06-07) — ALL TASKS DONE; automated gate green; PARKED for the human walk-test
 
-- **Task 1 (SPIKE) — DONE + verified green** (commit `3c38822`). The R32F texture
-  upload+sample round-trip works on FieldGpu's local RD. The exact gdext 0.5.3 API is
-  now PINNED and documented at the top of `rust/gdext/src/macro_gpu.rs` (read that
-  header before Tasks 2-6). Two corrections vs the reference code in this plan, already
-  applied in macro_gpu.rs — Tasks 2-6 must follow the WORKING form:
-  - texture create: `rd.texture_create_ex(&fmt, &view).data(&layers).done()` (data via
-    the `_ex` builder, NOT a positional arg to `texture_create`).
-  - texture data layer: `array![&bytes]` (TYPED `Array<PackedByteArray>`), NOT `varray!`.
-  - `macro_gpu::{linear_sampler, create_r32f_texture}` helpers exist + are reusable.
-  - `FieldGpu::macro_roundtrip_probe` + the permanent gate
-    `wg-13/tests/m2_4c_macro_roundtrip_check.gd` back this.
-- **Tasks 2-6 — PENDING** (next session). Resume at Task 2.
+- **Task 1 (SPIKE) — DONE + verified green** (commit `3c38822`). R32F texture round-trip on the local RD. gdext 0.5.3 API PINNED at the top of `rust/gdext/src/macro_gpu.rs` (data via `texture_create_ex().data(&layers).done()`; layer array TYPED `array![&bytes]` not `varray!`). Helpers `macro_gpu::{linear_sampler, create_r32f_texture}` + `FieldGpu::macro_roundtrip_probe` + gate `m2_4c_macro_roundtrip_check`.
+- **Task 2 — DONE** (a7f2392 + review-fix 569f070). GpuRegionMacro R32F upload/free + FieldGpu resident map (ensure/has/evict/count, idempotent). Gate `m2_4c_resident_check` (0->1->1).
+- **Task 3 — DONE** (ebd3c5e + review-fix c672860). PageParams 80->96 bytes (2x2 neighborhood, std430); dispatch binds 12 SAMPLER_WITH_TEXTURE (bindings 3..14) + a 1x1 placeholder for not-resident slots; GLSL declares the 12 samplers + neighborhood params. Mode 0/1 bit-identical.
+- **Task 4 — DONE** (07776b3). GLSL `macro_sample` (region-select + hardware-bilinear) + `macro_detail` (+/-70m value_fbm) + `terrain_mode == 2` branch (macro.height + detail, composition_height never-black fallback). Keep-alive deleted.
+- **Task 5 — DONE** (4e27b87). page_pool produce() mode-2 computes the 2x2 block, bakes+uploads via the SYNCHRONOUS `ensure_macro_neighborhood` swap seam, `macro_core_span` from `core_span_m()`; FieldConfig macro tunables + RegionCache; set_terrain_mode accepts 2; world_view B cycles REFERENCE->oracle->MACRO_CACHE.
+- **Task 6 — DONE** (1608bc3 + review-fix a56c057). `produce_macro_page` hook + gate `m2_4c_macro_live_check`: PASS (max_relief=1282.8m, interior step=12.1m, straddling(x) step=44.0m, flat_run both-axes=8 cells; no terracing, bounded seam vs oracle's 1076m). Shared `DEFAULT_MACRO_*` constants prevent test/runtime config drift.
+- **PARKED:** the HUMAN walk-test is the real gate (the agent did not self-certify the look). demo.tscn, B x2 -> MACRO_CACHE, fly+walk; accept the fly-into-fresh-region hitch. Then step 3 (BakeScheduler). Step-3 carry-forwards (Task 5 review): RAM-cache LRU eviction doesn't free GPU textures (slow VRAM leak); guard re-bake on gpu.has_region. See DRIFT_LOG/HANDOFF.
 
 ## CRITICAL: the one new mechanic (read before Task 1)
 
