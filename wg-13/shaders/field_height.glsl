@@ -159,11 +159,58 @@ float valley_carve(float uplift, float depth) {
     return depth * v * v;
 }
 
-// M2.3 general terrain: ONE composition machine for the whole world. Structure
-// from uplift; character HAND-SET here (DEM-tuned in M2.4). Most of the world is
-// gentle lowland (base + small detail); ranges stand where uplift is high.
+// --- M2.4 DEM character tuning ----------------------------------------------
+// Runtime does NOT open DEM files. These constants are distilled from the
+// committed offline fingerprints in wg-13/data/dem_fingerprints.json, sorted by
+// slope_p95 from gentle -> steep. vec4 = (slope_p95, ridge_character,
+// spectrum_centroid, fine_spectrum_energy). This table tunes the existing M2.3
+// composition machine; it does not place structure and does not involve biomes.
+vec4 dem_character_row(int i) {
+    if (i <= 0)  return vec4(0.16025463, 0.009426956, 5.577, 0.628); // wetland
+    if (i == 1)  return vec4(0.18104625, 0.002419439, 4.881, 0.425); // grassland
+    if (i == 2)  return vec4(0.30440970, 0.004737892, 4.952, 0.461); // desert
+    if (i == 3)  return vec4(0.36732940, 0.004590686, 4.289, 0.348); // tundra
+    if (i == 4)  return vec4(0.39517573, 0.000854868, 4.167, 0.308); // volcanic
+    if (i == 5)  return vec4(0.43120566, 0.013333080, 5.120, 0.492); // rainforest
+    if (i == 6)  return vec4(0.51419055, 0.002554115, 4.631, 0.381); // coast
+    if (i == 7)  return vec4(0.53216090, 0.002983702, 4.876, 0.421); // karst
+    if (i == 8)  return vec4(0.66659200, 0.001534401, 4.424, 0.318); // badlands
+    if (i == 9)  return vec4(0.68599486, 0.003067266, 4.024, 0.240); // temperate
+    if (i == 10) return vec4(0.73545390, 0.001075893, 4.148, 0.242); // glacial
+    return vec4(0.88756890, 0.001333152, 4.218, 0.251);              // mountain
+}
+
+vec4 dem_character_sample(float t) {
+    float x = clamp(t, 0.0, 1.0) * 11.0;
+    int i = int(floor(x));
+    float f = smoothstep(0.0, 1.0, fract(x));
+    return mix(dem_character_row(i), dem_character_row(i + 1), f);
+}
+
+vec4 terrain_character(vec2 p, float uplift, uint seed) {
+    float region = value_fbm(p * 0.000018, seed ^ 0x43484152u, 3u, 2.07, 0.55); // "CHAR"
+    float local = value_noise(p * 0.00009 + vec2(11.0, 29.0), seed ^ 0x64656d21u); // "dem!"
+    float t = clamp(0.72 * uplift + 0.20 * region + 0.08 * local, 0.0, 1.0);
+    return dem_character_sample(t);
+}
+
+float dem_slope_norm(vec4 ch) {
+    return clamp((ch.x - 0.16025463) / (0.88756890 - 0.16025463), 0.0, 1.0);
+}
+
+float dem_ridge_norm(vec4 ch) {
+    return clamp(ch.y / 0.01333308, 0.0, 1.0);
+}
+
+float dem_fine_norm(vec4 ch) {
+    return clamp((ch.w - 0.240) / (0.628 - 0.240), 0.0, 1.0);
+}
+
+// M2.3/M2.4 general terrain: ONE composition machine for the whole world.
+// Structure comes from uplift; local character is now DEM-tuned from the table
+// above. Most of the world is gentle lowland; ranges stand where uplift is high.
 float composition_height(vec2 world_xz, uint seed) {
-    // --- hand-set character knobs (M2.3 tuning; DEM-driven in M2.4) ---
+    // --- structure knobs (still hand-set; DEM tunes character below) ---
     const float WARP_AMOUNT  = 2200.0;   // world units of coord bend
     const float WARP_FREQ    = 0.00004;  // warp's own low freq (~25 km)
     const float UPLIFT_FREQ  = 0.000025; // range placement (~40 km regions)
@@ -171,25 +218,31 @@ float composition_height(vec2 world_xz, uint seed) {
     const float UPLIFT_HI    = 0.70;     // above -> full range (uplift 1); wide gap -> mostly lowland
     const uint  RIDGE_OCT    = 6u;
     const float RIDGE_LAC    = 2.03;
-    const float RIDGE_GAIN   = 0.55;
-    const float RIDGE_SCALE  = 0.0004;   // ridgeline scale (~2.5 km)
-    const float RELIEF_AMP   = 1600.0;   // peak range relief (m)
-    const float CARVE_DEPTH  = 0.4;      // fraction of relief pressed into valleys
     const float BASE_FREQ    = 0.00012;  // continental base undulation (~8 km)
     const uint  BASE_OCT     = 3u;
-    const float BASE_AMP     = 180.0;    // gentle lowland relief everywhere
     const float DETAIL_FREQ  = 0.0016;
     const uint  DETAIL_OCT   = 4u;
-    const float DETAIL_AMP   = 70.0;     // fine surface roughness
 
     vec2 warp    = domain_warp(world_xz, seed, WARP_AMOUNT, WARP_FREQ);
     float uplift = uplift_field(warp, seed, UPLIFT_FREQ, UPLIFT_LO, UPLIFT_HI);
-    float base   = value_fbm(world_xz * BASE_FREQ, seed ^ 0x42415345u, BASE_OCT, 2.0, 0.5) * BASE_AMP;
-    float ridges = ridged_fbm(warp * RIDGE_SCALE, seed, RIDGE_OCT, RIDGE_LAC, RIDGE_GAIN);
-    float relief = uplift * ridges * RELIEF_AMP;
-    float carve  = valley_carve(uplift, CARVE_DEPTH * RELIEF_AMP);
+    vec4 ch = terrain_character(warp, uplift, seed);
+    float slope_n = dem_slope_norm(ch);
+    float ridge_n = dem_ridge_norm(ch);
+    float fine_n = dem_fine_norm(ch);
+
+    float base_amp = mix(220.0, 140.0, slope_n);
+    float ridge_scale = mix(0.00030, 0.00068, fine_n);
+    float ridge_gain = mix(0.48, 0.66, clamp(0.65 * slope_n + 0.35 * ridge_n, 0.0, 1.0));
+    float relief_amp = mix(1050.0, 1850.0, slope_n);
+    float carve_depth = mix(0.26, 0.56, slope_n);
+    float detail_amp = mix(45.0, 125.0, clamp(0.65 * fine_n + 0.35 * ridge_n, 0.0, 1.0));
+
+    float base   = value_fbm(world_xz * BASE_FREQ, seed ^ 0x42415345u, BASE_OCT, 2.0, 0.5) * base_amp;
+    float ridges = ridged_fbm(warp * ridge_scale, seed, RIDGE_OCT, RIDGE_LAC, ridge_gain);
+    float relief = uplift * ridges * relief_amp;
+    float carve  = valley_carve(uplift, carve_depth * relief_amp);
     float detail = (value_fbm(world_xz * DETAIL_FREQ, seed ^ 0x44455421u, DETAIL_OCT, 2.0, 0.5) - 0.5)
-                   * 2.0 * DETAIL_AMP;
+                   * 2.0 * detail_amp;
     return base + relief - carve + detail;
 }
 
@@ -281,9 +334,9 @@ void main() {
     }
     // absolute world position of this cell (00 §5)
     vec2 world_xz = vec2(origin_x, origin_z) + vec2(cell) * spacing;
-    // M2.3: general terrain from the composition machine (uplift places structure,
-    // hand-set character). Replaces the flat M1 fbm. Climate/biome unchanged below
-    // (height never feeds biome — biome uses macro_altitude; no circularity).
+    // M2.4: general terrain from the composition machine. Uplift places structure;
+    // DEM-derived character tunes relief/ridges/detail. Climate/biome unchanged
+    // below (height never feeds biome; biome uses macro_altitude; no circularity).
     float h = composition_height(world_xz, uint(seed));
     vec2 c = climate(world_xz, h, uint(seed));
 
