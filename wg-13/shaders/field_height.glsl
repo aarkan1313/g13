@@ -230,15 +230,12 @@ float composition_height(vec2 world_xz, uint seed) {
     float ridge_n = dem_ridge_norm(ch);
     float fine_n = dem_fine_norm(ch);
 
-    // Keep DEM character subtle. The first M2.4 mapping over-amplified ridge
-    // frequency/detail and produced corduroy grooves. These ranges stay centered
-    // near the visually accepted M2.3 constants while still varying by DEM data.
-    float base_amp = mix(190.0, 170.0, slope_n);
-    float ridge_scale = mix(0.00035, 0.00043, fine_n);
-    float ridge_gain = mix(0.50, 0.55, clamp(0.70 * slope_n + 0.30 * ridge_n, 0.0, 1.0));
-    float relief_amp = mix(1350.0, 1600.0, slope_n);
-    float carve_depth = mix(0.33, 0.40, slope_n);
-    float detail_amp = mix(48.0, 70.0, clamp(0.50 * fine_n + 0.50 * ridge_n, 0.0, 1.0));
+    float base_amp = mix(220.0, 140.0, slope_n);
+    float ridge_scale = mix(0.00030, 0.00068, fine_n);
+    float ridge_gain = mix(0.48, 0.66, clamp(0.65 * slope_n + 0.35 * ridge_n, 0.0, 1.0));
+    float relief_amp = mix(1050.0, 1850.0, slope_n);
+    float carve_depth = mix(0.26, 0.56, slope_n);
+    float detail_amp = mix(45.0, 125.0, clamp(0.65 * fine_n + 0.35 * ridge_n, 0.0, 1.0));
 
     float base   = value_fbm(world_xz * BASE_FREQ, seed ^ 0x42415345u, BASE_OCT, 2.0, 0.5) * base_amp;
     float ridges = ridged_fbm(warp * ridge_scale, seed, RIDGE_OCT, RIDGE_LAC, ridge_gain);

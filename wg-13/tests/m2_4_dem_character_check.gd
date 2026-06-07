@@ -93,22 +93,6 @@ func _init() -> void:
 			reliefs.append(st["relief"])
 			scan_max_step = maxf(scan_max_step, st["max_step"])
 
-	# Include far-world visual-fail hotspots. The first M2.4 pass looked acceptable
-	# around origin but produced corduroy cliffs around these live-review positions.
-	var hotspots: Array[Vector2] = [
-		Vector2(-164530.0, -62330.0),
-		Vector2(-175629.0, -26099.0),
-		Vector2(-39000.0, 30000.0),
-		Vector2(39000.0, 30000.0),
-	]
-	for p in hotspots:
-		var h_hot: PackedFloat32Array = fc.produce_page(p.x, p.y, SPACING, SEED, RES, OCT, FREQ, AMP)
-		var st_hot := _page_stats(h_hot)
-		roughs.append(st_hot["avg_step"])
-		ratios.append(st_hot["rough_ratio"])
-		reliefs.append(st_hot["relief"])
-		scan_max_step = maxf(scan_max_step, st_hot["max_step"])
-
 	roughs.sort()
 	ratios.sort()
 	reliefs.sort()
