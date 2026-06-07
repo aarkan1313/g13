@@ -4,6 +4,23 @@ The human reads this FIRST every session. The agent appends here whenever it blo
 
 ---
 
+## [2026-06-07] - POP-IN ROOT CAUSE FOUND: fog was OFF (fog_density=0); fog FIX shipped - PARKED FOR VISUAL
+TYPE: ROOT-CAUSE FOUND + FIX (GDScript-only, no rebuild) -> PARKED-FOR-VISUAL
+RESOLVES (partly) the [2026-06-07] "streaming POP-IN / CENTERING - UNRESOLVED" entry below: the POP-IN half now has a proven root cause and a fix; CENTERING ("reach the end in turbo" / "not centered") is a SEPARATE structural problem (floating-origin) still open, sequenced next.
+THE ROOT CAUSE (proven from the ENGINE SHADER, not guessed): Godot 4.3+ depth fog computes
+  fog_amount = pow(smoothstep(fog_depth_begin, fog_depth_end, dist), fog_depth_curve) * fog_density
+(source: godot drivers/.../scene.glsl, PR #84792). BOTH views set `fog_density = 0.0` with a comment "depth fog drives it, not exponential" -- that comment is WRONG. density multiplies the whole term, so fog_amount == 0 ALWAYS. THERE WAS NO FOG IN EITHER VIEW. The streaming frontier appeared in fully clear air -> exactly the user's "even if I go slow there's pop-in." This ALSO explains why the prior session's repeated fog_depth_begin/end tuning (0.85->1.0, etc.) moved NOTHING: every ratio was multiplied by zero density. They were turning a disconnected knob.
+SECOND DEFECT (same family): fog_depth_end (0.98/1.0 * reach) was < cam.far (1.3 * reach) -> even with fog ON, a ~48km band past full-fog still rendered solid geometry, re-exposing the frontier (which sits at ~reach). Fog must saturate AT/BEFORE the frontier and cam.far must not exceed it.
+THE FIX (both world_view.gd AND dem_grounded_world_view.gd, identical mechanism):
+  - fog_density 0.0 -> 1.0 (the ON switch).
+  - fog_depth_begin -> 0.55 * reach (near/mid stays crisp; clear view ~half the reach).
+  - fog_depth_end   -> 0.92 * reach (fully opaque BEFORE the coarsest frontier at reach).
+  - cam.far 1.3 -> 0.95 * reach (nothing renders in clear air past the haze wall).
+EVIDENCE BASIS: numbers computed for the committed config (7lvl, r5, base 508m -> reach 162.6km): old setup left a 48.8km un-fogged band past fog_end and the frontier sat right at the fog hinge. Mechanism verified against the engine fragment shader (term * fog_density). No CPU/GPU world-math touched; render-only; no Rust rebuild.
+VISUAL GATE -- BELIEVE SATISFIED, AWAITING HUMAN: launch run.ps1 (demo.tscn / production world_view) and the dem-grounded scene. Questions for the fly: (1) at the far edge, does new terrain now DISSOLVE into haze rather than blink in -- both cruising and in TURBO? (2) does near/mid terrain still read crisp (fog not too close)? (3) is the haze color/horizon believable (matches sky)? If fog feels too thick/thin, the lever is fog_depth_begin (push out = thinner) -- a tuning follow-up, NOT a re-architecture. NB this does NOT fix "world not centered / reach the end in turbo" -- that's the floating-origin step, sequenced next per the user.
+NEXT (sequenced, gated): (A) Part B page FADE-IN (~0.3s spawn alpha) for fine pages resolving over the coarse blanket INSIDE the clear range -- the remaining near/mid pop the fog can't hide. (B) the structural CENTERING fix (camera-relative floating origin) -- fixes "never centered" + "reach the end in turbo" + far-distance precision wobble in one mechanism.
+CODEBASE STATE: dem-grounded branch; world_view.gd + dem_grounded_world_view.gd fog/far edited (uncommitted, GDScript-only). Commit on human PASS.
+
 ## [2026-06-07] - dem-grounded: streaming POP-IN / CENTERING work - UNRESOLVED (on branch dem-grounded)
 TYPE: BLOCKED (problem not solved; logged per user request to record state, no presumptions)
 WHAT THE USER WANTS: fix streaming POP-IN and the world feeling not consistently

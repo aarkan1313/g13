@@ -488,7 +488,7 @@ func _spawn_camera() -> void:
 	var reach: float = ring_radius * span * pow(2.0, num_levels - 1)
 	var terrain_y := amplitude * 1.2
 	var cam := Camera3D.new()
-	cam.far = reach * 1.3                       # see the whole loaded extent + margin
+	cam.far = reach * 0.95                      # just past fog_depth_end (0.92): nothing renders in clear air beyond the haze wall, so the streaming frontier is never visible (was 1.3 -> a ~48km clear band past the fog re-exposed the frontier as pop-in)
 	cam.set_script(load(FLY))
 	add_child(cam)
 	cam.global_position = REVIEW_START
@@ -508,18 +508,25 @@ func _spawn_camera() -> void:
 	e.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	e.ambient_light_color = Color(0.5, 0.55, 0.6)
 	e.ambient_light_energy = 0.6
-	# Distance fog matched to the loaded extent: the coarsest edge fades into the
-	# sky so the boundary of the loaded world is never a visible hard line
-	# (WG10 lesson: match fog/far to loaded extent). Fog starts well out so near
-	# terrain stays crisp; ends near the reach so the far edge dissolves.
+	# Distance fog matched to the loaded extent: the coarsest streaming FRONTIER is
+	# buried in solid haze so new pages resolve UNSEEN (no pop-in), and the loaded
+	# boundary is never a visible hard line (WG10 lesson: match fog/far to extent).
+	#
+	# ROOT CAUSE FIX (2026-06-07): depth fog amount in Godot 4.3+ is
+	#   fog_amount = pow(smoothstep(begin,end,dist), curve) * fog_density
+	# (engine shader: drivers/.../scene.glsl). The old `fog_density = 0.0` meant
+	# fog_amount == 0 ALWAYS -> there was NO fog and ALL the begin/end tuning this
+	# prototype tried (0.85->1.0 etc.) was inert; the frontier appeared in clear air
+	# ("even if I go slow there's pop-in"). fog_density is the ON switch. Coupled:
+	#  - fog_depth_begin 0.55*reach: near/mid terrain stays crisp (far clear view).
+	#  - fog_depth_end 0.92*reach: fully opaque BEFORE the coarsest frontier at reach,
+	#    so the frontier (and its ~1-coarse-cell jitter) sits inside the haze wall.
+	#  - cam.far 0.95*reach (set above): no geometry renders past the wall.
 	e.fog_enabled = true
 	e.fog_mode = Environment.FOG_MODE_DEPTH
 	e.fog_light_color = Color(0.62, 0.70, 0.80)  # match sky so it reads as haze->horizon
-	# Thin fog, far view: stay crisp out to 85% of reach, then dissolve over the last
-	# 15% so the streaming frontier (coarsest pages) is buried in haze, not popping in
-	# clear. (User: far view distance, minimal fog, but pop-in must be hidden.)
-	e.fog_depth_begin = reach * 0.85
-	e.fog_depth_end = reach * 1.0
-	e.fog_density = 0.0                          # depth fog drives it, not exponential
+	e.fog_depth_begin = reach * 0.55
+	e.fog_depth_end = reach * 0.92
+	e.fog_density = 1.0                          # ON switch: max obscuration at fog_depth_end
 	env.environment = e
 	add_child(env)
