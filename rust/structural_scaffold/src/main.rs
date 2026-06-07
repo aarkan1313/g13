@@ -179,45 +179,48 @@ fn terrain_panel_color(
     min_h: f32,
     max_h: f32,
 ) -> [u8; 3] {
-    let t = ((cell.preview_height_m - min_h) / (max_h - min_h).max(1.0)).clamp(0.0, 1.0);
-    let base = if t < 0.45 {
-        mix_rgb([45, 92, 68], [150, 142, 92], t / 0.45)
-    } else if t < 0.78 {
-        mix_rgb([150, 142, 92], [130, 126, 118], (t - 0.45) / 0.33)
-    } else {
-        mix_rgb([130, 126, 118], [235, 235, 224], (t - 0.78) / 0.22)
-    };
-
     let left = facts[y * map_px + x.saturating_sub(1)].preview_height_m;
     let right = facts[y * map_px + (x + 1).min(map_px - 1)].preview_height_m;
     let up = facts[y.saturating_sub(1) * map_px + x].preview_height_m;
     let down = facts[(y + 1).min(map_px - 1) * map_px + x].preview_height_m;
-    let shade = (0.78 + (left - right) * 0.00045 + (up - down) * 0.00032).clamp(0.46, 1.18);
-    shade_rgb(base, shade)
+    let dzdx = (right - left) * 0.0022;
+    let dzdy = (down - up) * 0.0022;
+    let normal_len = (dzdx * dzdx + dzdy * dzdy + 1.0).sqrt();
+    let nx = -dzdx / normal_len;
+    let ny = 1.0 / normal_len;
+    let nz = -dzdy / normal_len;
+    let light = (-0.46f32, 0.70f32, -0.54f32);
+    let light_len = (light.0 * light.0 + light.1 * light.1 + light.2 * light.2).sqrt();
+    let dot =
+        (nx * light.0 / light_len + ny * light.1 / light_len + nz * light.2 / light_len).max(0.0);
+    let t = ((cell.preview_height_m - min_h) / (max_h - min_h).max(1.0)).clamp(0.0, 1.0);
+    let shade = (0.24 + dot * 0.80 + t * 0.10).clamp(0.0, 1.0);
+    let g = (shade * 255.0).round() as u8;
+    [g, g, g]
 }
 
 fn range_panel_color(cell: structural_scaffold::FactCell) -> [u8; 3] {
-    let range = mix_rgb([18, 23, 27], [188, 95, 58], cell.range_mask);
-    let ridge = (cell.ridge_axis * 255.0).clamp(0.0, 255.0) as u8;
+    let base = mix_rgb([18, 18, 18], [218, 218, 214], cell.range_mask);
+    let ridge = (cell.ridge_axis * 160.0).clamp(0.0, 160.0) as u8;
     [
-        range[0].saturating_add(ridge / 2),
-        range[1].saturating_add(ridge / 2),
-        range[2].saturating_add(ridge),
+        base[0].saturating_add(ridge),
+        base[1].saturating_add(ridge),
+        base[2].saturating_add(ridge),
     ]
 }
 
 fn channel_panel_color(cell: structural_scaffold::FactCell) -> [u8; 3] {
-    let mut c = mix_rgb([26, 28, 32], [58, 95, 88], cell.range_mask * 0.45);
-    c = mix_rgb(c, [31, 142, 210], cell.channel_mask);
-    mix_rgb(c, [236, 202, 82], cell.pass_floor)
+    let mut c = mix_rgb([218, 218, 212], [132, 132, 128], cell.range_mask * 0.62);
+    c = mix_rgb(c, [8, 8, 8], cell.channel_mask);
+    mix_rgb(c, [235, 235, 224], cell.pass_floor * 0.9)
 }
 
 fn style_panel_color(cell: structural_scaffold::FactCell) -> [u8; 3] {
     let style = match StyleId::from_u8(cell.style_id) {
-        StyleId::AlpineBranching => [84, 122, 184],
-        StyleId::SierraBlock => [167, 102, 75],
-        StyleId::PamirChain => [130, 112, 178],
-        StyleId::DissectedHighlands => [95, 143, 90],
+        StyleId::AlpineBranching => [116, 128, 140],
+        StyleId::SierraBlock => [142, 126, 108],
+        StyleId::PamirChain => [132, 132, 146],
+        StyleId::DissectedHighlands => [120, 138, 116],
     };
     let mut c = shade_rgb(style, 0.58 + cell.style_weight * 0.42);
     c = mix_rgb(c, [230, 230, 220], cell.material.snow * 0.78);
@@ -265,7 +268,7 @@ fn build_report(seed: u64, radius: i32, tile_px: usize, out: &Path) -> String {
             }
             let connectivity = channel_connectivity(&fact, 0.45);
             min_largest_route = min_largest_route.min(connectivity.largest_component_cells);
-            if !(connectivity.touches_opposing_edges() || connectivity.touched_edge_count() >= 3) {
+            if !connectivity.touches_multiple_edges() {
                 weak_routes += 1;
             }
             regions.push(((x, z), fact));

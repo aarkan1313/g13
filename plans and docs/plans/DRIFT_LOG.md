@@ -4,6 +4,13 @@ The human reads this FIRST every session. The agent appends here whenever it blo
 
 ---
 
+## [2026-06-06] - M2.4b scaffold rewritten toward WG10-style synthesis
+TYPE: PROTOTYPE REVISION + HONEST VISUAL CORRECTION
+WHY: the first `m2_4b_scaffold_review.png` looked bad and was not actually built like the WG10 mountain synthesis. It only copied labels (range/ridge/channel/pass) with toy line masks. User called this out correctly.
+WHAT CHANGED: rewrote `rust/structural_scaffold` to follow the WG10 recipe shape more closely: style selection, domain-warped range envelopes, massif/base fields, primary trunk corridors, tributary masks, pass floors, ridged/detail residuals, and shaded-relief review rendering. It still stays CPU-only and outside the live page producer.
+VERIFY: `cargo test --manifest-path rust\Cargo.toml --workspace` PASS. `structural_scaffold` unit gate still covers determinism, exact-enough adjacent borders, connected channels crossing multiple edges, and bounded finite values. Regenerated `wg-13/_captures/m2_4b_scaffold_review.png/.md` with zero seam deltas and no weak route regions.
+HONEST STATE: better than the toy sheet, but not visually accepted and not equal to the WG10 reference yet. Next review should compare panel one against `mountain_synthesis_200km.png`; if the shape language still reads wrong, tune this prototype before adding runtime candidate mode.
+
 ## [2026-06-06] - M2.4b structural oracle prototype + static review sheet
 TYPE: PROTOTYPE GATE PASS + VISUAL REVIEW PENDING
 WHAT: added `rust/structural_scaffold`, a CPU-only RegionFact oracle for the M2.4b candidate lane. It samples deterministic world-coordinate facts: range mask, ridge axis/distance, channel mask/distance, pass floor, style id/weight, material hints, and a review-only preview height. It is not wired into `field_height.glsl`, `PagePool`, or the accepted M2.3 runtime.

@@ -8,10 +8,13 @@ the scalar DEM-character idea. Do not restart parameter tuning against
 
 Implementation checkpoint: Step 2/3 prototype exists in `rust/structural_scaffold`.
 It generates deterministic CPU-only RegionFacts and writes
-`wg-13/_captures/m2_4b_scaffold_review.png/.md`. The unit gate is green for
-determinism, adjacent-region seam agreement, connected channel routes, and
-bounded finite values. This is not runtime-integrated and not M2.4 visual
-acceptance.
+`wg-13/_captures/m2_4b_scaffold_review.png/.md`. The first toy-line version was
+visually wrong; the current version has been rewritten toward the WG10 synthesis
+shape: style selection, domain-warped range envelopes, massif/base fields,
+primary+tributary carve masks, pass floors, and ridged/detail residuals. The unit
+gate is green for determinism, adjacent-region seam agreement, connected channel
+routes, and bounded finite values. This is not runtime-integrated and not M2.4
+visual acceptance.
 
 ## Diagnosis
 

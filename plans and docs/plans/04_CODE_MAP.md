@@ -11,9 +11,13 @@
 rust/structural_scaffold/src/
   lib.rs            M2.4b prototype lane: deterministic Rust RegionFact oracle
                     (range/ridge/channel/pass/style/material facts) sampled from
-                    world coords. Unit-gated for determinism, seam agreement,
-                    connected channel routes, and bounded finite values. CPU-only
-                    review/prototype; not wired into the accepted runtime yet.
+                    world coords. Current synthesis path mirrors WG10's shape more
+                    closely than the first toy sheet: style selection, domain warp,
+                    range envelope, massif/base, primary+tributary carve masks,
+                    pass floors, and ridged/detail residuals. Unit-gated for
+                    determinism, seam agreement, connected channel routes, and
+                    bounded finite values. CPU-only review/prototype; not wired
+                    into the accepted runtime yet.
   main.rs           Static review harness. Writes
                     wg-13/_captures/m2_4b_scaffold_review.png + .md from the
                     fact oracle. This is the cheap visual filter before live

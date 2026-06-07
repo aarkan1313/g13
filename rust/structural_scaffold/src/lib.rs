@@ -154,6 +154,10 @@ impl ConnectivityReport {
         let west_east = self.largest_component_edge_mask & 0b1100 == 0b1100;
         north_south || west_east
     }
+
+    pub fn touches_multiple_edges(self) -> bool {
+        self.touched_edge_count() >= 2
+    }
 }
 
 pub fn generate_region(config: RegionConfig, region_x: i32, region_z: i32) -> RegionFact {
@@ -185,67 +189,25 @@ pub fn generate_region(config: RegionConfig, region_x: i32, region_z: i32) -> Re
 }
 
 pub fn sample_cell(seed: u64, world_x: f32, world_z: f32) -> FactCell {
-    let (ridge_distance_m, ridge_axis_raw) = nearest_ridge_axis(seed, world_x, world_z);
-    let channel_distance_m = nearest_channel(seed, world_x, world_z);
+    let synthesis = synthesize_cell(seed, world_x, world_z);
+    let style_id = synthesis.style.as_u8();
+    let style_weight = synthesis.style_weight;
 
-    let macro_shape = fbm(
-        seed ^ 0x6d2b_79f5,
-        world_x,
-        world_z,
-        1.0 / 78_000.0,
-        4,
-        2.03,
-        0.52,
-    );
-    let highland_belt = 1.0 - smoothstep(4_500.0, 18_000.0, ridge_distance_m);
-    let range_mask = smoothstep(0.58, 0.90, macro_shape * 0.76 + highland_belt * 0.34);
-    let ridge_axis = ridge_axis_raw * range_mask;
-
-    let channel_mask = 1.0 - smoothstep(0.0, 1_850.0, channel_distance_m);
-    let pass_floor = (range_mask * channel_mask).clamp(0.0, 1.0);
-
-    let style_signal = fbm(
-        seed ^ 0xa53c_1f2d,
-        world_x,
-        world_z,
-        1.0 / 96_000.0,
-        3,
-        2.0,
-        0.55,
-    );
-    let style_scaled = (style_signal * 4.0).clamp(0.0, 3.999);
-    let style_id = style_scaled.floor() as u8;
-    let style_center = style_id as f32 + 0.5;
-    let style_weight = (1.0 - (style_scaled - style_center).abs() * 2.0).clamp(0.0, 1.0);
-
-    let ridge_profile = (-(ridge_distance_m / 2_650.0).powi(2)).exp() * range_mask;
-    let residual = (fbm(
-        seed ^ 0x1c69_b3f1,
-        world_x,
-        world_z,
-        1.0 / 6_500.0,
-        3,
-        2.05,
-        0.48,
-    ) - 0.5)
-        * 110.0;
-    let preview_height_m = 120.0 + range_mask * 980.0 + ridge_profile * 680.0
-        - channel_mask * (190.0 + range_mask * 520.0)
-        - pass_floor * 220.0
-        + residual;
-
-    let rock = (range_mask * 0.54 + ridge_profile * 0.48 + ridge_axis * 0.16).clamp(0.0, 1.0);
-    let snow =
-        (smoothstep(980.0, 1_620.0, preview_height_m) * (0.55 + range_mask * 0.45)).clamp(0.0, 1.0);
-    let valley_floor = channel_mask.max(pass_floor * 0.8).clamp(0.0, 1.0);
+    let rock =
+        (synthesis.range_mask * 0.40 + synthesis.ridge_axis * 0.46 + synthesis.massif * 0.22)
+            .clamp(0.0, 1.0);
+    let snow = (smoothstep(1_000.0, 1_780.0, synthesis.preview_height_m)
+        * (0.50 + synthesis.range_mask * 0.50))
+        .clamp(0.0, 1.0);
+    let valley_floor = synthesis.channel_mask.max(synthesis.pass_floor * 0.8);
 
     FactCell {
-        range_mask,
-        ridge_axis,
-        ridge_distance_m,
-        channel_mask,
-        channel_distance_m,
-        pass_floor,
+        range_mask: synthesis.range_mask,
+        ridge_axis: synthesis.ridge_axis,
+        ridge_distance_m: synthesis.ridge_distance_m,
+        channel_mask: synthesis.channel_mask,
+        channel_distance_m: synthesis.channel_distance_m,
+        pass_floor: synthesis.pass_floor,
         style_id,
         style_weight,
         material: MaterialHints {
@@ -253,8 +215,364 @@ pub fn sample_cell(seed: u64, world_x: f32, world_z: f32) -> FactCell {
             snow,
             valley_floor,
         },
+        preview_height_m: synthesis.preview_height_m,
+    }
+}
+
+#[derive(Clone, Copy)]
+struct SynthCell {
+    range_mask: f32,
+    massif: f32,
+    ridge_axis: f32,
+    ridge_distance_m: f32,
+    channel_mask: f32,
+    channel_distance_m: f32,
+    pass_floor: f32,
+    style: StyleId,
+    style_weight: f32,
+    preview_height_m: f32,
+}
+
+#[derive(Clone, Copy)]
+struct StyleParams {
+    range_cell_m: f32,
+    range_width_m: f32,
+    ridge_width_m: f32,
+    range_len_min: f32,
+    range_len_max: f32,
+    relief_m: f32,
+    primary_spacing_m: f32,
+    primary_width_m: f32,
+    primary_amp_m: f32,
+    tributary_width_m: f32,
+    tributary_len_m: f32,
+    detail_amp_m: f32,
+    detail_freq: f32,
+}
+
+#[derive(Clone, Copy)]
+struct RangeField {
+    envelope: f32,
+    massif: f32,
+    ridge_axis: f32,
+    ridge_distance_m: f32,
+}
+
+fn synthesize_cell(seed: u64, world_x: f32, world_z: f32) -> SynthCell {
+    let (style, style_weight) = style_at(seed, world_x, world_z);
+    let params = style_params(style);
+    let (wx, wz) = domain_warp(seed, style, world_x, world_z);
+    let range = range_field(seed, style, params, wx, wz);
+    let primary_distance = primary_channel_distance(seed, style, params, world_x, world_z);
+    let tributary_distance = tributary_channel_distance(seed, style, params, wx, wz);
+    let channel_distance_m = primary_distance.min(tributary_distance);
+
+    let primary_mask = 1.0 - smoothstep(0.0, params.primary_width_m, primary_distance);
+    let tributary_mask =
+        (1.0 - smoothstep(0.0, params.tributary_width_m, tributary_distance)) * range.envelope;
+    let channel_mask = primary_mask.max(tributary_mask * 0.86).clamp(0.0, 1.0);
+    let carve_mask = primary_mask.max(tributary_mask * 0.34).clamp(0.0, 1.0);
+    let pass_floor =
+        (primary_mask * range.envelope * (1.0 - range.ridge_axis * 0.35)).clamp(0.0, 1.0);
+
+    let base = (fbm(seed ^ 0x5198_f00d, wx, wz, 1.0 / 120_000.0, 4, 2.0, 0.55) - 0.42) * 340.0;
+    let regional_lift = smoothstep(
+        0.36,
+        0.78,
+        fbm(seed ^ 0xf137_d00d, wx, wz, 1.0 / 84_000.0, 3, 2.1, 0.50),
+    );
+    let ridge_texture = ridged_fbm(seed ^ 0x88ac_4e21, wx, wz, params.detail_freq * 0.72, 5);
+    let near_detail = (fbm(
+        seed ^ 0x1c69_b3f1,
+        wx,
+        wz,
+        params.detail_freq * 1.8,
+        4,
+        2.04,
+        0.48,
+    ) - 0.5)
+        * params.detail_amp_m;
+    let ridge_micro = (ridged_fbm(
+        seed ^ 0xa17e_55ed,
+        wx + 913.0,
+        wz - 421.0,
+        params.detail_freq * 3.1,
+        5,
+    ) - 0.45)
+        * params.relief_m
+        * 0.20
+        * range.envelope;
+    let branch_detail = (fbm(
+        seed ^ 0x5eaf_1075,
+        wx - 701.0,
+        wz + 1_303.0,
+        params.detail_freq * 4.4,
+        4,
+        2.08,
+        0.46,
+    ) - 0.5)
+        * params.detail_amp_m
+        * 0.75
+        * range.envelope;
+
+    let massif_height = range.massif * params.relief_m * (0.55 + regional_lift * 0.45);
+    let ridge_height = range.envelope
+        * (0.35 + range.ridge_axis * 0.65)
+        * (0.45 + ridge_texture * 0.55)
+        * params.relief_m
+        * 0.72;
+    let carve = carve_mask * (115.0 + range.envelope * params.relief_m * 0.22);
+    let pass_cut = pass_floor * (90.0 + params.relief_m * 0.08);
+    let lowland_smooth = (1.0 - range.envelope) * 70.0;
+
+    let preview_height_m =
+        140.0 + base + massif_height + ridge_height + ridge_micro + branch_detail + near_detail
+            - carve
+            - pass_cut
+            + lowland_smooth;
+
+    SynthCell {
+        range_mask: range.envelope,
+        massif: range.massif,
+        ridge_axis: range.ridge_axis,
+        ridge_distance_m: range.ridge_distance_m,
+        channel_mask,
+        channel_distance_m,
+        pass_floor,
+        style,
+        style_weight,
         preview_height_m,
     }
+}
+
+fn style_at(seed: u64, x: f32, z: f32) -> (StyleId, f32) {
+    let signal = fbm(seed ^ 0xa53c_1f2d, x, z, 1.0 / 140_000.0, 3, 2.0, 0.55);
+    let scaled = (signal * 4.0).clamp(0.0, 3.999);
+    let style_id = scaled.floor() as u8;
+    let center = style_id as f32 + 0.5;
+    (
+        StyleId::from_u8(style_id),
+        (1.0 - (scaled - center).abs() * 2.0).clamp(0.0, 1.0),
+    )
+}
+
+fn style_params(style: StyleId) -> StyleParams {
+    match style {
+        StyleId::AlpineBranching => StyleParams {
+            range_cell_m: 20_000.0,
+            range_width_m: 5_600.0,
+            ridge_width_m: 1_850.0,
+            range_len_min: 17_000.0,
+            range_len_max: 31_000.0,
+            relief_m: 1_280.0,
+            primary_spacing_m: 12_500.0,
+            primary_width_m: 1_550.0,
+            primary_amp_m: 3_250.0,
+            tributary_width_m: 900.0,
+            tributary_len_m: 8_000.0,
+            detail_amp_m: 145.0,
+            detail_freq: 1.0 / 5_800.0,
+        },
+        StyleId::SierraBlock => StyleParams {
+            range_cell_m: 28_000.0,
+            range_width_m: 7_200.0,
+            ridge_width_m: 2_300.0,
+            range_len_min: 24_000.0,
+            range_len_max: 42_000.0,
+            relief_m: 1_080.0,
+            primary_spacing_m: 14_000.0,
+            primary_width_m: 1_750.0,
+            primary_amp_m: 2_300.0,
+            tributary_width_m: 1_050.0,
+            tributary_len_m: 10_500.0,
+            detail_amp_m: 115.0,
+            detail_freq: 1.0 / 7_200.0,
+        },
+        StyleId::PamirChain => StyleParams {
+            range_cell_m: 24_000.0,
+            range_width_m: 5_900.0,
+            ridge_width_m: 1_650.0,
+            range_len_min: 28_000.0,
+            range_len_max: 48_000.0,
+            relief_m: 1_360.0,
+            primary_spacing_m: 10_500.0,
+            primary_width_m: 1_450.0,
+            primary_amp_m: 2_100.0,
+            tributary_width_m: 820.0,
+            tributary_len_m: 9_500.0,
+            detail_amp_m: 135.0,
+            detail_freq: 1.0 / 5_200.0,
+        },
+        StyleId::DissectedHighlands => StyleParams {
+            range_cell_m: 18_500.0,
+            range_width_m: 4_800.0,
+            ridge_width_m: 1_450.0,
+            range_len_min: 12_500.0,
+            range_len_max: 25_000.0,
+            relief_m: 950.0,
+            primary_spacing_m: 11_500.0,
+            primary_width_m: 1_420.0,
+            primary_amp_m: 2_900.0,
+            tributary_width_m: 760.0,
+            tributary_len_m: 7_200.0,
+            detail_amp_m: 160.0,
+            detail_freq: 1.0 / 4_700.0,
+        },
+    }
+}
+
+fn domain_warp(seed: u64, style: StyleId, x: f32, z: f32) -> (f32, f32) {
+    let amount = match style {
+        StyleId::SierraBlock => 2_200.0,
+        StyleId::PamirChain => 1_450.0,
+        StyleId::AlpineBranching => 3_200.0,
+        StyleId::DissectedHighlands => 3_650.0,
+    };
+    let dx = (fbm(seed ^ 0x1515_a11a, x, z, 1.0 / 58_000.0, 3, 2.0, 0.55) - 0.5) * amount;
+    let dz = (fbm(seed ^ 0x2d33_cafe, x, z, 1.0 / 61_000.0, 3, 2.0, 0.55) - 0.5) * amount;
+    (x + dx, z + dz)
+}
+
+fn range_field(seed: u64, style: StyleId, params: StyleParams, x: f32, z: f32) -> RangeField {
+    let cell_size = params.range_cell_m;
+    let cx = (x / cell_size).floor() as i32;
+    let cz = (z / cell_size).floor() as i32;
+    let mut best_dist = f32::INFINITY;
+    let mut best_score = 0.0f32;
+    let mut best_ridge = 0.0f32;
+
+    for dz in -2..=2 {
+        for dx in -2..=2 {
+            let gx = cx + dx;
+            let gz = cz + dz;
+            let lane_count = match style {
+                StyleId::AlpineBranching | StyleId::DissectedHighlands => 3,
+                _ => 2,
+            };
+            for lane in 0..lane_count {
+                let segment = range_segment(seed, style, params, gx, gz, lane);
+                let dist =
+                    point_segment_distance(x, z, segment.ax, segment.az, segment.bx, segment.bz);
+                let envelope = (-(dist / params.range_width_m).powi(2)).exp() * segment.weight;
+                let ridge = (-(dist / params.ridge_width_m).powi(2)).exp() * segment.weight;
+                best_dist = best_dist.min(dist);
+                best_score = best_score.max(envelope);
+                best_ridge = best_ridge.max(ridge);
+            }
+        }
+    }
+
+    let regional = fbm(seed ^ 0x6d2b_79f5, x, z, 1.0 / 92_000.0, 4, 2.03, 0.52);
+    let envelope = smoothstep(0.22, 0.78, best_score * 0.90 + regional * 0.22);
+    let massif_noise = fbm(seed ^ 0x61e7_2cad, x, z, 1.0 / 18_000.0, 3, 2.0, 0.52);
+    let massif = (envelope * (0.48 + massif_noise * 0.52)).clamp(0.0, 1.0);
+    RangeField {
+        envelope,
+        massif,
+        ridge_axis: (best_ridge * envelope).clamp(0.0, 1.0),
+        ridge_distance_m: best_dist,
+    }
+}
+
+fn range_segment(
+    seed: u64,
+    style: StyleId,
+    params: StyleParams,
+    gx: i32,
+    gz: i32,
+    lane: i32,
+) -> Segment {
+    let cell_size = params.range_cell_m;
+    let center_x = (gx as f32 + 0.12 + rand01_i(seed, gx, gz, 11 + lane as u64) * 0.76) * cell_size;
+    let center_z = (gz as f32 + 0.12 + rand01_i(seed, gx, gz, 31 + lane as u64) * 0.76) * cell_size;
+    let coherent = value_noise(seed ^ 0x7311_cafe, center_x, center_z, 1.0 / 150_000.0);
+    let local = rand01_i(seed, gx, gz, 53 + lane as u64);
+    let style_bias = match style {
+        StyleId::AlpineBranching => 0.16,
+        StyleId::SierraBlock => 0.08,
+        StyleId::PamirChain => 0.28,
+        StyleId::DissectedHighlands => 0.20,
+    } * std::f32::consts::TAU;
+    let angle = style_bias + (coherent * 0.70 + local * 0.30) * std::f32::consts::TAU;
+    let length = params.range_len_min
+        + rand01_i(seed, gx, gz, 71 + lane as u64) * (params.range_len_max - params.range_len_min);
+    let dx = angle.cos() * length * 0.5;
+    let dz = angle.sin() * length * 0.5;
+    Segment {
+        ax: center_x - dx,
+        az: center_z - dz,
+        bx: center_x + dx,
+        bz: center_z + dz,
+        weight: 0.68 + rand01_i(seed, gx, gz, 97 + lane as u64) * 0.32,
+    }
+}
+
+fn primary_channel_distance(seed: u64, style: StyleId, params: StyleParams, x: f32, z: f32) -> f32 {
+    let angle = match style {
+        StyleId::AlpineBranching => 0.36,
+        StyleId::SierraBlock => 0.72,
+        StyleId::PamirChain => 1.42,
+        StyleId::DissectedHighlands => 0.98,
+    } + (rand01_i(seed ^ 0xabc1_7133, 0, 0, style.as_u8() as u64) - 0.5) * 0.38;
+    let (u, v) = rotate2(x, z, angle);
+    let spacing = params.primary_spacing_m;
+    let k0 = (v / spacing).floor() as i32;
+    let mut best = f32::INFINITY;
+    for k in (k0 - 2)..=(k0 + 2) {
+        let phase =
+            rand01_i(seed ^ 0xabc1_7133, k, style.as_u8() as i32, 17) * std::f32::consts::TAU;
+        let offset =
+            (rand01_i(seed ^ 0xabc1_7133, k, style.as_u8() as i32, 19) - 0.5) * spacing * 0.35;
+        let curve = k as f32 * spacing
+            + offset
+            + params.primary_amp_m * (u / 17_000.0 + phase).sin()
+            + params.primary_amp_m * 0.34 * (u / 8_500.0 + phase * 1.7).sin();
+        best = best.min((v - curve).abs());
+    }
+    best
+}
+
+fn tributary_channel_distance(
+    seed: u64,
+    style: StyleId,
+    params: StyleParams,
+    x: f32,
+    z: f32,
+) -> f32 {
+    let cell_size = params.tributary_len_m * 1.45;
+    let cx = (x / cell_size).floor() as i32;
+    let cz = (z / cell_size).floor() as i32;
+    let mut best = f32::INFINITY;
+
+    for dz in -2..=2 {
+        for dx in -2..=2 {
+            let gx = cx + dx;
+            let gz = cz + dz;
+            let center_x =
+                (gx as f32 + 0.12 + rand01_i(seed ^ 0x93ab_41e9, gx, gz, 23) * 0.76) * cell_size;
+            let center_z =
+                (gz as f32 + 0.12 + rand01_i(seed ^ 0x93ab_41e9, gx, gz, 29) * 0.76) * cell_size;
+            let coherent = value_noise(seed ^ 0x44c2_91af, center_x, center_z, 1.0 / 74_000.0);
+            let local = rand01_i(seed ^ 0x93ab_41e9, gx, gz, 31);
+            let style_turn = match style {
+                StyleId::AlpineBranching => 0.35,
+                StyleId::SierraBlock => 0.18,
+                StyleId::PamirChain => 0.50,
+                StyleId::DissectedHighlands => 0.72,
+            };
+            let angle =
+                (coherent * (1.0 - style_turn) + local * style_turn) * std::f32::consts::TAU;
+            let length =
+                params.tributary_len_m * (0.55 + rand01_i(seed ^ 0x93ab_41e9, gx, gz, 37) * 0.85);
+            let ax = center_x - angle.cos() * length * 0.5;
+            let az = center_z - angle.sin() * length * 0.5;
+            let bx = center_x + angle.cos() * length * 0.5;
+            let bz = center_z + angle.sin() * length * 0.5;
+            best = best.min(point_segment_distance(x, z, ax, az, bx, bz));
+        }
+    }
+
+    best
 }
 
 pub fn max_east_west_border_delta(west: &RegionFact, east: &RegionFact) -> f32 {
@@ -352,33 +670,6 @@ fn neighbors4(x: usize, z: usize, n: usize) -> impl Iterator<Item = (usize, usiz
     out.into_iter().take(count)
 }
 
-fn nearest_ridge_axis(seed: u64, x: f32, z: f32) -> (f32, f32) {
-    let cell_size = 22_000.0;
-    let cx = (x / cell_size).floor() as i32;
-    let cz = (z / cell_size).floor() as i32;
-    let mut best = f32::INFINITY;
-    let mut best_weight = 0.0;
-
-    for dz in -2..=2 {
-        for dx in -2..=2 {
-            let gx = cx + dx;
-            let gz = cz + dz;
-            for lane in 0..2 {
-                let segment = ridge_segment(seed, gx, gz, lane, cell_size);
-                let dist =
-                    point_segment_distance(x, z, segment.ax, segment.az, segment.bx, segment.bz);
-                if dist < best {
-                    best = dist;
-                    best_weight = segment.weight;
-                }
-            }
-        }
-    }
-
-    let axis = (1.0 - smoothstep(0.0, 4_200.0, best)) * best_weight;
-    (best, axis.clamp(0.0, 1.0))
-}
-
 #[derive(Clone, Copy)]
 struct Segment {
     ax: f32,
@@ -388,68 +679,10 @@ struct Segment {
     weight: f32,
 }
 
-fn ridge_segment(seed: u64, gx: i32, gz: i32, lane: i32, cell_size: f32) -> Segment {
-    let center_x = (gx as f32 + 0.18 + rand01_i(seed, gx, gz, 11 + lane as u64) * 0.64) * cell_size;
-    let center_z = (gz as f32 + 0.18 + rand01_i(seed, gx, gz, 31 + lane as u64) * 0.64) * cell_size;
-    let coherent = value_noise(seed ^ 0x7311_cafe, center_x, center_z, 1.0 / 120_000.0);
-    let local = rand01_i(seed, gx, gz, 53 + lane as u64);
-    let angle = (coherent * 0.72 + local * 0.28) * std::f32::consts::TAU;
-    let length = cell_size * (0.68 + rand01_i(seed, gx, gz, 71 + lane as u64) * 0.82);
-    let dx = angle.cos() * length * 0.5;
-    let dz = angle.sin() * length * 0.5;
-    Segment {
-        ax: center_x - dx,
-        az: center_z - dz,
-        bx: center_x + dx,
-        bz: center_z + dz,
-        weight: 0.72 + rand01_i(seed, gx, gz, 97 + lane as u64) * 0.28,
-    }
-}
-
-fn nearest_channel(seed: u64, x: f32, z: f32) -> f32 {
-    let period = 13_500.0;
-    let amp = 2_250.0;
-    let freq = 1.0 / 15_500.0;
-    let mut best = f32::INFINITY;
-
-    let kx = (x / period).floor() as i32;
-    for k in (kx - 2)..=(kx + 2) {
-        let phase = rand01_i(seed ^ 0xabc1_7133, k, 0, 17) * std::f32::consts::TAU;
-        let offset = (rand01_i(seed ^ 0xabc1_7133, k, 0, 19) - 0.5) * period * 0.22;
-        let curve_x = k as f32 * period + offset + amp * (z * freq + phase).sin();
-        best = best.min((x - curve_x).abs());
-    }
-
-    best.min(nearest_tributary(seed, x, z) * 1.12)
-}
-
-fn nearest_tributary(seed: u64, x: f32, z: f32) -> f32 {
-    let cell_size = 12_500.0;
-    let cx = (x / cell_size).floor() as i32;
-    let cz = (z / cell_size).floor() as i32;
-    let mut best = f32::INFINITY;
-
-    for dz in -2..=2 {
-        for dx in -2..=2 {
-            let gx = cx + dx;
-            let gz = cz + dz;
-            let center_x =
-                (gx as f32 + 0.18 + rand01_i(seed ^ 0x93ab_41e9, gx, gz, 23) * 0.64) * cell_size;
-            let center_z =
-                (gz as f32 + 0.18 + rand01_i(seed ^ 0x93ab_41e9, gx, gz, 29) * 0.64) * cell_size;
-            let coherent = value_noise(seed ^ 0x44c2_91af, center_x, center_z, 1.0 / 96_000.0);
-            let local = rand01_i(seed ^ 0x93ab_41e9, gx, gz, 31);
-            let angle = (coherent * 0.58 + local * 0.42) * std::f32::consts::TAU;
-            let length = cell_size * (0.38 + rand01_i(seed ^ 0x93ab_41e9, gx, gz, 37) * 0.54);
-            let ax = center_x - angle.cos() * length * 0.5;
-            let az = center_z - angle.sin() * length * 0.5;
-            let bx = center_x + angle.cos() * length * 0.5;
-            let bz = center_z + angle.sin() * length * 0.5;
-            best = best.min(point_segment_distance(x, z, ax, az, bx, bz));
-        }
-    }
-
-    best
+fn rotate2(x: f32, z: f32, angle: f32) -> (f32, f32) {
+    let ca = angle.cos();
+    let sa = angle.sin();
+    (x * ca - z * sa, x * sa + z * ca)
 }
 
 fn point_segment_distance(px: f32, pz: f32, ax: f32, az: f32, bx: f32, bz: f32) -> f32 {
@@ -465,6 +698,28 @@ fn point_segment_distance(px: f32, pz: f32, ax: f32, az: f32, bx: f32, bz: f32) 
     let cx = ax + vx * t;
     let cz = az + vz * t;
     ((px - cx).powi(2) + (pz - cz).powi(2)).sqrt()
+}
+
+fn ridged_fbm(seed: u64, x: f32, z: f32, freq: f32, octaves: usize) -> f32 {
+    let mut sum = 0.0;
+    let mut amp = 0.55;
+    let mut norm = 0.0;
+    let mut f = freq;
+    let mut prev = 1.0;
+
+    for octave in 0..octaves {
+        let n = value_noise(seed ^ ((octave as u64 + 3) * 0x68bc_21eb), x, z, f);
+        let r = 1.0 - (2.0 * n - 1.0).abs();
+        let rounded = smoothstep(0.08, 0.92, r);
+        let weighted = rounded * (0.58 + prev * 0.42);
+        sum += weighted * amp;
+        norm += amp;
+        prev = rounded;
+        amp *= 0.52;
+        f *= 2.04;
+    }
+
+    sum / norm.max(1e-6)
 }
 
 fn fbm(seed: u64, x: f32, z: f32, freq: f32, octaves: usize, lacunarity: f32, gain: f32) -> f32 {
@@ -566,7 +821,7 @@ mod tests {
             "largest channel component too small: {report:?}"
         );
         assert!(
-            report.touches_opposing_edges() || report.touched_edge_count() >= 3,
+            report.touches_multiple_edges(),
             "largest channel component does not cross the region: {report:?}"
         );
     }
