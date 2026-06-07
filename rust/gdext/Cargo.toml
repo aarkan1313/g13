@@ -13,3 +13,5 @@ crate-type = ["cdylib"]
 # with hot reload. The .gdextension sets compatibility_minimum = 4.2, so this extension
 # loads on Godot 4.6.2. Version pinned here per 01_TOOLCHAIN.md open item.
 godot = "0.5"
+# M2.4c: the runtime macro bake reuses the proven window-port directly.
+structural_scaffold = { path = "../structural_scaffold" }
