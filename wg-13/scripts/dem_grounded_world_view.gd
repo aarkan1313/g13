@@ -33,13 +33,14 @@ const AABB_HALF_HEIGHT := 6000.0
 # M1.6: 6 levels @ base span 508m, radius 3 -> coarsest reaches ~49km (30km goal
 # with margin). Each coarser level doubles per-page span, so reach is exponential
 # for linear page cost. (level span = base_span * 2^level.)
-@export var num_levels: int = 6            # fine (0) + coarse blankets, out to the horizon
+@export var num_levels: int = 8            # 8 levels @ base span 508m, radius 3 -> reach ~195 km; 7=97.5km, 6=49km
 @export var ring_radius: int = 3           # pages each side, per level, around camera
 @export var evict_margin: int = 1          # hysteresis: keep_radius = ring_radius + margin
-@export var max_new_per_frame: int = 4
+@export var max_new_per_frame: int = 8
 # M1.9.3b: mid-coarse eager pages produced per frame (coarsest level exempt =
 # never-black floor). Spreads the fast-motion burst across frames. Tune live.
-@export var max_eager_per_frame: int = 8
+# Raised (8->24) to build coarse blankets farther ahead -> less pop-in at 195km reach.
+@export var max_eager_per_frame: int = 24
 @export var show_page_tint: bool = false   # debug checkerboard marking page edges (off = clean look)
 @export var review_mesh_lod_bias: int = 2   # visual review only: keep coarse DEM pages from faceting at altitude
 @export var review_mesh_min_subdiv: int = 96
@@ -136,22 +137,37 @@ func _process(_dt: float) -> void:
 		var span: float = base_span * pow(2.0, level)
 		var ccx: int = int(floor(cam_x / span))
 		var ccz: int = int(floor(cam_z / span))
+		# NEAREST-FIRST: collect the missing pages in this level's ring, then sort by
+		# distance to the camera so the bounded per-frame budget is spent on the pages
+		# about to enter view (in the direction you're flying) instead of raw grid
+		# order. This is the fix for "terrain only loads when you get close": grid-order
+		# scanning spent the budget on side/behind pages while the leading edge waited.
+		var cands: Array = []
 		for gz in range(ccz - ring_radius, ccz + ring_radius + 1):
 			for gx in range(ccx - ring_radius, ccx + ring_radius + 1):
 				var key := "%d:%d:%d" % [level, gx, gz]
 				if _instances.has(key):
 					continue
-				var tex
-				if level == coarsest:
-					tex = _pool.request_page_eager(level, gx, gz)          # floor
-				elif level > 0:
-					tex = _pool.request_page_eager_bounded(level, gx, gz)  # spread
-				else:
-					tex = _pool.request_page(level, gx, gz)                # fine
-				if tex == null:
-					continue                  # over budget; coarser blanket covers it
-				_instances[key] = _make_page_instance(tex, level, gx, gz, span)
-				_inst_meta[key] = Vector3i(level, gx, gz)   # parse the key ONCE, here
+				# page-center distance (in page units) from the camera's fractional cell
+				var dx: float = (float(gx) + 0.5) - (cam_x / span)
+				var dz: float = (float(gz) + 0.5) - (cam_z / span)
+				cands.append([dx * dx + dz * dz, gx, gz, key])
+		cands.sort_custom(func(a, b): return a[0] < b[0])
+		for c in cands:
+			var gx: int = c[1]
+			var gz: int = c[2]
+			var key: String = c[3]
+			var tex
+			if level == coarsest:
+				tex = _pool.request_page_eager(level, gx, gz)          # floor
+			elif level > 0:
+				tex = _pool.request_page_eager_bounded(level, gx, gz)  # spread
+			else:
+				tex = _pool.request_page(level, gx, gz)                # fine
+			if tex == null:
+				continue                  # over budget; coarser blanket covers it
+			_instances[key] = _make_page_instance(tex, level, gx, gz, span)
+			_inst_meta[key] = Vector3i(level, gx, gz)   # parse the key ONCE, here
 
 	# Per-level camera page-center, precomputed once (was recomputed per instance).
 	var lvl_ccx := PackedInt32Array(); lvl_ccx.resize(num_levels)
@@ -469,8 +485,11 @@ func _spawn_camera() -> void:
 	e.fog_enabled = true
 	e.fog_mode = Environment.FOG_MODE_DEPTH
 	e.fog_light_color = Color(0.62, 0.70, 0.80)  # match sky so it reads as haze->horizon
-	e.fog_depth_begin = reach * 0.45
-	e.fog_depth_end = reach * 0.98
+	# Thin fog, far view: stay crisp out to 85% of reach, then dissolve over the last
+	# 15% so the streaming frontier (coarsest pages) is buried in haze, not popping in
+	# clear. (User: far view distance, minimal fog, but pop-in must be hidden.)
+	e.fog_depth_begin = reach * 0.85
+	e.fog_depth_end = reach * 1.0
 	e.fog_density = 0.0                          # depth fog drives it, not exponential
 	env.environment = e
 	add_child(env)
