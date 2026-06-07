@@ -4,7 +4,8 @@ extends SceneTree
 #   cargo run --manifest-path rust\Cargo.toml -p structural_scaffold -- export-godot
 #   godot --rendering-driver vulkan --path wg-13 --script res://tests/m2_4b_scaffold_3d_check.gd
 
-const SCENE := "res://scenes/m2_4b_scaffold_3d_review.tscn"
+const MACRO_SCENE := "res://scenes/m2_4b_scaffold_3d_review.tscn"
+const PLAYABLE_SCALE_SCENE := "res://scenes/m2_4b_scaffold_playable_scale_review.tscn"
 
 var _failed := false
 
@@ -16,10 +17,14 @@ func _init() -> void:
 	call_deferred("_run")
 
 func _run() -> void:
-	var packed: PackedScene = load(SCENE)
+	await _check_scene(MACRO_SCENE, 4, 100000)
+	await _check_scene(PLAYABLE_SCALE_SCENE, 1, 30000)
+	_finish()
+
+func _check_scene(scene_path: String, expected_panels: int, min_vertices: int) -> void:
+	var packed: PackedScene = load(scene_path)
 	if packed == null:
-		_fail("could not load %s" % SCENE)
-		_finish()
+		_fail("could not load %s" % scene_path)
 		return
 
 	var root: Node = packed.instantiate()
@@ -29,20 +34,21 @@ func _run() -> void:
 
 	if not root.has_method("panel_count") or not root.has_method("total_vertices"):
 		_fail("scene root does not expose scaffold review counters")
-	elif root.panel_count() != 4:
-		_fail("expected 4 style panels, got %d" % root.panel_count())
-	elif root.total_vertices() < 100000:
+	elif root.panel_count() != expected_panels:
+		_fail("%s expected %d style panels, got %d" % [scene_path, expected_panels, root.panel_count()])
+	elif root.total_vertices() < min_vertices:
 		_fail("mesh vertex count too small: %d" % root.total_vertices())
 	elif not _viewport_has_visible_content():
-		_fail("rendered viewport is effectively blank")
+		_fail("%s rendered viewport is effectively blank" % scene_path)
 	else:
-		print("PASS: scaffold 3D scene built %d panels / %d vertices" % [
+		print("PASS: %s built %d panels / %d vertices" % [
+			scene_path,
 			root.panel_count(),
 			root.total_vertices(),
 		])
 
 	root.queue_free()
-	_finish()
+	await process_frame
 
 func _finish() -> void:
 	print("M2.4b scaffold 3D RESULT: ", "FAIL" if _failed else "PASS")

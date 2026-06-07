@@ -139,6 +139,7 @@ The first 3D review is deliberately static and separate from the accepted M2.3
 runtime page pool:
 
 - `wg-13/scenes/m2_4b_scaffold_3d_review.tscn`
+- `wg-13/scenes/m2_4b_scaffold_playable_scale_review.tscn`
 - `wg-13/scripts/scaffold_3d_review.gd`
 - `wg-13/tests/m2_4b_scaffold_3d_check.gd`
 
@@ -149,19 +150,32 @@ the 3D pass exercises more than grayscale height. The review camera has an
 explicit long far clip for the multi-kilometer panels, and the material is
 double-sided so the static review is not dependent on triangle winding.
 
+Visual review note: the four-panel macro scene is good conceptually but not
+game-scale; it compresses 200 km source structure into a small review view and
+can become unplayably steep. The separate playable-scale scene uses one panel,
+a wider display span, lower vertical exaggeration, and faster fly speed to judge
+traversable scale without changing the underlying scaffold facts.
+
 3D smoke command:
 
 ```powershell
 & "C:\Godot\v4.6.2\Godot_v4.6.2-stable_mono_win64\Godot_v4.6.2-stable_mono_win64_console.exe" --rendering-driver vulkan --path "D:\world gen 13\wg-13" --script res://tests/m2_4b_scaffold_3d_check.gd
 ```
 
-Latest 3D smoke result: PASS, `4` panels / `148996` vertices, plus rendered
-viewport variance check so a sky-only frame fails.
+Latest 3D smoke result: PASS, macro `4` panels / `148996` vertices and
+playable-scale `1` panel / `37249` vertices, plus rendered viewport variance
+checks so sky-only frames fail.
 
 Launch command:
 
 ```powershell
 & "C:\Godot\v4.6.2\Godot_v4.6.2-stable_mono_win64\Godot_v4.6.2-stable_mono_win64.exe" --rendering-driver vulkan --path "D:\world gen 13\wg-13" res://scenes/m2_4b_scaffold_3d_review.tscn
+```
+
+Playable-scale launch command:
+
+```powershell
+& "C:\Godot\v4.6.2\Godot_v4.6.2-stable_mono_win64\Godot_v4.6.2-stable_mono_win64.exe" --rendering-driver vulkan --path "D:\world gen 13\wg-13" res://scenes/m2_4b_scaffold_playable_scale_review.tscn
 ```
 
 ## What Not To Do
@@ -171,6 +185,7 @@ Launch command:
 - Do not replace M2.3 terrain by default.
 - Do not treat this as M2.4 visual acceptance. It is a good static baseline and
   now needs a separate 3D/runtime candidate review.
+- Do not treat the compressed four-panel macro scale as gameplay scale.
 
 ## Next Step
 

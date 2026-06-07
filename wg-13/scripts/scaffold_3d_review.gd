@@ -6,6 +6,13 @@ const FLY_CAMERA := preload("res://scripts/fly_camera.gd")
 @export var display_span_m: float = 9000.0
 @export var height_scale: float = 1.15
 @export var panel_gap_m: float = 900.0
+@export var first_style_index: int = 0
+@export var style_count: int = 4
+@export var show_labels: bool = true
+@export var fly_speed: float = 600.0
+@export var camera_height_m: float = 4300.0
+@export var camera_target_height_m: float = 1250.0
+@export var camera_distance_factor: float = 1.25
 
 var _panel_count: int = 0
 var _total_vertices: int = 0
@@ -61,11 +68,14 @@ func _build_panels(doc: Dictionary) -> void:
 		push_error("Scaffold 3D JSON has no usable styles/resolution")
 		return
 
-	var total_width: float = float(styles.size()) * display_span_m + float(maxi(styles.size() - 1, 0)) * panel_gap_m
+	var first: int = clampi(first_style_index, 0, styles.size() - 1)
+	var count: int = clampi(style_count, 1, styles.size() - first)
+	var total_width: float = float(count) * display_span_m + float(maxi(count - 1, 0)) * panel_gap_m
 	var start_x: float = -total_width * 0.5 + display_span_m * 0.5
-	for i in range(styles.size()):
+	for local_i in range(count):
+		var i: int = first + local_i
 		var style: Dictionary = styles[i]
-		var offset_x: float = start_x + float(i) * (display_span_m + panel_gap_m)
+		var offset_x: float = start_x + float(local_i) * (display_span_m + panel_gap_m)
 		var mesh: ArrayMesh = _build_mesh(style, res, offset_x)
 		var mi: MeshInstance3D = MeshInstance3D.new()
 		mi.name = "Scaffold_%s" % String(style.get("key", "style"))
@@ -74,15 +84,16 @@ func _build_panels(doc: Dictionary) -> void:
 		add_child(mi)
 		_panel_count += 1
 
-		var label: Label3D = Label3D.new()
-		label.name = "Label_%s" % String(style.get("key", "style"))
-		label.text = String(style.get("key", "style"))
-		label.font_size = 90
-		label.modulate = Color(0.90, 0.92, 0.90)
-		label.outline_size = 8
-		label.position = Vector3(offset_x - display_span_m * 0.44, 500.0, -display_span_m * 0.58)
-		label.rotation_degrees = Vector3(-18.0, 0.0, 0.0)
-		add_child(label)
+		if show_labels:
+			var label: Label3D = Label3D.new()
+			label.name = "Label_%s" % String(style.get("key", "style"))
+			label.text = String(style.get("key", "style"))
+			label.font_size = 90
+			label.modulate = Color(0.90, 0.92, 0.90)
+			label.outline_size = 8
+			label.position = Vector3(offset_x - display_span_m * 0.44, 500.0, -display_span_m * 0.58)
+			label.rotation_degrees = Vector3(-18.0, 0.0, 0.0)
+			add_child(label)
 
 func _build_mesh(style: Dictionary, res: int, offset_x: float) -> ArrayMesh:
 	var heights: Array = style.get("height", [])
@@ -180,9 +191,10 @@ func _spawn_camera() -> void:
 	cam.fov = 68.0
 	cam.near = 5.0
 	cam.far = maxf(60000.0, display_span_m * 8.0)
+	cam.speed = fly_speed
 	cam.look_at_from_position(
-		Vector3(0.0, 4300.0, display_span_m * 1.25),
-		Vector3(0.0, 1250.0, 0.0),
+		Vector3(0.0, camera_height_m, display_span_m * camera_distance_factor),
+		Vector3(0.0, camera_target_height_m, 0.0),
 		Vector3.UP
 	)
 	add_child(cam)
