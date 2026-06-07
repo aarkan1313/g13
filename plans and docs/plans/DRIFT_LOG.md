@@ -4,6 +4,13 @@ The human reads this FIRST every session. The agent appends here whenever it blo
 
 ---
 
+## [2026-06-06] - M2.4b reframed: DEMs should feed structural scaffold facts, not local knob tuning
+TYPE: DESIGN PIVOT + PLAN UPDATE
+HUMAN INSIGHT: the WG10 mountain synthesis outputs look much closer to the desired DEM use. They were effectively baked reference/world-layer products, but the useful part is not "static bake"; it is explicit mountain structure: range fields, channel/pass networks, valley corridors, style families, and material hints.
+DECISION: M2.4b is now a procedural structural-scaffold step. WG13 should generate deterministic region facts from seed + region coordinate, cache them, and let pages sample them. Rust owns contracts/routing/cache/reporting; GPU compute owns dense macro fields where useful. Biome/temp/moisture/elevation influence style/material weights, but they do not become hard-coded terrain recipes in this step.
+WHY: current `dem_distill` fingerprints (spectrum, slope_p95, ridge_character) are texture descriptors. They cannot encode organized drainage/ridge topology. WG10's pass-network/RegionFact lesson gives the correct boundary: facts first, height assembly second, visual promotion last.
+NEXT: replace the old M2.4b DEM-character rethink with `docs/superpowers/plans/2026-06-06-m2-4b-dem-structural-scaffold.md`. First implementation bite should be a small Rust structural oracle + static 3x3/9x9 review sheet, before live clipmap integration.
+
 ## [2026-06-06] - M2.4a DEM-character scalar tuning FAILED visual review twice; backed out
 TYPE: VISUAL FAIL + SAFE REVERT + REDESIGN REQUIRED
 HUMAN VERDICT: after the first M2.4 DEM-character pass, the live world showed corduroy grooves / harsh parallel walls at far-world review positions. I softened the parameter ranges and added those positions to the numeric gate, but the second live review still looked bad. The user's verdict: "Still looks bad, probably need to step back and try a different approach."

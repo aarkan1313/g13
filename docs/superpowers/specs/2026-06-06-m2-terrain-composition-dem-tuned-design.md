@@ -1,7 +1,9 @@
 # M2 terrain shape — DEM-tuned composition machine + biome-as-skin (redesign)
 
 **Date:** 2026-06-06
-**Status:** design, approved in brainstorming; pending spec review → planning
+**Status:** partially superseded after M2.4a visual failure. M2.3's composition
+machine remains accepted; the continuous DEM-character field is abandoned as the
+M2.4 path. See `docs/superpowers/plans/2026-06-06-m2-4b-dem-structural-scaffold.md`.
 **Type:** M2 terrain-shape architecture (the foundation for M2.3 → M2.end)
 **Supersedes:** all prior M2-shape designs — the hand-tuned-noise spec, the
 DEM-spectral spec, and the per-biome composition-recipe spec
@@ -92,7 +94,17 @@ composition (the proven WG10 model) + a continuous DEM character field.**
 - `valley_carve(uplift, depth)` — presses inter-range basins down where uplift is
   low.
 
-### The continuous DEM CHARACTER field (the new core piece)
+### Superseded: the continuous DEM CHARACTER field
+
+This section describes the idea that failed in M2.4a. It is kept for historical
+context only. The attempted implementation mapped DEM fingerprint scalars into
+ridge/detail/relief parameters and passed numeric gates, but failed live visual
+review twice with corduroy grooves / harsh parallel walls.
+
+M2.4b now uses the WG10 mountain synthesis lesson instead: DEMs should inform
+explicit structural facts (range/ridge/channel/pass/material hints) generated
+procedurally per region, not per-cell scalar knob modulation.
+
 `character(p)` returns the local terrain character — **relief amount, slope
 ceiling, ridge-ness, feature scale** — by **continuously blending across the DEM
 library's measured character**, driven by the uplift/region fields (and richly
@@ -152,11 +164,13 @@ one at a time, only after the general world looks good.**
   (within-region relief spread). GATE (visual, EARLY): capture low + WALK it —
   reads as believable varied terrain (lowlands + hills + ranges with valleys),
   not oatmeal, not uniform. **Make-or-break visual.**
-- **M2.4 — DEM character integration.** Wire `character()` to the DEM data so
-  terrain character varies richly + realistically across the world, well-sampled
-  across the library. GATE (test): character varies (steep regions measurably
-  steeper, within real slope ceilings); determinism/continuity hold. GATE
-  (visual): the world reads as varied real-terrain character, not one note.
+- **M2.4 — DEM structural scaffold.** Build explicit procedural region facts
+  from DEM-informed mountain synthesis: range masks, ridge/channel/pass facts,
+  style weights, and material hints. Start with a Rust oracle + static review
+  sheet, then integrate a region-fact cache/runtime candidate lane. GATE (test):
+  deterministic facts, seam/apron correctness, connected pass/channel structure,
+  and M2.1/M2.2/M2.3 regressions green. GATE (visual): side-by-side/reference
+  review proves the scaffold reads like organized real terrain, not local noise.
 - **M2.5 — general-terrain visual acceptance + polish.** Fly + walk the whole
   general world; confirm it's believable and free of artifacts at the macro bar.
   Address terrain-steepness consequences HERE if they appear (see Known issues).
@@ -197,9 +211,9 @@ rollback).
 - **Reused (unchanged):** M2.1 climate, M2.2 biome classifier + roster, the M1
   streaming/LOD/collision foundation, the offline `dem_distill` tool + fingerprint
   data (restored).
-- **New:** the composition machine (primitives + uplift structure + continuous
-  DEM character field) replacing the flat M1 value-noise height; the runtime path
-  that reads DEM character into the field.
+- **New:** the M2.3 composition machine (primitives + uplift structure) remains.
+  The next new piece is a procedural structural scaffold / region-fact path, not
+  the abandoned continuous DEM-character field.
 - **Explicitly deferred:** per-biome shape modulation (later, one at a time);
   erosion (M6); the steepness-driven render/collision + traverse items (handled
   when steep, in their own layers, gated).
