@@ -53,8 +53,12 @@ void vertex() {
 	NORMAL = n;
 }
 
-uniform float height_lo = 60.0;   // approx low end of the page's height range
-uniform float height_hi = 360.0;  // approx high end (for tint contrast only)
+// M2.4d: km-scale ramp. The macro (mode 2) and oracle (mode 1) terrain are
+// kilometre-scale (~0..2500 m); the old 60..360 m range clamped nearly all of it
+// to the pale highland color, making shape unreadable. Widen so the green->tan
+// tint spans the real relief. Display-only — height/collision/gates untouched.
+uniform float height_lo = 0.0;     // m — low end of the tint ramp (was 60)
+uniform float height_hi = 2600.0;  // m — high end of the tint ramp (was 360)
 // Per-page debug tint multiplier (1.0 = none). A faint checkerboard across
 // pages makes the page layout visible so seams are verifiable: if the SURFACE
 // is continuous across a tint change, there's no crack. Set to 1.0 for clean.
