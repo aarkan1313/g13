@@ -203,12 +203,14 @@ impl FieldCompute {
     /// resident. Idempotent for the same (rx,rz) — a repeat ensure does not grow
     /// the resident count. Used by m2_4c_resident_check to prove 0 -> 1 -> 1.
     #[func]
-    fn macro_ensure_test(&mut self, rx: i64, rz: i64, seed: f32, spacing: f32, super_m: f32) {
+    fn macro_ensure_test(&mut self, rx: i64, rz: i64, seed: i64, spacing: f32, super_m: f32) {
+        let Some(gpu) = self.gpu.as_mut() else {
+            godot_error!("FieldCompute: not initialized.");
+            return;
+        };
         let cfg = crate::macro_cache::MacroBakeConfig { bake_spacing_m: spacing, super_region_m: super_m };
         let rm = crate::macro_cache::MacroBake::bake_region(seed as u64, rx as i32, rz as i32, cfg);
-        if let Some(gpu) = self.gpu.as_mut() {
-            gpu.ensure_region(&rm);
-        }
+        gpu.ensure_region(&rm);
     }
 
     /// Produce one page packed into an R32F ImageTexture (for a render shader).

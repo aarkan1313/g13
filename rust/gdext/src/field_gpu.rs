@@ -107,7 +107,9 @@ pub struct FieldGpu {
     /// default is kept until configured (biome_count in PageParams gates use).
     biome_bytes: PackedByteArray,
     /// M2.4c step-2: shared linear, clamp-to-edge sampler for the macro textures.
-    /// Created once; consumed by the macro-sampling dispatch in Task 3.
+    /// Created once; consumed by the macro-sampling dispatch in Task 3. Freed
+    /// implicitly when the local `rd` drops (like `shader`/`pipeline`), unlike the
+    /// `macro_resident` textures which are explicitly `.free()`'d on eviction.
     sampler: Rid,
     /// M2.4c step-2: (region_x, region_z) -> resident macro textures on this RD.
     /// `ensure_region` uploads once per region; `evict_region` frees the RIDs.
