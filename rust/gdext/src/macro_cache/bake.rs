@@ -28,6 +28,10 @@ impl MacroBake {
         // apron_meshgrid offsets by -apron cells, so world coords line up across regions.
         let (wx, wz) = apron_meshgrid(padded, padded, apron, spacing, origin_x, origin_z);
 
+        // Step 1 bakes every region with ALPINE_BRANCHING. STYLES + MountainStyle are
+        // already in structural_scaffold::bake; style routing (pick per region coord /
+        // climate, likely a new MacroBakeConfig field) is a later step (M2.4c step 3/4),
+        // and the call below is where it plugs in. Kept single-style now (YAGNI).
         let fields = generate_seamsafe_fields(
             &wx, &wz, padded, padded, seed as i64, &ALPINE_BRANCHING,
             core_span, apron, spacing, true, // flow_on = true (drainage)
