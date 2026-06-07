@@ -363,6 +363,11 @@ func _make_page_instance(tex, level: int, gx: int, gz: int, span: float) -> Mesh
 	mat.set_shader_parameter("climate_tex", _pool.get_page_climate_tex(level, gx, gz))
 	# M2.2: bind this page's biome-id texture (R32F) for the biome view mode.
 	mat.set_shader_parameter("biome_tex", _pool.get_page_biome_tex(level, gx, gz))
+	# M2.4: bind this page's analytic normal texture (RG32F: R=normal_x, G=normal_z),
+	# same production as height. The display shader reads it for a seam-free normal
+	# instead of finite-differencing the height texture (which clamped at page edges
+	# and created the per-chunk shading seam).
+	mat.set_shader_parameter("normal_tex", _pool.get_page_normal_tex(level, gx, gz))
 	mat.set_shader_parameter("view_mode", _view_mode)       # current mode (recycled mats too)
 	mat.set_shader_parameter("page_world_size", span)       # span differs by level on reuse
 	mat.set_shader_parameter("cell_spacing", spacing * pow(2.0, level))
