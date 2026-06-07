@@ -6,11 +6,19 @@ extends SceneTree
 #
 # This proves, output-provably:
 #   1. a resident page returns page_res*page_res heights
-#   2. those heights are BIT-IDENTICAL to the bytes inside the page's texture
-#      (one production -> texture and collision can't drift)
-#   3. they equal a fresh FieldCompute production of the same world page
+#   2. they equal a fresh FieldCompute production of the same world page
 #      (it's the real field, not stale/garbage), and differ for a different page
-#   4. a non-resident page returns an empty array (getter never fabricates)
+#   3. a non-resident page returns an empty array (getter never fabricates)
+#
+# M2.6 NOTE: render textures are now GPU-resident (Texture2DRD, no CPU readback),
+# so the old "texture bytes == heights bytes" check is gone — a render Texture2DRD
+# can't be CPU-read (no CAN_COPY_FROM_BIT, by design). The M1.7 no-drift contract
+# ("collision reads the same field the view renders") is now proven by check #2:
+# collision `heights` are bit-identical to an independent FieldCompute of the SAME
+# page params — and the render path runs the IDENTICAL GLSL with the SAME params,
+# so both derive from one field math (one source of truth, 00 §2.1). Collision and
+# render can't drift because they share the field + params, not because we byte-
+# compare a CPU copy of the (now GPU-only) render texture.
 # Run: godot --rendering-driver vulkan --path wg-13 --script res://tests/m1_7a_heights_check.gd
 
 const SHADER := "res://shaders/field_height.glsl"
@@ -41,30 +49,11 @@ func _init() -> void:
 		_fail("expected %d heights, got %d" % [RES * RES, heights.size()])
 		_finish(); return
 	print("PASS: length — get_page_heights returned %d floats (%dx%d)" % [heights.size(), RES, RES])
-
-	# --- 2. same source as the texture (no drift): texture bytes == heights bytes ---
-	# The texture is R32F packed from this exact array; reading it back must match
-	# the heights to the bit. (Same produced array -> view and collision agree.)
-	var img: Image = tex.get_image()
-	if img == null:
-		_fail("texture.get_image() returned null")
-		_finish(); return
-	if img.get_format() != Image.FORMAT_RF:
-		_fail("texture format is %d, expected FORMAT_RF (%d)" % [img.get_format(), Image.FORMAT_RF])
-	var tex_bytes: PackedByteArray = img.get_data()
 	var h_bytes: PackedByteArray = heights.to_byte_array()
-	if tex_bytes != h_bytes:
-		# Find the first differing byte for a useful message.
-		var n := mini(tex_bytes.size(), h_bytes.size())
-		var first := -1
-		for i in range(n):
-			if tex_bytes[i] != h_bytes[i]: first = i; break
-		_fail("texture bytes != heights bytes (sizes %d vs %d, first diff at byte %d)" % [
-			tex_bytes.size(), h_bytes.size(), first])
-	else:
-		print("PASS: same source — texture R32F bytes are bit-identical to get_page_heights (no drift)")
 
-	# --- 3. it's the real field: matches a fresh FieldCompute of the same world page ---
+	# --- 2. it's the real field: matches a fresh FieldCompute of the same world page ---
+	# (This is the M1.7 no-drift proof now: collision heights == the field math, and
+	#  the render path runs the IDENTICAL GLSL with the SAME params, so they agree.)
 	var fc = ClassDB.instantiate("FieldCompute")
 	if fc == null or not fc.initialize(SHADER):
 		_fail("FieldCompute init failed (need vulkan)")
@@ -84,7 +73,7 @@ func _init() -> void:
 		else:
 			print("PASS: discriminating — a different field (seed+1) yields different heights")
 
-	# --- 4. non-resident page returns empty (getter never fabricates) ---
+	# --- 3. non-resident page returns empty (getter never fabricates) ---
 	var absent: PackedFloat32Array = pool.get_page_heights(0, 9999, 9999)
 	if absent.size() != 0:
 		_fail("non-resident page returned %d heights, expected 0 (empty)" % absent.size())
