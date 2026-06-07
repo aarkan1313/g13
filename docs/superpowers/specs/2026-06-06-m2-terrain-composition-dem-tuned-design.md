@@ -171,11 +171,14 @@ one at a time, only after the general world looks good.**
   not oatmeal, not uniform. **Make-or-break visual.**
 - **M2.4 — DEM structural scaffold.** Build explicit procedural region facts
   from DEM-informed mountain synthesis: range masks, ridge/channel/pass facts,
-  style weights, and material hints. Start with a Rust oracle + static review
-  sheet, then integrate a region-fact cache/runtime candidate lane. GATE (test):
-  deterministic facts, seam/apron correctness, connected pass/channel structure,
-  and M2.1/M2.2/M2.3 regressions green. GATE (visual): side-by-side/reference
-  review proves the scaffold reads like organized real terrain, not local noise.
+  style weights, and material hints. Current M2.4b has a Rust oracle, static 2D
+  review sheet, macro 3D structure proof, and a separate playable-scale
+  calibration scene. Next is scale/readability tuning and a region-fact cache/
+  runtime candidate lane. GATE (test): deterministic facts, seam/apron
+  correctness, nontrivial drainage signal, rendered review scenes nonblank, and
+  M2.1/M2.2/M2.3 regressions green. GATE (visual): side-by-side/reference review
+  proves the scaffold reads like organized real terrain at gameplay scale, not
+  local noise or compressed macro-only spectacle.
 - **M2.5 — general-terrain visual acceptance + polish.** Fly + walk the whole
   general world; confirm it's believable and free of artifacts at the macro bar.
   Address terrain-steepness consequences HERE if they appear (see Known issues).

@@ -4,6 +4,13 @@ The human reads this FIRST every session. The agent appends here whenever it blo
 
 ---
 
+## [2026-06-06] - M2.4b macro scaffold concept accepted, scale not gameplay-ready
+TYPE: VISUAL REVIEW + SCALE CORRECTION + DOC UPDATE
+HUMAN VERDICT: the WG10-like static 3D scaffold demonstrates promising mountain structure, but the current compressed macro scene is unplayable as gameplay scale. The concept is worth continuing; the scale/readability is not accepted as final terrain.
+WHAT CHANGED: added a separate scale-calibration review scene at `wg-13/scenes/m2_4b_scaffold_playable_scale_review.tscn` using the same scaffold facts but one panel, wider display span, lower vertical exaggeration, and faster fly speed. The macro scene remains `wg-13/scenes/m2_4b_scaffold_3d_review.tscn` and should be treated as a structure proof, not a player-scale target.
+VERIFY: `m2_4b_scaffold_3d_check.gd` PASS now covers both rendered scenes: macro 4 panels / 148996 vertices; playable-scale 1 panel / 37249 vertices; both include nonblank viewport checks so a sky-only frame fails.
+NEXT: tune playable-scale readability and traversability, then build the runtime candidate lane separate from the accepted M2.3 baseline. Do not promote the compressed macro scale to runtime.
+
 ## [2026-06-06] - M2.4b scaffold rewritten toward WG10-style synthesis
 TYPE: PROTOTYPE REVISION + HONEST VISUAL CORRECTION
 WHY: the first `m2_4b_scaffold_review.png` looked bad and was not actually built like the WG10 mountain synthesis. It only copied labels (range/ridge/channel/pass) with toy line masks. User called this out correctly.

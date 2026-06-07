@@ -32,7 +32,7 @@ Adding a biome = adding a row. If adding a biome requires new Rust logic, the de
 - **M2.1** — Temperature & moisture fields exist and are tunable; visualize them as debug color. GATE (visual): two smooth, large-scale gradients across the world.
 - **M2.2** — Whittaker mapping → biome id per location; render biome as flat debug color. GATE (visual): large contiguous color regions, no confetti. GATE (test): same seed → identical biome id at fixed test coords.
 - **M2.3** — General composition machine wired into the field. GATE (visual): macro mountains/plains/lowlands are visibly different and good enough to continue.
-- **M2.4** — DEM structural scaffold / procedural mountain-synthesis facts. GATE (visual): organized ranges/ridges/channels/passes read like terrain structure, not local noise or scalar DEM grooves.
+- **M2.4** — DEM structural scaffold / procedural mountain-synthesis facts. Current M2.4b review has a promising macro structure proof and a separate playable-scale calibration scene. GATE (visual): organized ranges/ridges/channels/passes read like terrain structure at gameplay scale, not local noise, scalar DEM grooves, or an unplayably compressed macro proof.
 - **M2.5** — General-terrain visual acceptance + polish. GATE (visual): fly/walk review; remaining border/material blending and steep-terrain consequences are addressed in the right layer.
 
 ## 3. How DEMs inform the field (the part you wanted but didn't fully understand)
@@ -48,7 +48,7 @@ You have DEM (Digital Elevation Model) data — real-world heightmaps from sourc
 
 **M2 now does the structural scaffold**, not just #1 slope/roughness parameter fitting. Border blending and per-biome shape modulation are polish/future layers after the general terrain reads well. The DEM preprocessing (downloading, normalizing, computing statistics/facts) is an **offline tool** that outputs small data into `WorldConfig` or a region-fact cache — it is NOT part of the runtime field and must never be, or you'll couple the generator to gigabytes of data.
 
-- **M2.4** — DEM structural scaffold produces deterministic range/ridge/channel/pass facts and a visual review sheet. GATE (test): deterministic facts, seam/apron correctness, connected pass/channel structure, regressions green.
+- **M2.4** — DEM structural scaffold produces deterministic range/ridge/channel/pass facts, a 2D review sheet, and static macro/playable-scale 3D review scenes. GATE (test): deterministic facts, seam/apron correctness, nontrivial drainage signal, rendered review scenes nonblank, regressions green.
 - **M2.5** — General-terrain visual acceptance + polish. GATE (visual): fly/walk review confirms believable terrain and resolves remaining artifacts in the right layer.
 - **M2.6** — Performance pass. GATE: real composed field stays inside target frame budget.
 

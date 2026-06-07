@@ -2,9 +2,9 @@
 
 ## Purpose
 
-Record exactly how the accepted M2.4b static scaffold sheet was made, so the
-next agent can reproduce it and avoid drifting back into scalar DEM tuning or
-the rejected line-segment scaffold.
+Record exactly how the current M2.4b static scaffold sheet and 3D review scenes
+were made, so the next agent can reproduce them and avoid drifting back into
+scalar DEM tuning or the rejected line-segment scaffold.
 
 This is an offline/prototype lane. It does not replace the accepted M2.3 live
 terrain and it is not runtime-integrated yet.
@@ -189,7 +189,8 @@ Playable-scale launch command:
 
 ## Next Step
 
-Build a separate 3D review/candidate lane that samples these WG10-derived facts
-without disturbing the accepted M2.3 baseline. The first 3D pass should prove
-scale, framing, and fly/readability before the scaffold enters the live page
-producer.
+Tune the playable-scale review for traversal/readability, then build a runtime
+candidate lane that samples these WG10-derived facts without disturbing the
+accepted M2.3 baseline. The runtime pass should preserve the macro structure
+language while solving scale, framing, and player-eye readability before the
+scaffold enters the default live page producer.

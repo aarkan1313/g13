@@ -8,14 +8,22 @@ the scalar DEM-character idea. Do not restart parameter tuning against
 
 Implementation checkpoint: Step 2/3 prototype exists in `rust/structural_scaffold`.
 It generates deterministic CPU-only RegionFacts and writes
-`wg-13/_captures/m2_4b_scaffold_review.png/.md`. The first toy-line version was
-visually wrong, so it was replaced with an adapted WG10 Rust recipe port:
-`recipe_noise`, `array_ops`, and the mountain seam-safe synthesis pipeline now
-drive the scaffold facts directly. The review sheet is aligned to the archived
-WG10 mountain synthesis setup: seed `177`, 200 km span, four mountain styles, and
-WG10-style hillshade. The unit/workspace gate is green for determinism,
-adjacent-region seam agreement, nontrivial drainage signal, and bounded finite
-values. Full provenance/reproduction notes are in
+`wg-13/_captures/m2_4b_scaffold_review.png/.md` plus
+`wg-13/_captures/m2_4b_scaffold_3d.json`. The first toy-line version was visually
+wrong, so it was replaced with an adapted WG10 Rust recipe port: `recipe_noise`,
+`array_ops`, and the mountain seam-safe synthesis pipeline now drive the scaffold
+facts directly. The review sheet is aligned to the archived WG10 mountain
+synthesis setup: seed `177`, 200 km span, four mountain styles, and WG10-style
+hillshade.
+
+3D review status: `wg-13/scenes/m2_4b_scaffold_3d_review.tscn` is a macro
+concept proof and demonstrates promising structure, but it is too compressed and
+unplayable as gameplay scale. `wg-13/scenes/m2_4b_scaffold_playable_scale_review.tscn`
+is the current single-panel scale-calibration view. Gate
+`m2_4b_scaffold_3d_check.gd` is green for both rendered scenes, and the
+unit/workspace gate is green for determinism, adjacent-region seam agreement,
+nontrivial drainage signal, and bounded finite values. Full
+provenance/reproduction notes are in
 `docs/superpowers/plans/2026-06-06-m2-4b-wg10-port-record.md`. This is not
 runtime-integrated and not M2.4 visual acceptance.
 
@@ -150,8 +158,12 @@ payload like WG10:
 - seam guide mode;
 - player-eye/fly review.
 
-This is not final runtime acceptance. It is the cheap visual filter that prevents
-bad structure from entering the live clipmap.
+Current result: the static review harness exists as a 2D sheet plus two Godot 3D
+review scenes. The macro scene is useful for judging structure, but its compressed
+scale is not gameplay-ready. The playable-scale scene is the active calibration
+surface before runtime integration. This is not final runtime acceptance. It is
+the cheap visual filter that prevents bad structure from entering the live
+clipmap.
 
 ### Step 4 - Runtime Candidate Lane
 
@@ -192,7 +204,7 @@ Visual gates:
 
 - side-by-side with WG10 mountain synthesis references;
 - overlays prove ranges/channels/passes are real facts;
-- player-eye pass through/around mountains reads traversable;
+- player-eye pass through/around mountains reads traversable at gameplay scale;
 - same failed M2.4a hotspots are included once runtime-integrated;
 - human visual pass before M2.4 is marked complete.
 
@@ -207,10 +219,11 @@ Visual gates:
 
 ## Immediate Next Implementation Bite
 
-Build Step 2 as a small Rust-side oracle plus Step 3 static review output before
-touching the live page producer. The first visible target should be a
-seam-aware structural scaffold sheet, not the full streaming runtime.
+Step 2 and the first Step 3 review artifacts now exist. The next bite is
+scale/readability tuning on the playable-scale review scene, then a runtime
+candidate lane separate from the accepted M2.3 baseline.
 
-Current next bite after the prototype: review/tune the sheet against the WG10
-reference targets, then build the runtime candidate lane separately from the
-accepted M2.3 baseline.
+Do not use the compressed four-panel macro scene as gameplay scale. It is a
+structure proof. The runtime candidate should preserve the promising range/
+channel language while choosing sane horizontal span, vertical scale, traversal
+budgets, and material readability.
