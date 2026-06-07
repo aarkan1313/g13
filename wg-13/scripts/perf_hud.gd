@@ -18,7 +18,7 @@ extends CanvasLayer
 @export var show_position: bool = true
 @export var show_memory: bool = true
 @export var show_profiler: bool = true      # M1.9 per-system frame breakdown (key 5)
-@export var spike_log: bool = true          # M2.6 DIAGNOSTIC: print over-threshold frames to console
+@export var spike_log: bool = false         # M2.6 DIAGNOSTIC (off by default): print over-threshold frames to console; flip on to attribute hitches
 @export var spike_log_ms: float = 10.0      # log frames above this (headroom: well under the 16.6 budget)
 
 var _label: Label
