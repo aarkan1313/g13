@@ -13,8 +13,9 @@
 use std::collections::HashMap;
 
 use crate::field_gpu::{FieldGpu, FieldPage, PageParams, BIOME_STRIDE};
+use crate::render_gpu::{RenderGpu, RenderTextures};
 use godot::classes::image::Format;
-use godot::classes::{Image, ImageTexture};
+use godot::classes::{Image, ImageTexture, Texture2Drd};
 use godot::prelude::*;
 
 /// M2.2 default biome roster (DATA, 00 §6) — centroids in normalized
@@ -66,21 +67,23 @@ struct PageKey {
 /// path is byte-for-byte what M1 produced (climate is additive); they cache and
 /// evict together as one unit.
 struct ResidentPage {
-    texture: Gd<ImageTexture>,
+    // M2.6: RENDER textures are GPU-resident — produced on the MAIN device and
+    // wrapped in Texture2DRD (no readback/re-upload). `texture` (height, vertex
+    // displacement), `climate_tex` (RG: temp,moist), `biome_tex` (biome id),
+    // `normal_tex` (RG: nx,nz). These are the same uniform names world_view binds.
+    texture: Gd<Texture2Drd>,
+    climate_tex: Gd<Texture2Drd>,
+    biome_tex: Gd<Texture2Drd>,
+    normal_tex: Gd<Texture2Drd>,
+    /// The underlying main-device RD texture RIDs (NOT ref-counted) — freed on
+    /// evict via RenderGpu::free_textures (Stage 3) or VRAM leaks.
+    render_rids: RenderTextures,
+    /// CPU heights for COLLISION (M1.7) — still read back from the LOCAL device
+    /// (`gpu`). Byte-identical to what M1 produced. (Stage 2 trims this to near
+    /// level-0 pages only.)
     heights: PackedFloat32Array,
-    // M2.1 climate packed into ONE RG32F texture per page (R = temperature,
-    // G = moisture) — one texture/upload/sampler instead of two. Same single
-    // production as height; the height R32F texture/array is unchanged (M1.7).
-    climate_tex: Gd<ImageTexture>,
-    // M2.2 biome id (float-encoded int) as an R32F texture + the CPU array it
-    // was packed from (same production; the array is the gate's source of truth).
-    biome_tex: Gd<ImageTexture>,
+    /// CPU biome ids (the gate's source of truth) — from the local readback.
     biome: PackedFloat32Array,
-    // M2.4 analytic surface-normal gradient (normal_x, normal_z) packed into ONE
-    // RG32F texture per page, same single production as height. Lets the display
-    // shader read a seam-free normal instead of finite-differencing the height
-    // texture (which clamped at page edges and created the per-edge shading seam).
-    normal_tex: Gd<ImageTexture>,
 }
 
 /// How a page request is budgeted this frame (M1.9.3b).
@@ -143,6 +146,10 @@ impl Default for FieldConfig {
 pub struct PagePool {
     base: Base<RefCounted>,
     gpu: Option<FieldGpu>,
+    /// M2.6: GPU-resident RENDER producer on the MAIN device (Texture2DRD outputs,
+    /// no readback). Render textures come from here; `gpu` (local device) still
+    /// produces the CPU `heights` for collision (M1.7).
+    render: Option<RenderGpu>,
     cfg: FieldConfig,
 
     cache: HashMap<PageKey, ResidentPage>,
@@ -180,6 +187,7 @@ impl IRefCounted for PagePool {
         Self {
             base,
             gpu: None,
+            render: None,
             cfg: FieldConfig::default(),
             cache: HashMap::new(),
             pinned: std::collections::HashSet::new(),
@@ -204,11 +212,16 @@ impl PagePool {
     #[func]
     fn initialize(&mut self, shader_glsl_path: GString) -> bool {
         self.gpu = FieldGpu::new(&shader_glsl_path);
+        let flat: Vec<f32> = BIOME_CENTROIDS.iter().flatten().copied().collect();
+        let biome_arr = PackedFloat32Array::from(flat.as_slice());
         if let Some(gpu) = self.gpu.as_mut() {
-            let flat: Vec<f32> = BIOME_CENTROIDS.iter().flatten().copied().collect();
-            gpu.set_biome_centroids(&PackedFloat32Array::from(flat.as_slice()));
+            gpu.set_biome_centroids(&biome_arr);
         }
-        self.gpu.is_some()
+        // M2.6: GPU-resident render producer on the MAIN device, same field GLSL +
+        // biome table. If the main device is unavailable (headless/OpenGL) this is
+        // None and rendering falls back to nothing — the GPU gates require vulkan.
+        self.render = RenderGpu::new(&shader_glsl_path, biome_arr.to_byte_array());
+        self.gpu.is_some() && self.render.is_some()
     }
 
     /// Configure field params (tunable from GDScript / inspector). Climate params
@@ -310,7 +323,7 @@ impl PagePool {
     /// resident or affordable this frame; null when over budget and not cached
     /// (caller falls back to coarse coverage). Use for the expensive FINE level.
     #[func]
-    fn request_page(&mut self, level: i64, gx: i64, gz: i64) -> Option<Gd<ImageTexture>> {
+    fn request_page(&mut self, level: i64, gx: i64, gz: i64) -> Option<Gd<Texture2Drd>> {
         self.request(level, gx, gz, RequestMode::Fine)
     }
 
@@ -319,7 +332,7 @@ impl PagePool {
     /// levels never reveals black (00 §3). The coarsest level is few pages (each
     /// covers huge ground) so unbounded production here doesn't stutter.
     #[func]
-    fn request_page_eager(&mut self, level: i64, gx: i64, gz: i64) -> Option<Gd<ImageTexture>> {
+    fn request_page_eager(&mut self, level: i64, gx: i64, gz: i64) -> Option<Gd<Texture2Drd>> {
         self.request(level, gx, gz, RequestMode::EagerUnbounded)
     }
 
@@ -331,11 +344,11 @@ impl PagePool {
     /// strictly between fine (0) and coarsest. Returns null when over the eager
     /// budget this frame (caller leaves the coarser page showing → never-black).
     #[func]
-    fn request_page_eager_bounded(&mut self, level: i64, gx: i64, gz: i64) -> Option<Gd<ImageTexture>> {
+    fn request_page_eager_bounded(&mut self, level: i64, gx: i64, gz: i64) -> Option<Gd<Texture2Drd>> {
         self.request(level, gx, gz, RequestMode::EagerBounded)
     }
 
-    fn request(&mut self, level: i64, gx: i64, gz: i64, mode: RequestMode) -> Option<Gd<ImageTexture>> {
+    fn request(&mut self, level: i64, gx: i64, gz: i64, mode: RequestMode) -> Option<Gd<Texture2Drd>> {
         let key = PageKey { level: level as i32, gx: gx as i32, gz: gz as i32 };
         if let Some(page) = self.cache.get(&key) {
             self.cache_hits += 1;
@@ -394,7 +407,7 @@ impl PagePool {
     /// of truth). Null if the page isn't resident. The view binds it for the
     /// climate view-mode tint; the field/collision paths don't depend on it.
     #[func]
-    fn get_page_climate_tex(&self, level: i64, gx: i64, gz: i64) -> Option<Gd<ImageTexture>> {
+    fn get_page_climate_tex(&self, level: i64, gx: i64, gz: i64) -> Option<Gd<Texture2Drd>> {
         let key = PageKey { level: level as i32, gx: gx as i32, gz: gz as i32 };
         self.cache.get(&key).map(|p| p.climate_tex.clone())
     }
@@ -403,7 +416,7 @@ impl PagePool {
     /// the SAME production behind that page's height/climate textures. Null if not
     /// resident. The view binds it for the biome view-mode debug color.
     #[func]
-    fn get_page_biome_tex(&self, level: i64, gx: i64, gz: i64) -> Option<Gd<ImageTexture>> {
+    fn get_page_biome_tex(&self, level: i64, gx: i64, gz: i64) -> Option<Gd<Texture2Drd>> {
         let key = PageKey { level: level as i32, gx: gx as i32, gz: gz as i32 };
         self.cache.get(&key).map(|p| p.biome_tex.clone())
     }
@@ -413,7 +426,7 @@ impl PagePool {
     /// if not resident. The view binds it so the display shader uses seam-free
     /// per-cell normals instead of finite-differencing the height texture.
     #[func]
-    fn get_page_normal_tex(&self, level: i64, gx: i64, gz: i64) -> Option<Gd<ImageTexture>> {
+    fn get_page_normal_tex(&self, level: i64, gx: i64, gz: i64) -> Option<Gd<Texture2Drd>> {
         let key = PageKey { level: level as i32, gx: gx as i32, gz: gz as i32 };
         self.cache.get(&key).map(|p| p.normal_tex.clone())
     }
@@ -459,23 +472,28 @@ impl PagePool {
             biome_w_alt: self.cfg.biome_w_alt,
             biome_alt_freq: self.cfg.biome_alt_freq,
         };
-        // Profiled region: GPU dispatch + blocking readback (rd.sync) — the
-        // suspected fast-motion spike source. Accumulated per frame (M1.9.1).
-        let FieldPage { heights, temp, moisture, biome, normal_x, normal_z } =
-            self.gpu.as_mut()?.dispatch_page(params)?;
+        // M2.6 RENDER path: produce the 4 render textures GPU-resident on the MAIN
+        // device (no readback/re-upload). The display shader samples these directly.
+        let render_rids = self.render.as_mut()?.produce(params)?;
+        let mut texture = Texture2Drd::new_gd();
+        texture.set_texture_rd_rid(render_rids.height);
+        let mut climate_tex = Texture2Drd::new_gd();
+        climate_tex.set_texture_rd_rid(render_rids.climate);
+        let mut biome_tex = Texture2Drd::new_gd();
+        biome_tex.set_texture_rd_rid(render_rids.biome);
+        let mut normal_tex = Texture2Drd::new_gd();
+        normal_tex.set_texture_rd_rid(render_rids.normal);
+
+        // COLLISION path (M1.7, unchanged this stage): the LOCAL device readback
+        // still produces the CPU `heights` (and `biome` for the gate). This is the
+        // blocking round-trip; Stage 2 will skip it for pages that never collide.
+        // Profiled region (M1.9.1): the blocking dispatch+readback.
+        let FieldPage { heights, biome, .. } = self.gpu.as_mut()?.dispatch_page(params)?;
         self.produce_us_this_frame += t0.elapsed().as_micros() as i64;
-        let res = self.cfg.page_res as i32;
-        // Height texture: R32F, byte-identical to `heights` (M1.7 contract).
-        let texture = Self::r32f_texture(res, &heights)?;
-        // Climate: temp + moisture packed into ONE RG32F texture (R=temp,
-        // G=moisture) — one upload/sampler for both channels (one production).
-        let climate_tex = Self::rg32f_texture(res, &temp, &moisture)?;
-        // Biome id: R32F (float-encoded int), same single production.
-        let biome_tex = Self::r32f_texture(res, &biome)?;
-        // M2.4 normal gradient: (normal_x, normal_z) packed into ONE RG32F texture,
-        // same single production — the display shader reads a seam-free normal.
-        let normal_tex = Self::rg32f_texture(res, &normal_x, &normal_z)?;
-        Some(ResidentPage { texture, heights, climate_tex, biome_tex, biome, normal_tex })
+
+        Some(ResidentPage {
+            texture, climate_tex, biome_tex, normal_tex, render_rids, heights, biome,
+        })
     }
 
     /// Pack a per-cell float array into an R32F ImageTexture (the format the M1
