@@ -606,7 +606,13 @@ void main() {
         // M2.4c MACRO_CACHE: LOD-stable smoothed macro + gentle per-cell detail.
         MacroCell m = macro_sample(world_xz);
         if (m.present) {
-            h = m.height + macro_detail(world_xz, uint(seed));
+            // M2.4d: gate per-cell detail by STRUCTURE so it isn't painted
+            // uniformly (valleys, slopes, peaks alike read as "busy/melted").
+            // m.range in [0,1] = highland mass; m.channel in [0,1] = drainage/valley.
+            // detail_gate: high on ranges, suppressed on channel/valley floors.
+            // The 0.15/0.85/0.65 constants are tunable LOOK levers.
+            float detail_gate = clamp(0.15 + 0.85 * m.range - 0.65 * m.channel, 0.0, 1.0);
+            h = m.height + macro_detail(world_xz, uint(seed)) * detail_gate;
         } else {
             // never-black: fall back to the REFERENCE height where no macro is bound.
             h = composition_height(world_xz, uint(seed));
