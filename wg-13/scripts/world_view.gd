@@ -51,6 +51,11 @@ var _ring_shader: Resource
 # path real biome textures will use in M3).
 var _view_mode := 0
 const VIEW_MODE_NAMES := ["normal", "temperature", "moisture", "biome"]
+# M2.4b — live terrain mode: 0 = REFERENCE (M2.3 composition), 1 = SCAFFOLD_CANDIDATE
+# (per-cell oracle). Cycled by B; pushed to the pool, then all resident pages are
+# flushed so the whole visible world refreshes to the new mode immediately.
+var _terrain_mode := 0
+const TERRAIN_MODE_NAMES := ["REFERENCE (M2.3)", "SCAFFOLD_CANDIDATE (oracle)"]
 var _instances := {}                       # "L:gx:gz" -> MeshInstance3D
 var _inst_meta := {}                        # "L:gx:gz" -> Vector3i(level,gx,gz) — parsed once, so
                                             # the per-frame loops never re-split the string key (M1.9.3c)
@@ -88,6 +93,7 @@ func _ready() -> void:
 		push_error("M1.5: PagePool.initialize failed (need --rendering-driver vulkan)."); return
 	_pool.configure(page_res, spacing, seed_val, octaves, base_freq, amplitude, max_new_per_frame)
 	_pool.set_max_eager_per_frame(max_eager_per_frame)
+	_pool.set_scaffold_seed(seed_val)   # M2.4b: oracle uses the same world seed by default
 	_ring_shader = load(RING)
 	_spawn_camera()
 	_track = _cam            # default: stream/collide around the fly camera (WALK overrides)
@@ -179,6 +185,28 @@ func _unhandled_input(event: InputEvent) -> void:
 		_view_mode = (_view_mode + 1) % VIEW_MODE_NAMES.size()
 		_apply_view_mode()
 		print("view mode: %s" % VIEW_MODE_NAMES[_view_mode])
+	# M2.4b — B cycles the TERRAIN mode (REFERENCE M2.3 <-> SCAFFOLD_CANDIDATE oracle)
+	# and flushes resident pages so the whole world re-produces in the new mode.
+	elif event is InputEventKey and event.pressed and not event.echo \
+			and event.keycode == KEY_B:
+		_terrain_mode = (_terrain_mode + 1) % TERRAIN_MODE_NAMES.size()
+		_pool.set_terrain_mode(_terrain_mode)
+		_force_regen_all_pages()
+		print("terrain mode: %s" % TERRAIN_MODE_NAMES[_terrain_mode])
+
+# M2.4b — flush every resident page so the next _process re-requests them in the
+# current terrain_mode: recycle all mesh instances, drop their meta, free all
+# collision bodies, and clear the pool cache. Never-black still holds because the
+# next frame re-requests coarsest-first (eager) before fine, same as startup.
+func _force_regen_all_pages() -> void:
+	for key in _instances.keys():
+		_recycle_instance(_instances[key])
+	_instances.clear()
+	_inst_meta.clear()
+	for key in _collisions.keys():
+		_collisions[key].queue_free()
+	_collisions.clear()
+	_pool.clear_cache()
 
 # Push the current view mode to all displayed page materials AND the recycled
 # free-list (so a recycled instance starts in the right mode before its per-page

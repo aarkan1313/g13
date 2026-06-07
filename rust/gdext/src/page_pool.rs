@@ -262,6 +262,15 @@ impl PagePool {
         self.cfg.terrain_mode as i64
     }
 
+    /// M2.4b: drop ALL cached pages so subsequent requests re-produce from the
+    /// field (used when terrain_mode flips, so the whole visible world refreshes
+    /// to the new mode immediately rather than only newly streamed pages). The
+    /// view recycles its instances + frees collision bodies alongside this.
+    #[func]
+    fn clear_cache(&mut self) {
+        self.cache.clear();
+    }
+
     /// M1.9.3b: per-frame cap for MID-coarse eager pages (the coarsest level
     /// stays unbounded). <= 0 disables spreading (unbounded mid-coarse too).
     #[func]
