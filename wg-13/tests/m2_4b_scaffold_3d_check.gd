@@ -24,7 +24,7 @@ func _run() -> void:
 
 	var root: Node = packed.instantiate()
 	get_root().add_child(root)
-	for _i in range(4):
+	for _i in range(12):
 		await process_frame
 
 	if not root.has_method("panel_count") or not root.has_method("total_vertices"):
@@ -33,6 +33,8 @@ func _run() -> void:
 		_fail("expected 4 style panels, got %d" % root.panel_count())
 	elif root.total_vertices() < 100000:
 		_fail("mesh vertex count too small: %d" % root.total_vertices())
+	elif not _viewport_has_visible_content():
+		_fail("rendered viewport is effectively blank")
 	else:
 		print("PASS: scaffold 3D scene built %d panels / %d vertices" % [
 			root.panel_count(),
@@ -45,3 +47,22 @@ func _run() -> void:
 func _finish() -> void:
 	print("M2.4b scaffold 3D RESULT: ", "FAIL" if _failed else "PASS")
 	quit(1 if _failed else 0)
+
+func _viewport_has_visible_content() -> bool:
+	var image: Image = get_root().get_texture().get_image()
+	if image == null or image.get_width() <= 0 or image.get_height() <= 0:
+		return false
+
+	var reference: Color = image.get_pixel(0, 0)
+	var varied_samples := 0
+	var samples := 0
+	var step_y: int = maxi(1, int(float(image.get_height()) / 12.0))
+	var step_x: int = maxi(1, int(float(image.get_width()) / 18.0))
+	for y in range(0, image.get_height(), step_y):
+		for x in range(0, image.get_width(), step_x):
+			var c: Color = image.get_pixel(x, y)
+			var delta: float = absf(c.r - reference.r) + absf(c.g - reference.g) + absf(c.b - reference.b)
+			if delta > 0.08:
+				varied_samples += 1
+			samples += 1
+	return samples > 0 and varied_samples >= 8

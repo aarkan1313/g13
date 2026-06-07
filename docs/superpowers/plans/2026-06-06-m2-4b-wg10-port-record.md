@@ -145,7 +145,9 @@ runtime page pool:
 The scene reads `res://_captures/m2_4b_scaffold_3d.json`, builds four
 `ArrayMesh` terrain panels, and spawns the standard `fly_camera.gd` free-fly
 camera. It uses vertex colors derived from rock/snow/valley/channel facts, so
-the 3D pass exercises more than grayscale height.
+the 3D pass exercises more than grayscale height. The review camera has an
+explicit long far clip for the multi-kilometer panels, and the material is
+double-sided so the static review is not dependent on triangle winding.
 
 3D smoke command:
 
@@ -153,7 +155,8 @@ the 3D pass exercises more than grayscale height.
 & "C:\Godot\v4.6.2\Godot_v4.6.2-stable_mono_win64\Godot_v4.6.2-stable_mono_win64_console.exe" --rendering-driver vulkan --path "D:\world gen 13\wg-13" --script res://tests/m2_4b_scaffold_3d_check.gd
 ```
 
-Latest 3D smoke result: PASS, `4` panels / `148996` vertices.
+Latest 3D smoke result: PASS, `4` panels / `148996` vertices, plus rendered
+viewport variance check so a sky-only frame fails.
 
 Launch command:
 

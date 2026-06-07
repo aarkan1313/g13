@@ -168,6 +168,7 @@ func _color_at(range_mask: float, channel: float, rock: float, snow: float, vall
 func _terrain_material() -> StandardMaterial3D:
 	var mat: StandardMaterial3D = StandardMaterial3D.new()
 	mat.vertex_color_use_as_albedo = true
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 	mat.roughness = 0.95
 	mat.albedo_color = Color.WHITE
 	return mat
@@ -177,6 +178,8 @@ func _spawn_camera() -> void:
 	cam.name = "FlyCamera"
 	cam.set_script(FLY_CAMERA)
 	cam.fov = 68.0
+	cam.near = 5.0
+	cam.far = maxf(60000.0, display_span_m * 8.0)
 	cam.look_at_from_position(
 		Vector3(0.0, 4300.0, display_span_m * 1.25),
 		Vector3(0.0, 1250.0, 0.0),

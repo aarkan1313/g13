@@ -114,8 +114,9 @@ wg-13/                          (the Godot project, res://)
     scaffold_3d_review.gd       M2.4b static 3D review viewer. Loads the generated
                                 scaffold JSON, builds four ArrayMesh terrain panels,
                                 colors from rock/snow/valley/channel masks, and
-                                uses fly_camera.gd for inspection. Review-only:
-                                it does not change the live page pool.
+                                uses fly_camera.gd with explicit far clip for
+                                inspection. Review-only: it does not change the
+                                live page pool.
   scenes/
     demo.tscn                   The launch target: WorldRoot + View + Player +
                                 PerfHUD + AutoTour. F5 = fly.
@@ -144,7 +145,8 @@ wg-13/                          (the Godot project, res://)
     m2_2_biome_check.gd         (M2.2) biome determinism + valid ids [0,N) + contiguity (low adjacent-differ, no confetti) + global variety + seed sensitivity
     m2_3_composition_check.gd   (M2.3) composition-machine guardrail: determinism + structure-not-uniform relief spread + no-cliff max step
     m2_4b_scaffold_3d_check.gd  (M2.4b) static 3D review scene builds four panels
-                                from the exported JSON and produces terrain vertices
+                                from the exported JSON, produces terrain vertices,
+                                and renders a nonblank viewport
     hud_smoke_check.gd          (smoke) perf HUD loads, finds the view, all sections show sane values matching the pool, toggles work
     tour_smoke_check.gd         (smoke) auto-tour starts OFF, drives the real fly-cam, advances steps, pause restores control, resume works
   captures/                     SCREENSHOT TOOLS (evidence, not gates).
@@ -211,5 +213,5 @@ cargo run --manifest-path "D:\world gen 13\rust\Cargo.toml" -p structural_scaffo
 | m2_1_climate_check.gd | M2.1 | climate determinism (same page+seed → bit-identical); range [0,1]; low-freq/smooth (anti-confetti); latitude gradient real |
 | m2_2_biome_check.gd | M2.2 | biome determinism; valid integer ids [0,N); contiguity (low adjacent-differ); global variety; seed sensitivity |
 | m2_3_composition_check.gd | M2.3 | composition-machine determinism; relief spread proves lowlands+ranges are not uniform; no-cliff max step guardrail |
-| m2_4b_scaffold_3d_check.gd | M2.4b prototype | exported scaffold JSON loads; 3D review scene builds 4 terrain panels and a nonzero vertex count |
+| m2_4b_scaffold_3d_check.gd | M2.4b prototype | exported scaffold JSON loads; 3D review scene builds 4 terrain panels, a nonzero vertex count, and a nonblank rendered viewport |
 | cargo test -p structural_scaffold | M2.4b prototype | RegionFact determinism; adjacent-region border agreement; nontrivial drainage signal; bounded finite fact values |
