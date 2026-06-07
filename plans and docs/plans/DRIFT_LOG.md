@@ -4,6 +4,13 @@ The human reads this FIRST every session. The agent appends here whenever it blo
 
 ---
 
+## [2026-06-06] - M2.4a DEM-character scalar tuning FAILED visual review twice; backed out
+TYPE: VISUAL FAIL + SAFE REVERT + REDESIGN REQUIRED
+HUMAN VERDICT: after the first M2.4 DEM-character pass, the live world showed corduroy grooves / harsh parallel walls at far-world review positions. I softened the parameter ranges and added those positions to the numeric gate, but the second live review still looked bad. The user's verdict: "Still looks bad, probably need to step back and try a different approach."
+WHAT FAILED: the concept, not just the numbers. M2.4a mapped DEM fingerprint scalars (slope/ridge/fine spectrum) directly into the composition machine's ridge scale, ridge gain, relief, carve, and detail amplitude. Even narrowed ranges kept producing an obvious repeated ridge primitive in steep transitions. The numeric gate measured variation and max step, but it did not detect the visual corduroy artifact.
+ACTION: preserved the failed head with `backup/m2-4-failed-2026-06-06` branch/tag, then reverted commits `36e6d6d` and `37692b1` on main. Main is back to the M2.3 visual-pass terrain code while the failed attempt remains recoverable.
+NEXT DIRECTION: M2.4b must be a different architecture. Do not directly modulate high-frequency ridge/detail knobs from DEM scalar fingerprints per sample. Keep the M2.3 composition machine as the baseline; use DEMs offline to define target envelopes and a small set of region-level terrain character families, then blend/choose those families at low frequency. Add the failed screenshot coordinates as mandatory visual/capture hotspots. Numeric gates are guardrails only; human visual pass is required.
+
 ## [2026-06-06] - M2.3 composition machine VISUAL PASS (human) + next is DEM character
 TYPE: PARKED-FOR-VISUAL -> PASS (human)
 HUMAN VERDICT: after relaunching the AABB-fixed build, user flew the live world and confirmed the terrain shape: "terrain looks really good"; "this scene is in a good spot" for an early mountain/plain world. This resolves the M2.3 visual gate.
