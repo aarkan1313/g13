@@ -4,6 +4,14 @@ The human reads this FIRST every session. The agent appends here whenever it blo
 
 ---
 
+## [2026-06-07] - M2.4 (all 4 attempts) ROLLED BACK to the M2.3 baseline -> reframe terrain next
+TYPE: SCOPE RESET (human-directed: "clean up all the trash/bad code, archive it... reframe and refocus")
+WHAT: M2.4a/b/c/d (DEM scalar tuning / per-cell oracle / cached macro GPU bridge / DEM-driven macro) ALL failed visual review. Hard-reset `main` to the M2.3 visual-pass commit `2dd06e5` to clear the failed-experiment code for a clean reframe. Force-pushed; the full 59-commit M2.4 history is preserved on origin under tag `backup-m2-4-all-attempts-2026-06-07`.
+THE LESSON (full writeup: `plans and docs/plans/M2_4_POSTMORTEM.md`): the terrain problem is **MACRO RESOLUTION × LOD × VIEWING SCALE, not character source**. The DEM character was PROVEN to reach the screen (A/B probe: mode-2 vs reference differed 564m on a fine page, 2978m on a coarse page) and STILL looked blocky — because you view from ~10km altitude at coarse-LOD pages where the 256m macro grid IS the visible stair-step artifact regardless of what fills the texels. So every "where does character come from" attempt was the wrong layer.
+VERIFY: M2.3 baseline rebuilt clean (wg13 compiles, no structural_scaffold/macro_cache); gates green (m2_1/m2_2/m2_3/m1_7a/m1_7c PASS; dem_distill workspace tests pass). No M2.4 code in live source. B-key terrain toggle gone (only existed in M2.4 commits). Live world = M2.3 mountains/plains + climate + biomes (V cycles views).
+REUSABLE in git (NOT on main; SHAs in the postmortem): DEM kernel library + tooling (`dem_distill kernels` -> `wg-13/data/dem_kernels.bin` + `macro_cache::kernels`, commits a6ba652/bf8352e), the M2.4c GPU macro bridge, the WG10 window-port.
+NEXT: REFRAME the M2 terrain direction with the lesson in hand (finer macro grid / detail-above-macro / viewing-LOD model / surface-in-per-cell / or M2.3-is-enough -> M3 materials). Brainstorm BEFORE code; real gate = human walk-test. Do NOT re-attempt "wire character to DEM" — that's the trap.
+
 ## [2026-06-06] - M2.3 composition machine VISUAL PASS (human) + next is DEM character
 TYPE: PARKED-FOR-VISUAL -> PASS (human)
 HUMAN VERDICT: after relaunching the AABB-fixed build, user flew the live world and confirmed the terrain shape: "terrain looks really good"; "this scene is in a good spot" for an early mountain/plain world. This resolves the M2.3 visual gate.
