@@ -575,9 +575,15 @@ void main() {
         h = composition_height(world_xz, uint(seed));
     }
 
-    // M2.4c: keep the 12 macro samplers live in the binding layout even though
-    // mode 0/1 don't sample them (Task 4 adds the real read). This NEVER changes
-    // output: the branch is guarded by a mask bit AND multiplied by 0.
+    // M2.4c keep-alive: reference all 12 macro samplers so SPIR-V retains their
+    // binding layout even though mode 0/1 never read them (Task 4 adds the real
+    // read and DELETES this whole block). The branch can never run (the runtime
+    // mask only ever sets the low 4 bits, never 0xFFFFFFFF), so output is
+    // bit-identical. What keeps this SAFE is that macro_present_mask is a
+    // NON-CONSTANT uniform: the compiler can't fold the branch away, so it must
+    // keep the branch (and thus the texture() calls / bindings) live. The
+    // `* 0.0` alone would NOT be a reliable optimizer barrier. Do not strip the
+    // mask guard.
     if (macro_present_mask == 0xFFFFFFFFu) {
         float keep = texture(macro_h_00, vec2(0.5)).r + texture(macro_r_00, vec2(0.5)).r + texture(macro_c_00, vec2(0.5)).r
                    + texture(macro_h_10, vec2(0.5)).r + texture(macro_r_10, vec2(0.5)).r + texture(macro_c_10, vec2(0.5)).r

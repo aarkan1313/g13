@@ -490,6 +490,8 @@ impl PagePool {
         };
         // Profiled region: GPU dispatch + blocking readback (rd.sync) — the
         // suspected fast-motion spike source. Accumulated per frame (M1.9.1).
+        // neighborhood slots (dx,dz) = (0,0),(1,0),(0,1),(1,1) -- must match the
+        // GLSL macro_*_00..11 binding order. Empty for now; wired in Task 5.
         let FieldPage { heights, temp, moisture, biome } = self.gpu.as_mut()?.dispatch_page(params, [(0, 0); 4])?;
         self.produce_us_this_frame += t0.elapsed().as_micros() as i64;
         let res = self.cfg.page_res as i32;
