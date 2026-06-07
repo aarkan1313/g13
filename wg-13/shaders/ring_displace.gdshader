@@ -30,17 +30,6 @@ uniform float height_scale = 1.0;
 // Spacing between cells in world units (for finite-difference normals).
 uniform float cell_spacing = 4.0;
 
-// --- M2.4 clipmap geomorph (display-only; smooths fine<->coarse ring boundaries) ---
-// Page texel resolution (so we can snap a vertex UV to half resolution for the
-// coarse tap). Matches PagePool page_res (128).
-uniform int page_res = 128;
-// Camera-distance morph band (world units). Beyond morph_end the page shows its
-// coarse (half-res) surface; before morph_start it shows full detail; between, it
-// blends. Set per-page from the level's ring geometry by world_view.gd. When
-// morph_end <= morph_start the morph is OFF (factor stays 0) -> identical to pre-M2.4.
-uniform float morph_start = 0.0;
-uniform float morph_end = 0.0;
-
 varying float v_height;
 
 // Sample height at a UV (clamped to [0,1]).
@@ -48,47 +37,19 @@ float sample_h(vec2 uv) {
 	return texture(height_tex, clamp(uv, vec2(0.0), vec2(1.0))).r * height_scale;
 }
 
-// Sample height at the UV SNAPPED to half resolution (one coarser clipmap step):
-// the height this vertex would have on a page of half the texel density. Snap to
-// texel centers of the half-res grid so the tap is stable. Clamped like sample_h.
-float sample_h_coarse(vec2 uv) {
-	float half_res = max(float(page_res) * 0.5, 1.0);
-	vec2 snapped = (floor(uv * half_res) + 0.5) / half_res;
-	return sample_h(snapped);
-}
-
-// Camera-distance morph factor in [0,1]: 0 = full detail, 1 = fully coarse.
-float morph_factor(float cam_dist) {
-	if (morph_end <= morph_start) return 0.0;   // morph OFF
-	return clamp((cam_dist - morph_start) / (morph_end - morph_start), 0.0, 1.0);
-}
-
 void vertex() {
 	// PlaneMesh lies in XZ with VERTEX.xz in [-size/2, size/2]. Map to UV [0,1].
 	vec2 uv = (VERTEX.xz / page_world_size) + vec2(0.5);
 	UV = uv;
-
-	// M2.4 geomorph: blend this vertex (and its normal taps) between full detail
-	// and a half-res coarse tap, by camera distance. World-space vertex position
-	// via MODEL_MATRIX (PlaneMesh local -> world). morph_factor() is 0 (no change)
-	// unless world_view.gd supplied a real band for this page's level.
-	vec3 world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
-	float cam_dist = distance(world_pos.xz, CAMERA_POSITION_WORLD.xz);
-	float a = morph_factor(cam_dist);
-
-	float h_full = sample_h(uv);
-	float h = mix(h_full, sample_h_coarse(uv), a);
+	float h = sample_h(uv);
 	v_height = h;
 	VERTEX.y = h;
 
-	// Finite-difference normal — blend each tap the SAME way as the height so the
-	// shaded surface matches the morphed geometry (no shading seam reappearing).
+	// Finite-difference normal from neighboring texels.
 	float du = cell_spacing / page_world_size;
-	float hxp = mix(sample_h(uv + vec2(du, 0.0)), sample_h_coarse(uv + vec2(du, 0.0)), a);
-	float hxm = mix(sample_h(uv - vec2(du, 0.0)), sample_h_coarse(uv - vec2(du, 0.0)), a);
-	float hzp = mix(sample_h(uv + vec2(0.0, du)), sample_h_coarse(uv + vec2(0.0, du)), a);
-	float hzm = mix(sample_h(uv - vec2(0.0, du)), sample_h_coarse(uv - vec2(0.0, du)), a);
-	vec3 n = normalize(vec3(-(hxp - hxm), 2.0 * cell_spacing, -(hzp - hzm)));
+	float hx = sample_h(uv + vec2(du, 0.0)) - sample_h(uv - vec2(du, 0.0));
+	float hz = sample_h(uv + vec2(0.0, du)) - sample_h(uv - vec2(0.0, du));
+	vec3 n = normalize(vec3(-hx, 2.0 * cell_spacing, -hz));
 	NORMAL = n;
 }
 
