@@ -180,6 +180,53 @@ impl FieldCompute {
         gpu.dispatch_page(p, [(0, 0); 4]).map(|fp| fp.heights).unwrap_or_default()
     }
 
+    /// M2.4c step-2 Task 6: produce one page's HEIGHT channel in MACRO_CACHE mode
+    /// (terrain_mode = 2), page_res*page_res floats row-major. Same params as
+    /// produce_page, but this hook also BAKES + ENSURES the page's 2x2 macro
+    /// region neighborhood so the gate exercises the REAL macro-sampling path
+    /// (hardware-bilinear over the resident R32F textures), not the placeholder.
+    /// The macro bake config matches PagePool's FieldConfig defaults so the gate
+    /// proves the live macro params; it re-bakes every call (no cache here — fine
+    /// for a bounded test hook, and ensure_region is idempotent so repeated
+    /// ensures are cheap). Used by m2_4c_macro_live_check.
+    #[func]
+    fn produce_macro_page(
+        &mut self,
+        origin_x: f32, origin_z: f32, spacing: f32, seed: f32,
+        page_res: i64, octaves: i64, base_freq: f32, amplitude: f32,
+    ) -> PackedFloat32Array {
+        let Some(gpu) = self.gpu.as_mut() else {
+            godot_error!("FieldCompute: not initialized.");
+            return PackedFloat32Array::new();
+        };
+        // Macro bake config (matches PagePool's FieldConfig defaults so the gate
+        // exercises the live macro params; tunable there, fixed here for the gate).
+        let mcfg = crate::macro_cache::MacroBakeConfig { bake_spacing_m: 256.0, super_region_m: 30000.0 };
+        let core_span = mcfg.core_span_m();
+        // r0 = region containing the page origin (min corner). The 2x2 block r0..r0+1.
+        let r0x = (origin_x / core_span).floor() as i32;
+        let r0z = (origin_z / core_span).floor() as i32;
+        // Bake + ensure the 4 regions; build the present-mask.
+        let mut mask = 0u32;
+        for dz in 0..2i32 {
+            for dx in 0..2i32 {
+                let (rx, rz) = (r0x + dx, r0z + dz);
+                let rm = crate::macro_cache::MacroBake::bake_region(seed as u64, rx, rz, mcfg);
+                gpu.ensure_region(&rm);
+                mask |= 1u32 << (dz * 2 + dx) as u32;
+            }
+        }
+        let mut p = Self::params(origin_x, origin_z, spacing, seed, page_res, octaves, base_freq, amplitude);
+        p.terrain_mode = 2;
+        p.macro_origin_x = r0x as f32 * core_span;
+        p.macro_origin_z = r0z as f32 * core_span;
+        p.macro_core_span = core_span;
+        p.macro_present_mask = mask;
+        // Slot order (0,0),(1,0),(0,1),(1,1) MUST match dz*2+dx and the GLSL binding order.
+        let neighborhood = [(r0x, r0z), (r0x + 1, r0z), (r0x, r0z + 1), (r0x + 1, r0z + 1)];
+        gpu.dispatch_page(p, neighborhood).map(|fp| fp.heights).unwrap_or_default()
+    }
+
     /// M2.4c step-2 SPIKE gate: prove the R32F-texture + linear-sampler path on
     /// FieldGpu's local RenderingDevice end-to-end. Delegates to
     /// FieldGpu::macro_roundtrip_probe (uploads a 2x2 R32F texture [10,20,30,40],
