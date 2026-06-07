@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use structural_scaffold::{
     channel_connectivity, generate_fact_map_style, generate_region, max_east_west_border_delta,
-    max_south_north_border_delta, RegionConfig, StyleId,
+    max_south_north_border_delta, oracle_fact_map, RegionConfig, StyleId,
 };
 
 fn main() {
@@ -29,7 +29,7 @@ fn run() -> Result<(), String> {
 
 fn print_usage() {
     println!(
-        "usage:\n  cargo run -p structural_scaffold -- review [--seed N] [--radius N] [--tile-px N] [--out PATH] [--report PATH]\n  cargo run -p structural_scaffold -- export-godot [--seed N] [--resolution N] [--span-m M] [--out PATH]"
+        "usage:\n  cargo run -p structural_scaffold -- review [--seed N] [--radius N] [--tile-px N] [--source window|oracle] [--out PATH] [--report PATH]\n  cargo run -p structural_scaffold -- export-godot [--seed N] [--resolution N] [--span-m M] [--source window|oracle] [--out PATH]"
     );
 }
 
@@ -54,8 +54,9 @@ fn run_review(args: &[String]) -> Result<(), String> {
     if tile_px < 32 {
         return Err("--tile-px must be at least 32".to_string());
     }
+    let source = parse_source(args)?;
 
-    let review = render_review(seed, radius, tile_px)?;
+    let review = render_review(seed, radius, tile_px, source)?;
     write_png_rgb(&out, review.width, review.height, &review.rgb)?;
 
     let report_text = build_report(seed, radius, tile_px, &out);
@@ -82,6 +83,7 @@ fn run_export_godot(args: &[String]) -> Result<(), String> {
     if !span_m.is_finite() || span_m <= 0.0 {
         return Err("--span-m must be finite and positive".to_string());
     }
+    let source = parse_source(args)?;
 
     let styles = [
         StyleId::AlpineBranching,
@@ -91,7 +93,7 @@ fn run_export_godot(args: &[String]) -> Result<(), String> {
     ];
     let maps = styles
         .iter()
-        .map(|&style| generate_fact_map_style(seed, resolution, 0.0, 0.0, span_m, style))
+        .map(|&style| build_fact_map(source, seed, resolution, 0.0, 0.0, span_m, style))
         .collect::<Vec<_>>();
 
     let mut json = String::new();
@@ -185,13 +187,49 @@ fn arg_value<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
         .map(|pair| pair[1].as_str())
 }
 
+#[derive(Clone, Copy, PartialEq)]
+enum FactSource {
+    Window,
+    Oracle,
+}
+
+fn parse_source(args: &[String]) -> Result<FactSource, String> {
+    match arg_value(args, "--source") {
+        None | Some("window") => Ok(FactSource::Window),
+        Some("oracle") => Ok(FactSource::Oracle),
+        Some(other) => Err(format!("--source expects 'window' or 'oracle', got '{other}'")),
+    }
+}
+
+fn build_fact_map(
+    source: FactSource,
+    seed: u64,
+    resolution: usize,
+    origin_x: f32,
+    origin_z: f32,
+    span_m: f32,
+    style: StyleId,
+) -> Vec<structural_scaffold::FactCell> {
+    match source {
+        FactSource::Window => {
+            generate_fact_map_style(seed, resolution, origin_x, origin_z, span_m, style)
+        }
+        FactSource::Oracle => oracle_fact_map(seed, resolution, origin_x, origin_z, span_m),
+    }
+}
+
 struct ReviewImage {
     width: usize,
     height: usize,
     rgb: Vec<u8>,
 }
 
-fn render_review(seed: u64, radius: i32, tile_px: usize) -> Result<ReviewImage, String> {
+fn render_review(
+    seed: u64,
+    radius: i32,
+    tile_px: usize,
+    source: FactSource,
+) -> Result<ReviewImage, String> {
     let grid_regions = (radius * 2 + 1) as usize;
     let map_px = grid_regions * tile_px;
     let panel_count = 4usize;
@@ -210,9 +248,7 @@ fn render_review(seed: u64, radius: i32, tile_px: usize) -> Result<ReviewImage, 
     ];
     let style_maps = styles
         .iter()
-        .map(|&style| {
-            generate_fact_map_style(seed, map_px, world_min, world_min, world_span, style)
-        })
+        .map(|&style| build_fact_map(source, seed, map_px, world_min, world_min, world_span, style))
         .collect::<Vec<_>>();
 
     for panel in 0..panel_count {
