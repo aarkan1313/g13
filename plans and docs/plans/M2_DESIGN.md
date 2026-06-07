@@ -14,7 +14,7 @@ The trick to "makes sense" (and the specific fix for why past attempts looked li
 
 The *combination* of those two at any spot picks the biome (cold+wet → tundra, hot+dry → desert, temperate+wet → forest, …). This climate→biome lookup is a real concept: a **Whittaker diagram**. Because the climate maps vary *slowly*, biomes come out **large and contiguous**, blending into each other — exactly like real geography, never per-pixel confetti.
 
-Then each biome **shapes the terrain differently** (mountains are rugged and tall, plains are flat), and borders **blend** so there are no hard square edges.
+Then the field produces **terrain shape** and **biome skin** as separate axes. The shared composition machine makes plains/hills/ranges; the biome classifier supplies flat debug color now and material/ecology later. Per-biome shape modulation and border/material blending are later, narrower passes after the general terrain reads well.
 
 ## The decisions made (so next session just builds)
 
@@ -31,18 +31,18 @@ Then each biome **shapes the terrain differently** (mountains are rugged and tal
    - A key (proposed **V**) cycles view modes: normal / temperature / moisture (and later: biome). In temperature mode the ground tints cold→hot; moisture mode tints dry→wet.
    - *Why:* you see the climate ON the terrain you're flying, and it's the SAME render path M2.2's biome-color will use (not throwaway).
 
-4. **Biomes are DATA, not code** (00 §6, milestone §1). A biome = a config row (id, climate band, height-shaping params, debug color). Adding a biome = adding a row, never a new code branch. (M2.2+ concern; noted so it's not violated earlier.)
+4. **Biomes are DATA, not code** (00 §6, milestone §1). A biome = a config row (id, climate band/centroid, debug color, later material/ecology/style fields). Adding a biome = adding a row, never a new code branch. In the current M2.4b path, biome is a skin/classifier over shared terrain shape, not a hard terrain recipe branch.
 
-5. **DEMs inform via OFFLINE statistics only** (milestone §3). M2.5/2.6 extract slope/roughness *numbers* from real-world elevation data offline and feed them into biome params. The runtime NEVER loads DEM files — only the small distilled params. (Later steps; flagged so it's not pulled forward wrong.)
+5. **DEMs inform offline; runtime stays procedural** (milestone §3). M2.4a proved slope/roughness scalar tuning is not enough by itself. M2.4b now adapts the WG10 mountain-synthesis lesson into deterministic procedural region facts (ranges, ridges, channels, passes, style/material hints) generated from seed+region. The runtime NEVER loads DEM files; it consumes small distilled facts/params.
 
 ## The steps (each ends in a gate; see MILESTONE_2 for exact gates)
 
 - **M2.1 ✓ DONE (test gate PASS; visual gate PASS 2026-06-06).** Temperature & moisture fields in the GLSL field, tunable (configure_climate), deterministic; V cycles normal/temp/moisture. Climate packed into one RG32F page texture (R=temp,G=moist). Distinct viz palettes (temp=thermal blue→red; moist=earth brown→blue). Height path bit-identical (M1.7 intact). Human flew it and confirmed both gradients read clearly.
-- **M2.2 ✓ BUILT (test gate PASS; visual gate PARKED 2026-06-06).** Nearest-centroid Whittaker over temp/moisture/MACRO-altitude (10-biome data roster, field-side, page carries biome id). GATE (test): m2_2_biome_check PASS. GATE (visual): large contiguous regions — PARKED (capture _captures/climate_biome.png; V to biome mode). Two build-time fixes: macro-altitude (continental low-freq, not detailed height) killed confetti-at-LOD; M2.1 temp rebalance (warm floor + normalized lapse) made all 10 biomes appear. M2.4 will blend the hard borders. DECISIONS LOCKED below.
-- **M2.3** — per-biome height shaping wired into the field. GATE: mountains mountainous, plains flat — visibly different terrain per biome.
-- **M2.4** — border blending. GATE: no hard square borders; natural transitions.
-- **M2.5** — offline DEM-stats tool → slope/roughness params file. GATE (test): tool runs, outputs a small params file.
-- **M2.6** — mountain/hill biomes use DEM-derived params. GATE (visual): DEM-informed reads more believable than pure noise.
+- **M2.2 ✓ BUILT (test gate PASS; visual gate PARKED 2026-06-06).** Nearest-centroid Whittaker over temp/moisture/MACRO-altitude (10-biome data roster, field-side, page carries biome id). GATE (test): m2_2_biome_check PASS. GATE (visual): large contiguous regions — PARKED (capture _captures/climate_biome.png; V to biome mode). Two build-time fixes: macro-altitude (continental low-freq, not detailed height) killed confetti-at-LOD; M2.1 temp rebalance (warm floor + normalized lapse) made all 10 biomes appear. Border/material blending is deferred; M2.4b is now the DEM structural-scaffold pass. DECISIONS LOCKED below.
+- **M2.3 ✓ DONE.** One general composition machine wired into the field. GATE: macro mountains/plains/lowlands visibly differ and the terrain reads good enough to continue.
+- **M2.4** — DEM structural scaffold / procedural mountain-synthesis facts. GATE: deterministic region facts and visual review show organized ranges/ridges/channels/passes instead of local noise or scalar DEM grooves.
+- **M2.5** — general-terrain visual acceptance + polish. GATE: fly/walk review; border/material blending and steep-terrain consequences addressed only where they still matter.
+- **M2.6** — performance pass on the real composed field. GATE: profiled frame budget on target hardware.
 - **Milestone gate** — run the DoD, tag `m2-complete`.
 
 ## What M2.1 concretely touches (the implementing session's starting map)

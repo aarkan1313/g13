@@ -4,7 +4,8 @@
 
 **Goal:** Replace the flat M1 `fbm` height with a **composition machine** — an uplift/ruggedness field that PLACES structure (flat lowlands most places, hills, distinct mountain ranges with valleys between) composed from ridged + smooth relief and valley carving, with **hand-set character constants** — and prove it *looks* like believable varied terrain via low-altitude captures + walking, BEFORE wiring DEM data (that's M2.4).
 
-**Status 2026-06-06:** COMPLETE. Test guardrail PASS and human visual PASS after the AABB cull fix; M2.4 is next for DEM character tuning.
+**Status 2026-06-06:** COMPLETE. Test guardrail PASS and human visual PASS after the AABB cull fix.
+**Follow-up note:** the later M2.4a DEM-character tuning path failed visual review and was backed out. Current next plan is M2.4b structural scaffold: `docs/superpowers/plans/2026-06-06-m2-4b-dem-structural-scaffold.md`.
 
 **Architecture:** One GPU dispatch, one shader (`field_height.glsl`). The machine writes `height`; M2.1 climate + M2.2 biome are unchanged (biome stays a stats-based skin; height never feeds biome — biome uses `macro_altitude`). Height channel stays R32F for collision (M1.7). Structure comes from the **uplift field** (the thing a global octave-sum lacks); character is hand-set this step, DEM-tuned next step. No Rust change (machine is GLSL-internal, reuses existing params).
 

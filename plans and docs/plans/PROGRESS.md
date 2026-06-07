@@ -37,18 +37,21 @@ M1.9.x [x] PERF GATE: worst fast-motion frame 35->~11ms (3.2x), 0/300 over the 1
 
 ## Milestone 2 — Untextured biomes + DEM-informed shape  (plan: M2_DESIGN.md — plain-language + decisions made)
 M2.1 [x] temperature & moisture climate fields. Test gate PASS (m2_1_climate_check: determinism, range [0,1], low-freq/smooth, latitude gradient 0.359/30km — 14/14 gates green, M1 height path bit-identical/additive). VISUAL gate PASS (human, 2026-06-06): flew live, V cycles normal/temp/moisture; after retuning the climate viz to distinct color languages (temp = blue->violet->red thermal; moisture = brown->green->blue earth/water, remapped to the field's real ~[0.12,0.55] range) both read as clear large-scale gradients and are unmistakable from each other. Climate rides height's single GPU dispatch (page = [h,t,m]); height texture/heights array unchanged (collision intact).
-M2.2 [x] Whittaker biome id (nearest-centroid over temp/moisture/MACRO-altitude), N-axis data-driven roster (10 biomes), field-side, page gains biome-id channel. Test gate PASS (m2_2_biome_check: determinism, valid ids [0,10), contiguity 0% adjacent-differ on fine pages, global variety, seed sensitivity — 15/15 gates green). VISUAL gate PASS (human, 2026-06-06): flew live, V->biome; large contiguous regions with sensible geography (tundra/rock ridge, snow peak, forest+grassland lowlands), 240fps/prod 0.00ms. Build-time fixes: macro-altitude (continental low-freq, not detailed height) killed confetti-at-LOD; M2.1 temp rebalance (warm floor + normalized lapse) -> all 10 biomes appear. Lowland green/yellow border-mottling + hard edges = M2.4's job.
+M2.2 [x] Whittaker biome id (nearest-centroid over temp/moisture/MACRO-altitude), N-axis data-driven roster (10 biomes), field-side, page gains biome-id channel. Test gate PASS (m2_2_biome_check: determinism, valid ids [0,10), contiguity 0% adjacent-differ on fine pages, global variety, seed sensitivity — 15/15 gates green). VISUAL gate PASS (human, 2026-06-06): flew live, V->biome; large contiguous regions with sensible geography (tundra/rock ridge, snow peak, forest+grassland lowlands), 240fps/prod 0.00ms. Build-time fixes: macro-altitude (continental low-freq, not detailed height) killed confetti-at-LOD; M2.1 temp rebalance (warm floor + normalized lapse) -> all 10 biomes appear. Lowland green/yellow border-mottling + hard edges are deferred border/material polish, not the M2.4b structural-scaffold bite.
 M2-SHAPE REDESIGNED (2026-06-06): after ~12+ failed terrain-shape attempts across
 M2.3/M2.3b/M2.4 (hand-noise "oatmeal" -> ridged "mesa" -> DEM-spectral "uniform";
 then a per-biome composition-recipe attempt that LOOKED good but got tangled in a
 steep-terrain collision mess), rolled main back to M2.2 (c83da21) and redesigned.
 NEW ARCHITECTURE (spec: docs/superpowers/specs/2026-06-06-m2-terrain-composition-dem-tuned-design.md):
-two INDEPENDENT axes -- SHAPE = ONE DEM-tuned composition machine (an uplift field
-PLACES structure; DEM stats TUNE character via a continuous blend); BIOME = the
-unchanged M2.2 stats classifier as a SKIN (color now, textures later). Structure
-from composition, NOT stats-matching (the proven failure). General terrain first;
-per-biome shape + erosion (M6) deferred. The offline dem_distill tool + fingerprints
-are RESTORED to feed the character field. New sequence below.
+two INDEPENDENT axes -- SHAPE = ONE composition machine (an uplift field PLACES
+macro terrain structure); BIOME = the unchanged M2.2 stats classifier as a SKIN
+(color now, textures later). The original redesign expected DEM stats to TUNE
+character via a continuous blend, but M2.4a proved that scalar character path was
+not enough. M2.4b supersedes it with procedural structural-scaffold facts inspired
+by WG10 mountain synthesis. General terrain first; per-biome shape + erosion (M6)
+deferred. The offline dem_distill tool/fingerprints remain reference inputs, but
+the next runtime contract is region facts, not per-cell DEM scalar knobs. New
+sequence below.
 M2.3 [x] COMPOSITION MACHINE: structure (primitives + uplift field + composition, hand-set character). Test gate PASS (fresh re-run 2026-06-06: m2_3_composition_check determinism, structure-not-uniform spread 0.81, no-cliff 5.1m; m2_1/m2_2/m1_7c still PASS). Human VISUAL gate PASS 2026-06-06: live fly after AABB cull fix, user verdict "terrain looks really good"; good beginning for macro mountain/plain terrain. Capture tool made ground-aware. DEM character tuning is NOT done yet; M2.3 is the general structure pass.
 M2.4 [ ] DEM STRUCTURAL SCAFFOLD (M2.4b): RETHINK after M2.4a visual fail. The scalar DEM-character approach is backed out; it passed numeric gates twice but failed live visual review twice with corduroy grooves / harsh parallel walls. Main is back to the M2.3 visual-pass terrain; failed M2.4a is preserved at branch/tag `backup/m2-4-failed-2026-06-06`. New direction: adapt the WG10 mountain synthesis lesson procedurally, not as a static baked world. Build deterministic Rust-owned region facts (range/ridge/channel/pass/material hints) from seed+region, use GPU where dense macro fields belong, cache/sample those facts in runtime pages, and let climate/biome/elevation bias style/materials without becoming hard terrain recipe branches. Plan: `docs/superpowers/plans/2026-06-06-m2-4b-dem-structural-scaffold.md`.   <- CURRENT
 M2.5 [ ] general-terrain VISUAL ACCEPTANCE + polish (fly + walk whole world; address steep-terrain consequences HERE if they appear, in the right layer, gated).

@@ -6,11 +6,11 @@ Milestones 1 and 2 are detailed in their own docs. Everything past that is a **h
 
 ---
 
-## M1 — Contiguous infinite land  *(detailed: MILESTONE_1_land.md)*  — **not started**
+## M1 — Contiguous infinite land  *(detailed: MILESTONE_1_land.md)*  — **complete (`m1-complete`)**
 The foundation. Smooth, seamless, streaming, performant, untextured land.
 
-## M2 — Untextured biomes + DEM-informed shape  *(detailed: MILESTONE_2_biomes.md)*  — **not started**
-Large contiguous biomes by climate; DEM statistics make terrain believable. Flat colors. (DEM library inventoried in `03_DEM_CATALOG.md`.)
+## M2 — Untextured biomes + DEM-informed shape  *(detailed: MILESTONE_2_biomes.md)*  — **in progress; current bite: M2.4b structural scaffold**
+Large contiguous biomes by climate; a shared composition machine plus DEM-informed procedural structural scaffold makes terrain believable. Flat colors now; materials/textures later. (DEM library inventoried in `03_DEM_CATALOG.md`.)
 
 ---
 

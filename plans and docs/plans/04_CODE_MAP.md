@@ -41,7 +41,8 @@ wg-13/                          (the Godot project, res://)
                                 M2.3 height = one composition machine (domain warp,
                                 uplift_field places ranges/hills vs lowlands,
                                 ridged/value relief, valley_carve, composition_height;
-                                hand-set character, DEM-tuned in M2.4). Also carries
+                                hand-set character; M2.4b structural scaffold is
+                                planned, not yet wired). Also carries
                                 M2.1 climate (temp + moisture) + M2.2 biome id
                                 (nearest-centroid over temp/moist/macro-altitude),
                                 ALL in the SAME dispatch. Output [h,t,m,biome]/cell

@@ -77,8 +77,10 @@ textures; terrain cares about the DEMs" — clean separation of concerns.
 ## Axis 1 in detail: the composition machine
 
 One shader (`wg-13/shaders/field_height.glsl`), shared world-space deterministic
-primitives composed into the macro height. Build approach: **layered envelope
-composition (the proven WG10 model) + a continuous DEM character field.**
+primitives composed into the macro height. Current build approach: **layered
+envelope composition (the accepted M2.3 result) + M2.4b structural-scaffold
+facts**. The former continuous DEM character field is documented below only as
+the abandoned M2.4a path.
 
 ### Primitives (the machine)
 - `domain_warp(p, seed, amount, freq)` — bends coordinates for organic, non-grid
@@ -120,15 +122,16 @@ sampled so ALL the DEM data is represented, not just a few archetype averages).
 ```
 warp     = domain_warp(world_xz)
 uplift   = uplift_field(warp)                  # 0..1, where terrain stands up
-ch       = character(warp, uplift)             # DEM-tuned: relief_amp, slope, ridge, scale
-base     = continental_base(world_xz)          # gentle continental undulation (always)
-relief   = uplift * ridged_fbm(warp*ch.scale) * ch.relief_amp
-carve    = valley_carve(uplift, ch.carve_depth * ch.relief_amp)
-detail   = value_fbm(world_xz) * ch.detail_amp
+facts    = region_facts(seed, region_id)       # M2.4b candidate: ranges/ridges/channels/passes
+base     = continental_base(world_xz)          # gentle continental undulation
+relief   = scaffolded_range_relief(warp, uplift, facts)
+carve    = scaffolded_channel_pass_carve(warp, uplift, facts)
+detail   = subordinate_residual_detail(world_xz, facts)
 height   = base + relief - carve + detail
 ```
-Slope is bounded by `ch.slope_ceiling` (from the DEM) so no near-vertical walls.
-All parameters flow from `character()`; the structure flows from `uplift`.
+Exact shader/API shape belongs to the M2.4b plan. The important contract is that
+facts place/cohere structure and residual detail stays subordinate; scalar
+per-cell DEM knobs are not the current path.
 
 ## Axis 2 in detail: biome (unchanged)
 The M2.2 nearest-centroid Whittaker classifier over (temp, moisture,
@@ -141,16 +144,18 @@ in this redesign.**
 The offline `rust/dem_distill` tool + `wg-13/data/dem_fingerprints.json` are
 RESTORED (solid, gated infra — 10/10 tests pass; reads 135 labeled DEM tiles →
 per-archetype radial amplitude spectrum + slope_p95 + ridge character; offline
-only, runtime never opens a .tif). The character field consumes this data.
+only, runtime never opens a .tif). The structural scaffold may use this data for
+style targets/reference checks, but it must not regress to global scalar
+stats-matching.
 
 **Extension (for representation):** ensure the distilled output captures the
-library's character distribution well enough to feed a *continuous* field —
-including the non-curated examples. Exact form (e.g. additional character axes, a
-distribution rather than per-archetype means) is an implementation detail decided
-in the plan; the principle is GOOD REPRESENTATION ACROSS THE DEM DATA.
+library's structural and character distribution well enough to validate/bias the
+scaffold — including the non-curated examples. Exact form is an implementation
+detail decided in the plan; the principle is GOOD REPRESENTATION ACROSS THE DEM
+DATA without pretending that statistics alone create landforms.
 
-How the runtime READS the character (per-biome GPU rows vs a dedicated character
-table vs derived from uplift) is NEW design for the plan — the per-biome-row
+How the runtime READS structural facts (Rust cache, GPU macro field, page-sampled
+fact textures, or a hybrid) is M2.4b plan territory. The per-biome-row character
 wiring from the abandoned approach is NOT assumed.
 
 ## Scope & gated build sequence (the anti-thrash plan)
@@ -219,9 +224,10 @@ rollback).
   when steep, in their own layers, gated).
 
 ## Risks / watch-outs
-- **Don't let the character field become global stats-matching.** Structure MUST
-  come from `uplift` + composition; `character()` only tunes parameters. If the
-  output looks uniform, the structure layer is wrong, not the stats.
+- **Don't let the scaffold regress to global stats-matching.** Structure MUST
+  come from organized facts + composition; DEM measurements inform targets and
+  residual character. If the output looks uniform or grooved, the scaffold is
+  wrong, not the visual reviewer.
 - **Visual gate EARLY and often** (the burned-in lesson). Capture low + walk;
   don't trust a green test gate on a bad picture.
 - **Don't over-build the machine.** Add a primitive only when the composition
