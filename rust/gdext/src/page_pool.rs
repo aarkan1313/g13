@@ -142,8 +142,10 @@ impl Default for FieldConfig {
             scaffold_seed: 1234.0,   // mirrors the default seed; world_view can sync it
             // M2.4c macro-cache start values (spec): 256 m/cell, 30 km super-region,
             // 256 resident regions. RegionCache cap is bound at init() from this.
-            macro_bake_spacing_m: 256.0,
-            macro_super_region_m: 30000.0,
+            // Spacing/super-region are SHARED constants (macro_cache::region) so the
+            // produce_macro_page test hook can't silently bake at a stale config.
+            macro_bake_spacing_m: crate::macro_cache::DEFAULT_MACRO_BAKE_SPACING_M,
+            macro_super_region_m: crate::macro_cache::DEFAULT_MACRO_SUPER_REGION_M,
             macro_cache_cap: 256,
         }
     }

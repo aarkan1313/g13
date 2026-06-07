@@ -32,8 +32,10 @@ const OCT := 5
 const FREQ := 0.0015
 const AMP := 240.0
 
-# Macro region core span = (ceil(30000/256)-1)*256 = (118-1)*256 = 29952m (matches
-# MacroBakeConfig{256,30000}.core_span_m()). A fine page spans (128-1)*8 = 1016m.
+# Macro region core span = (ceil(30000/256)-1)*256 = (118-1)*256 = 29952m, derived
+# from DEFAULT_MACRO_SUPER_REGION_M/DEFAULT_MACRO_BAKE_SPACING_M in
+# macro_cache::region — keep in sync if those change (matches core_span_m()).
+# A fine page spans (128-1)*8 = 1016m.
 const CORE_SPAN := 29952.0
 const PAGE_SPAN := (RES - 1) * SPACING   # 1016.0
 
@@ -80,15 +82,27 @@ func _relief(h: PackedFloat32Array) -> float:
 # ~32 cells of ~0.000m delta then a 256m jump; a smooth field's slowest stretch
 # (right at an extremum) still moves >5cm/cell except for a handful of cells. At
 # eps=0.05m the WORST flat-run across 49 interior pages is 10 cells (2x margin
-# under the 20 threshold); a real 32-cell terrace would still trip 20. See
-# tests/_macro_diag.gd evidence in the Task-6 handoff.
+# under the 20 threshold); a real 32-cell terrace would still trip 20. The
+# height-row evidence is in the Task-6 handoff.
 const FLAT_EPS := 0.05    # metres: a TRULY-flat adjacent delta (terrace = ~0)
 func _longest_flat_run(h: PackedFloat32Array) -> int:
 	var longest := 0
+	# x-axis rows.
 	for z in range(RES):
 		var run := 0
 		for x in range(RES - 1):
 			if absf(h[z*RES+x+1] - h[z*RES+x]) < FLAT_EPS:
+				run += 1
+				longest = maxi(longest, run)
+			else:
+				run = 0
+	# z-axis columns (a terrace from broken bilinear / a column-major bake bug
+	# would show on the z axis too — _max_step scans both, so this must as well,
+	# or a z-axis terrace slips past the PRIMARY no-terracing discriminator).
+	for x in range(RES):
+		var run := 0
+		for z in range(RES - 1):
+			if absf(h[(z+1)*RES+x] - h[z*RES+x]) < FLAT_EPS:
 				run += 1
 				longest = maxi(longest, run)
 			else:
@@ -124,6 +138,8 @@ func _init() -> void:
 			var ox := 1000.0 + ix * 4000.0
 			var oz := 1000.0 + iz * 4000.0
 			var h: PackedFloat32Array = fc.produce_macro_page(ox, oz, SPACING, SEED, RES, OCT, FREQ, AMP)
+			if h.size() != RES*RES:
+				_fail("macro page empty at (%.0f,%.0f)" % [ox, oz]); break
 			if not _all_finite(h):
 				_fail("macro NaN/Inf at page (%.0f,%.0f)" % [ox, oz]); break
 			max_relief = maxf(max_relief, _relief(h))
@@ -159,20 +175,22 @@ func _init() -> void:
 	if not _all_finite(s): _fail("seam page has NaN/Inf")
 	var seam_max_step := _max_step(s)
 	# vs the oracle's 1076m walls: a straddling page must stay bounded (<600m).
+	# Scope: this tests ONLY the x=CORE_SPAN boundary (z stays interior) — NOT a
+	# full 2D seam proof. A z-boundary seam is out of step-2 scope.
 	if seam_max_step > 600.0:
-		_fail("SEAM WALL: straddling max step %.1fm > 600 (oracle was 1076) — border not converging" % seam_max_step)
+		_fail("SEAM WALL (x-boundary): straddling max step %.1fm > 600 (oracle was 1076) — border not converging" % seam_max_step)
 	else:
-		print("PASS: seam bounded — straddling max step %.1fm within 600 (vs oracle's 1076m wall)" % seam_max_step)
+		print("PASS: seam (x-boundary) bounded — straddling max step %.1fm within 600 (vs oracle's 1076m wall)" % seam_max_step)
 	# Boundary convergence (Task-4 carry-forward): no special seam spike at the
 	# border column — straddling max comparable to interior max. The <600 bound
 	# above already proves no 1km wall; this guards a subtler localized seam jump.
 	if seam_max_step < int_max_step * 2.0 + 50.0:
-		print("PASS: boundary converges — no seam spike (straddling %.1fm ~ interior %.1fm)" % [seam_max_step, int_max_step])
+		print("PASS: boundary (x) converges — no seam spike (straddling %.1fm ~ interior %.1fm)" % [seam_max_step, int_max_step])
 	else:
-		_fail("seam spike: straddling %.1fm >> interior %.1fm (localized border jump)" % [seam_max_step, int_max_step])
+		_fail("seam spike (x-boundary): straddling %.1fm >> interior %.1fm (localized border jump)" % [seam_max_step, int_max_step])
 
 	# 5. REGRESSION-FRIENDLY evidence for the human.
-	print("INFO: macro live — max_relief=%.1fm  step(interior)=%.1fm  step(straddling)=%.1fm  longest_flat_run=%d cells  [thresholds: relief>100, step<600, run<20]" % [max_relief, int_max_step, seam_max_step, flat_run])
+	print("INFO: macro live — max_relief=%.1fm  step(interior)=%.1fm  step(straddling,x-boundary)=%.1fm  longest_flat_run(both axes)=%d cells  [thresholds: relief>100, step<600, run<20]" % [max_relief, int_max_step, seam_max_step, flat_run])
 
 	_finish()
 

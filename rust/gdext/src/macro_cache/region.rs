@@ -1,6 +1,13 @@
 //! M2.4c: the cached macro layer's data types — one baked super-region's
 //! structural fields (flat f32, row-major z*res+x) and the bake tunables.
 
+/// Default macro bake tunables (data-driven; shared so the test hook can't
+/// silently diverge from the runtime FieldConfig). Re-tune both via these:
+/// `FieldConfig::default` and the `produce_macro_page` test hook both read them,
+/// so a re-tune can't green the gate on terrain that no longer matches runtime.
+pub const DEFAULT_MACRO_BAKE_SPACING_M: f32 = 256.0;
+pub const DEFAULT_MACRO_SUPER_REGION_M: f32 = 30000.0;
+
 /// Tunable bake parameters (data-driven; defaults set by the caller, picked by
 /// visual gate per the spec — NOT hardcoded terrain values).
 #[derive(Clone, Copy, Debug)]
