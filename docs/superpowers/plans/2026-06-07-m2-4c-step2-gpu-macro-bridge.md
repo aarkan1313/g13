@@ -12,6 +12,21 @@
 
 ---
 
+## EXECUTION STATUS (2026-06-07)
+
+- **Task 1 (SPIKE) — DONE + verified green** (commit `3c38822`). The R32F texture
+  upload+sample round-trip works on FieldGpu's local RD. The exact gdext 0.5.3 API is
+  now PINNED and documented at the top of `rust/gdext/src/macro_gpu.rs` (read that
+  header before Tasks 2-6). Two corrections vs the reference code in this plan, already
+  applied in macro_gpu.rs — Tasks 2-6 must follow the WORKING form:
+  - texture create: `rd.texture_create_ex(&fmt, &view).data(&layers).done()` (data via
+    the `_ex` builder, NOT a positional arg to `texture_create`).
+  - texture data layer: `array![&bytes]` (TYPED `Array<PackedByteArray>`), NOT `varray!`.
+  - `macro_gpu::{linear_sampler, create_r32f_texture}` helpers exist + are reusable.
+  - `FieldGpu::macro_roundtrip_probe` + the permanent gate
+    `wg-13/tests/m2_4c_macro_roundtrip_check.gd` back this.
+- **Tasks 2-6 — PENDING** (next session). Resume at Task 2.
+
 ## CRITICAL: the one new mechanic (read before Task 1)
 
 FieldGpu's compute dispatch today uses ONLY `STORAGE_BUFFER` uniforms (bindings 0=out, 1=params, 2=biome). This step introduces **sampled textures + a linear sampler on the LOCAL RenderingDevice** — new mechanics in this file. The exact gdext 0.5.3 call sequence is the highest-risk detail, so Task 1 is a SPIKE that proves the round-trip in isolation and PINS the working API signatures for later tasks.
