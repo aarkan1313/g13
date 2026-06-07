@@ -33,14 +33,16 @@ const AABB_HALF_HEIGHT := 6000.0
 # M1.6: 6 levels @ base span 508m, radius 3 -> coarsest reaches ~49km (30km goal
 # with margin). Each coarser level doubles per-page span, so reach is exponential
 # for linear page cost. (level span = base_span * 2^level.)
-@export var num_levels: int = 8            # 8 levels @ base span 508m, radius 3 -> reach ~195 km; 7=97.5km, 6=49km
-@export var ring_radius: int = 3           # pages each side, per level, around camera
-@export var evict_margin: int = 1          # hysteresis: keep_radius = ring_radius + margin
-@export var max_new_per_frame: int = 8
+@export var num_levels: int = 7            # 7 levels @ base span 508m, radius 3 -> reach ~97.5 km (~100km target); 8=195km, 6=49km
+@export var ring_radius: int = 5           # pages each side, per level (3->5: 49->121 pages/level, more buffer so the edge sits farther out)
+@export var evict_margin: int = 2          # hysteresis: keep_radius = ring_radius + margin (raised with ring_radius)
+@export var max_new_per_frame: int = 32
 # M1.9.3b: mid-coarse eager pages produced per frame (coarsest level exempt =
 # never-black floor). Spreads the fast-motion burst across frames. Tune live.
-# Raised (8->24) to build coarse blankets farther ahead -> less pop-in at 195km reach.
-@export var max_eager_per_frame: int = 24
+# Pushed HARD (24->128) to test whether throughput is the bottleneck: build the
+# leading edge far faster. If frames hitch, we back off; if fill-in is still slow
+# even stationary, the bottleneck is elsewhere (not the per-frame budget).
+@export var max_eager_per_frame: int = 128
 @export var show_page_tint: bool = false   # debug checkerboard marking page edges (off = clean look)
 @export var review_mesh_lod_bias: int = 2   # visual review only: keep coarse DEM pages from faceting at altitude
 @export var review_mesh_min_subdiv: int = 96
@@ -64,6 +66,11 @@ var _instances := {}                       # "L:gx:gz" -> MeshInstance3D
 var _inst_meta := {}                        # "L:gx:gz" -> Vector3i(level,gx,gz) — parsed once, so
 											# the per-frame loops never re-split the string key (M1.9.3c)
 var _cam: Camera3D
+# Smoothed travel direction (world XZ), used to bias page production toward where
+# you're flying so the leading edge loads before you reach it (anti-pop-in).
+var _prev_track_x: float = INF
+var _prev_track_z: float = INF
+var _travel_dir := Vector2.ZERO              # smoothed unit-ish vector in (x,z)
 # M2.3-fix — the node whose world position drives STREAMING + COLLISION. Defaults
 # to the fly camera; in WALK mode the player sets it to the CAPSULE so the world
 # follows where you actually ARE (not the frozen fly-cam at the drop-in spot).
@@ -126,6 +133,21 @@ func _process(_dt: float) -> void:
 	var cam_x: float = tracker.global_position.x
 	var cam_z: float = tracker.global_position.z
 
+	# TEMP DEBUG: is the streaming center actually following the camera? Prints ~1/s.
+	# Smoothed travel direction (XZ) for direction-biased production. When moving,
+	# this points where you're flying; when ~stationary it decays toward zero (then
+	# pure nearest-first takes over). EMA so a single jittery frame doesn't swing it.
+	if _prev_track_x != INF:
+		var mv := Vector2(cam_x - _prev_track_x, cam_z - _prev_track_z)
+		if mv.length() > 0.01:
+			_travel_dir = (_travel_dir * 0.8 + mv.normalized() * 0.2)
+		else:
+			_travel_dir *= 0.8
+	_prev_track_x = cam_x
+	_prev_track_z = cam_z
+	var dir_len: float = _travel_dir.length()
+	var travel_n := (_travel_dir / dir_len) if dir_len > 0.001 else Vector2.ZERO
+
 	# Request coarsest first. Three production modes (M1.9.3b):
 	#  - COARSEST level: unbounded eager — the never-black FLOOR, always complete.
 	#  - MID-coarse (0 < level < coarsest): bounded eager — spread over frames;
@@ -148,10 +170,18 @@ func _process(_dt: float) -> void:
 				var key := "%d:%d:%d" % [level, gx, gz]
 				if _instances.has(key):
 					continue
-				# page-center distance (in page units) from the camera's fractional cell
+				# page-center offset (in page units) from the camera's fractional cell
 				var dx: float = (float(gx) + 0.5) - (cam_x / span)
 				var dz: float = (float(gz) + 0.5) - (cam_z / span)
-				cands.append([dx * dx + dz * dz, gx, gz, key])
+				var d2: float = dx * dx + dz * dz
+				# Direction bias: pages AHEAD (aligned with travel) score lower (built
+				# first) than equidistant pages to the side/behind, so the leading edge
+				# loads before you reach it. ahead = dot(offset_dir, travel_dir) in [-1,1].
+				var score: float = d2
+				if travel_n != Vector2.ZERO and d2 > 0.0001:
+					var ahead: float = (Vector2(dx, dz) / sqrt(d2)).dot(travel_n)
+					score = d2 * (1.0 - 0.5 * ahead)   # ahead halves the cost, behind raises it
+				cands.append([score, gx, gz, key])
 		cands.sort_custom(func(a, b): return a[0] < b[0])
 		for c in cands:
 			var gx: int = c[1]
