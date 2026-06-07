@@ -292,6 +292,34 @@ fn fact_cells_from_mountain_fields(
     cells
 }
 
+/// Per-cell oracle fact map. Same output shape as `generate_fact_map_style`, but
+/// every cell is a pure `sample_cell(seed, world_x, world_z)` call — no neighbor
+/// access, no apron, no blur. This is the GPU-portable path (mirrors what would run
+/// in `field_height.glsl`). Procedural invariant: pure fn of (seed, world coords).
+pub fn oracle_fact_map(
+    seed: u64,
+    resolution: usize,
+    origin_x: f32,
+    origin_z: f32,
+    span_m: f32,
+) -> Vec<FactCell> {
+    assert!(resolution >= 3, "resolution must be at least 3");
+    assert!(
+        span_m.is_finite() && span_m > 0.0,
+        "span_m must be positive"
+    );
+    let spacing = span_m / (resolution as f32 - 1.0);
+    let mut cells = Vec::with_capacity(resolution * resolution);
+    for z in 0..resolution {
+        for x in 0..resolution {
+            let wx = origin_x + x as f32 * spacing;
+            let wz = origin_z + z as f32 * spacing;
+            cells.push(sample_cell(seed, wx, wz));
+        }
+    }
+    cells
+}
+
 pub fn sample_cell(seed: u64, world_x: f32, world_z: f32) -> FactCell {
     let synthesis = synthesize_cell(seed, world_x, world_z);
     let style_id = synthesis.style.as_u8();
@@ -962,6 +990,34 @@ mod tests {
             assert!((0.0..=1.0).contains(&cell.material.snow));
             assert!((0.0..=1.0).contains(&cell.material.valley_floor));
             assert!(cell.preview_height_m.is_finite());
+        }
+    }
+
+    #[test]
+    fn oracle_fact_map_is_deterministic_and_bounded() {
+        let a = oracle_fact_map(177, 33, 0.0, 0.0, 64_000.0);
+        let b = oracle_fact_map(177, 33, 0.0, 0.0, 64_000.0);
+        assert_eq!(a.len(), 33 * 33);
+        assert_eq!(a, b, "same seed/resolution/origin/span must be bit-identical");
+        for cell in &a {
+            assert!((0.0..=1.0).contains(&cell.range_mask));
+            assert!((0.0..=1.0).contains(&cell.channel_mask));
+            assert!(cell.preview_height_m.is_finite());
+        }
+    }
+
+    #[test]
+    fn oracle_fact_map_matches_sample_cell_at_grid_points() {
+        let res = 17usize;
+        let span = 64_000.0f32;
+        let map = oracle_fact_map(177, res, 1000.0, -2000.0, span);
+        let spacing = span / (res as f32 - 1.0);
+        // spot-check a few grid points equal a direct sample_cell call
+        for &(x, z) in &[(0usize, 0usize), (5, 11), (16, 16)] {
+            let wx = 1000.0 + x as f32 * spacing;
+            let wz = -2000.0 + z as f32 * spacing;
+            let direct = sample_cell(177, wx, wz);
+            assert_eq!(map[z * res + x], direct);
         }
     }
 }
