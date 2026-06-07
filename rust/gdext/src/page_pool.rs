@@ -484,12 +484,21 @@ impl PagePool {
         let mut normal_tex = Texture2Drd::new_gd();
         normal_tex.set_texture_rd_rid(render_rids.normal);
 
-        // COLLISION path (M1.7, unchanged this stage): the LOCAL device readback
-        // still produces the CPU `heights` (and `biome` for the gate). This is the
-        // blocking round-trip; Stage 2 will skip it for pages that never collide.
-        // Profiled region (M1.9.1): the blocking dispatch+readback.
-        let FieldPage { heights, biome, .. } = self.gpu.as_mut()?.dispatch_page(params)?;
-        self.produce_us_this_frame += t0.elapsed().as_micros() as i64;
+        // COLLISION path (M1.7): the LOCAL-device readback produces the CPU `heights`
+        // for the HeightMapShape. M2.6 STAGE 2: collision is built ONLY for level-0
+        // pages (world_view), so ONLY level 0 needs the blocking readback. Levels 1-5
+        // (the coarse blanket — most pages in a burst) skip it entirely: render is
+        // GPU-resident, and they never collide. This removes the dominant per-page
+        // stall for the majority of streamed pages. Their `heights`/`biome` stay
+        // empty; get_page_heights already returns empty for non-collidable use.
+        let (heights, biome) = if key.level == 0 {
+            // Profiled region (M1.9.1): the blocking dispatch+readback (level-0 only now).
+            let FieldPage { heights, biome, .. } = self.gpu.as_mut()?.dispatch_page(params)?;
+            self.produce_us_this_frame += t0.elapsed().as_micros() as i64;
+            (heights, biome)
+        } else {
+            (PackedFloat32Array::new(), PackedFloat32Array::new())
+        };
 
         Some(ResidentPage {
             texture, climate_tex, biome_tex, normal_tex, render_rids, heights, biome,
