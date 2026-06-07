@@ -7,3 +7,5 @@ mod bake;
 pub use bake::MacroBake;
 mod cache;
 pub use cache::RegionCache;
+mod kernels;
+pub use kernels::{kernel_surface, KernelAtlas};
