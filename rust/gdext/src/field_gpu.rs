@@ -22,6 +22,15 @@ pub const FIELD_CHANNELS: usize = 6;
 /// std430): [temp_c, moist_c, alt_c, _pad].
 pub const BIOME_STRIDE: usize = 4;
 
+pub(crate) fn disabled_dem_kernel_bytes() -> PackedByteArray {
+    let vals = [0.0f32, 1.0, 1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0];
+    let mut bytes: Vec<u8> = Vec::with_capacity(vals.len() * 4);
+    for v in vals {
+        bytes.extend_from_slice(&v.to_le_bytes());
+    }
+    PackedByteArray::from(bytes.as_slice())
+}
+
 /// Parameters for one page production. Mirrors the GLSL `Params` block layout,
 /// std430-friendly: 20 × 4 bytes = 80 bytes (8 height + 6 climate + 6 biome,
 /// the last 3 of which are pad). Field order MUST match field_height.glsl.
@@ -99,11 +108,13 @@ pub struct FieldGpu {
     rd: Gd<RenderingDevice>,
     shader: Rid,
     pipeline: Rid,
+    uses_dem_kernel: bool,
     /// M2.2 biome centroid table (binding 2): flat f32 LE bytes, BIOME_STRIDE
     /// floats per biome ([temp_c, moist_c, alt_c, _pad]). Set via
     /// set_biome_centroids; the std430 buffer can't be zero-length, so a 1-row
     /// default is kept until configured (biome_count in PageParams gates use).
     biome_bytes: PackedByteArray,
+    dem_kernel_bytes: PackedByteArray,
 }
 
 impl FieldGpu {
@@ -116,6 +127,7 @@ impl FieldGpu {
             None
         })?;
         let src = load_glsl(shader_glsl_path);
+        let uses_dem_kernel = src.to_string().contains("DemKernel");
         let mut shader_source = RdShaderSource::new_gd();
         shader_source.set_language(ShaderLanguage::GLSL);
         shader_source.set_stage_source(ShaderStage::COMPUTE, &src);
@@ -134,7 +146,8 @@ impl FieldGpu {
         // buffer is never zero-length before set_biome_centroids. With biome_count
         // left at its caller default this still classifies sanely (all -> row 0).
         let biome_bytes = PackedByteArray::from(vec![0u8; BIOME_STRIDE * 4]);
-        Some(Self { rd, shader, pipeline, biome_bytes })
+        let dem_kernel_bytes = disabled_dem_kernel_bytes();
+        Some(Self { rd, shader, pipeline, uses_dem_kernel, biome_bytes, dem_kernel_bytes })
     }
 
     /// Set the M2.2 biome centroid table. `centroids` is a flat f32 list,
@@ -145,6 +158,12 @@ impl FieldGpu {
             return;
         }
         self.biome_bytes = centroids.to_byte_array();
+    }
+
+    pub fn set_dem_kernel_bytes(&mut self, bytes: &PackedByteArray) {
+        if !bytes.is_empty() {
+            self.dem_kernel_bytes = bytes.clone();
+        }
     }
 
     /// Dispatch the field over one page and read all channels back to the CPU.
@@ -179,8 +198,22 @@ impl FieldGpu {
         u_biome.set_binding(2);
         u_biome.add_id(biome_buf);
 
-        let uniforms = array![&u_out, &u_param, &u_biome];
-        let uniform_set = self.rd.uniform_set_create(&uniforms, self.shader, 0);
+        let dem_buf = if self.uses_dem_kernel {
+            Some(self.rd.storage_buffer_create_ex(self.dem_kernel_bytes.len() as u32)
+                .data(&self.dem_kernel_bytes)
+                .done())
+        } else {
+            None
+        };
+        let uniform_set = if let Some(dem_buf) = dem_buf {
+            let mut u_dem = RdUniform::new_gd();
+            u_dem.set_uniform_type(UniformType::STORAGE_BUFFER);
+            u_dem.set_binding(6);
+            u_dem.add_id(dem_buf);
+            self.rd.uniform_set_create(&array![&u_out, &u_param, &u_biome, &u_dem], self.shader, 0)
+        } else {
+            self.rd.uniform_set_create(&array![&u_out, &u_param, &u_biome], self.shader, 0)
+        };
 
         let groups = (res + 7) / 8;
         let cl = self.rd.compute_list_begin();
@@ -196,6 +229,9 @@ impl FieldGpu {
         self.rd.free_rid(out_buf);
         self.rd.free_rid(param_buf);
         self.rd.free_rid(biome_buf);
+        if let Some(dem_buf) = dem_buf {
+            self.rd.free_rid(dem_buf);
+        }
 
         // Deinterleave [h,t,m,b, ...] into four contiguous channel arrays.
         // heights is bit-identical to what the M1 single-channel path produced
@@ -233,6 +269,92 @@ impl FieldGpu {
             nz[i] = src[b + 5];
         }
         Some(FieldPage { heights, temp, moisture, biome, normal_x, normal_z })
+    }
+
+    /// M2.6 BATCH: produce the HEIGHT channel for MANY pages in ONE submit/sync.
+    /// The per-page serial cost was N separate submit()+sync() blocking round-trips
+    /// (the measured flying stall); this records all N dispatches into a single
+    /// compute list, submits ONCE, syncs ONCE, then reads back each page. The local
+    /// RenderingDevice allows only one outstanding submit — batching FITS that (one
+    /// submit for the whole frame's collision pages). Returns one height array per
+    /// input params, in order (None entries on per-page readback failure).
+    /// Only the height channel is read (collision is all the local path feeds).
+    pub fn dispatch_height_batch(&mut self, batch: &[PageParams]) -> Vec<Option<PackedFloat32Array>> {
+        if batch.is_empty() {
+            return Vec::new();
+        }
+        let res = batch[0].page_res;
+        let n = (res * res) as usize;
+        let groups = (res + 7) / 8;
+
+        // Per-page resources, all recorded into ONE compute list. Keep uniform_sets
+        // and buffers SEPARATE: a uniform_set depends on its buffers, so it MUST be
+        // freed BEFORE them (freeing a buffer first invalidates the set's refs ->
+        // "free invalid ID" when the set is then freed).
+        let mut out_bufs: Vec<Rid> = Vec::with_capacity(batch.len());
+        let mut buffers: Vec<Rid> = Vec::new();        // param/biome (+out, added later)
+        let mut uniform_sets: Vec<Rid> = Vec::new();
+
+        let cl = self.rd.compute_list_begin();
+        self.rd.compute_list_bind_compute_pipeline(cl, self.pipeline);
+        for params in batch {
+            let out_bytes = PackedByteArray::from(vec![0u8; n * FIELD_CHANNELS * 4]);
+            let out_buf = self.rd.storage_buffer_create_ex(out_bytes.len() as u32).data(&out_bytes).done();
+            let pbytes = params.to_bytes();
+            let param_buf = self.rd.storage_buffer_create_ex(pbytes.len() as u32).data(&pbytes).done();
+            let biome_buf = self.rd
+                .storage_buffer_create_ex(self.biome_bytes.len() as u32)
+                .data(&self.biome_bytes)
+                .done();
+
+            let mut u_out = RdUniform::new_gd();
+            u_out.set_uniform_type(UniformType::STORAGE_BUFFER);
+            u_out.set_binding(0);
+            u_out.add_id(out_buf);
+            let mut u_param = RdUniform::new_gd();
+            u_param.set_uniform_type(UniformType::STORAGE_BUFFER);
+            u_param.set_binding(1);
+            u_param.add_id(param_buf);
+            let mut u_biome = RdUniform::new_gd();
+            u_biome.set_uniform_type(UniformType::STORAGE_BUFFER);
+            u_biome.set_binding(2);
+            u_biome.add_id(biome_buf);
+            let uniform_set = self.rd.uniform_set_create(&array![&u_out, &u_param, &u_biome], self.shader, 0);
+
+            self.rd.compute_list_bind_uniform_set(cl, uniform_set, 0);
+            self.rd.compute_list_dispatch(cl, groups, groups, 1);
+
+            out_bufs.push(out_buf);
+            buffers.push(param_buf);
+            buffers.push(biome_buf);
+            uniform_sets.push(uniform_set);
+        }
+        self.rd.compute_list_end();
+        self.rd.submit();   // ONE submit for the whole batch
+        self.rd.sync();     // ONE sync — amortized over all pages
+
+        // Read back each page's height channel.
+        let mut results: Vec<Option<PackedFloat32Array>> = Vec::with_capacity(batch.len());
+        for &out_buf in &out_bufs {
+            let interleaved = self.rd.buffer_get_data(out_buf).to_float32_array();
+            if interleaved.len() != n * FIELD_CHANNELS {
+                results.push(None);
+                continue;
+            }
+            let mut heights = PackedFloat32Array::new();
+            heights.resize(n);
+            let src = interleaved.as_slice();
+            let h = heights.as_mut_slice();
+            for i in 0..n {
+                h[i] = src[i * FIELD_CHANNELS];   // channel 0 = height
+            }
+            results.push(Some(heights));
+        }
+        // Free uniform_sets FIRST (they depend on the buffers), then all buffers.
+        for rid in uniform_sets { self.rd.free_rid(rid); }
+        for rid in out_bufs { self.rd.free_rid(rid); }
+        for rid in buffers { self.rd.free_rid(rid); }
+        results
     }
 }
 

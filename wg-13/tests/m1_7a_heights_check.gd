@@ -43,6 +43,13 @@ func _init() -> void:
 	var tex = pool.request_page(0, 0, 0)
 	if tex == null: _fail("request_page returned null for an affordable page"); _finish(); return
 
+	# M2.6 BATCH: the level-0 collision heights are now read back in a BATCHED
+	# dispatch on the NEXT begin_frame (not synchronously at request time) — this is
+	# the perf win (one submit/sync for all collision pages, not per-page). So the
+	# heights land one begin_frame later; collision already tolerates this (it
+	# retries until heights are present). Trigger that collect, then assert.
+	pool.begin_frame()
+
 	# --- 1. length ---
 	var heights: PackedFloat32Array = pool.get_page_heights(0, 0, 0)
 	if heights.size() != RES * RES:

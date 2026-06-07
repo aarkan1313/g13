@@ -12,7 +12,7 @@
 
 use std::collections::HashMap;
 
-use crate::field_gpu::{FieldGpu, FieldPage, PageParams, BIOME_STRIDE};
+use crate::field_gpu::{FieldGpu, PageParams, BIOME_STRIDE};
 use crate::render_gpu::{RenderGpu, RenderTextures};
 use godot::classes::image::Format;
 use godot::classes::{Image, ImageTexture, Texture2Drd};
@@ -153,6 +153,10 @@ pub struct PagePool {
     cfg: FieldConfig,
 
     cache: HashMap<PageKey, ResidentPage>,
+    /// M2.6 BATCH collision: level-0 pages produced this frame that still need their
+    /// CPU heights. Collected in ONE batched dispatch/submit/sync at the next
+    /// begin_frame (instead of a blocking readback per page). (key, params).
+    pending_collision: Vec<(PageKey, PageParams)>,
     /// Pages currently displayed — must NOT be evicted out from under the mesh
     /// (00 §3 never-black discipline). Rebuilt each frame by the view.
     pinned: std::collections::HashSet<PageKey>,
@@ -173,6 +177,7 @@ pub struct PagePool {
     /// blocking readback). This is the prime suspect for the fast-motion frame
     /// spike — each production blocks on rd.sync(). Reset in begin_frame().
     produce_us_this_frame: i64,
+    cpu_readback_enabled: bool,
     /// Counters for tests/diagnostics.
     total_produced: i64,
     cache_hits: i64,
@@ -190,6 +195,7 @@ impl IRefCounted for PagePool {
             render: None,
             cfg: FieldConfig::default(),
             cache: HashMap::new(),
+            pending_collision: Vec::new(),
             pinned: std::collections::HashSet::new(),
             max_new_per_frame: 4,
             produced_this_frame: 0,
@@ -197,6 +203,7 @@ impl IRefCounted for PagePool {
             max_eager_per_frame: 8,   // mid-coarse pages/frame; coarsest is exempt
             eager_bounded_this_frame: 0,
             produce_us_this_frame: 0,
+            cpu_readback_enabled: true,
             total_produced: 0,
             cache_hits: 0,
             evicted: 0,
@@ -261,6 +268,11 @@ impl PagePool {
         self.max_eager_per_frame = n as i32;
     }
 
+    #[func]
+    fn set_cpu_readback_enabled(&mut self, enabled: bool) {
+        self.cpu_readback_enabled = enabled;
+    }
+
     /// World span one page covers (shared-boundary-cell convention, 00 §5.1).
     #[func]
     fn page_span(&self) -> f32 {
@@ -276,6 +288,27 @@ impl PagePool {
         self.eager_bounded_this_frame = 0;
         self.produce_us_this_frame = 0;
         self.pinned.clear();
+
+        // M2.6 BATCH collision: collect the level-0 height computes recorded LAST
+        // frame in ONE batched dispatch/submit/sync (vs N blocking per-page round-
+        // trips). Fill each still-resident page's heights so collision can build.
+        // (Pages evicted before their heights land are simply skipped — no error.)
+        if !self.pending_collision.is_empty() {
+            let pending = std::mem::take(&mut self.pending_collision);
+            let t0 = std::time::Instant::now();
+            let params: Vec<PageParams> = pending.iter().map(|(_, p)| *p).collect();
+            if let Some(gpu) = self.gpu.as_mut() {
+                let results = gpu.dispatch_height_batch(&params);
+                for ((key, _), heights_opt) in pending.into_iter().zip(results.into_iter()) {
+                    if let Some(heights) = heights_opt {
+                        if let Some(page) = self.cache.get_mut(&key) {
+                            page.heights = heights;
+                        }
+                    }
+                }
+            }
+            self.produce_us_this_frame += t0.elapsed().as_micros() as i64;
+        }
     }
 
     /// Mark a page as displayed this frame (cannot be evicted). The view calls
@@ -489,24 +522,23 @@ impl PagePool {
         let mut normal_tex = Texture2Drd::new_gd();
         normal_tex.set_texture_rd_rid(render_rids.normal);
 
-        // COLLISION path (M1.7): the LOCAL-device readback produces the CPU `heights`
-        // for the HeightMapShape. M2.6 STAGE 2: collision is built ONLY for level-0
-        // pages (world_view), so ONLY level 0 needs the blocking readback. Levels 1-5
-        // (the coarse blanket — most pages in a burst) skip it entirely: render is
-        // GPU-resident, and they never collide. This removes the dominant per-page
-        // stall for the majority of streamed pages. Their `heights`/`biome` stay
-        // empty; get_page_heights already returns empty for non-collidable use.
-        let (heights, biome) = if key.level == 0 {
-            // Profiled region (M1.9.1): the blocking dispatch+readback (level-0 only now).
-            let FieldPage { heights, biome, .. } = self.gpu.as_mut()?.dispatch_page(params)?;
-            self.produce_us_this_frame += t0.elapsed().as_micros() as i64;
-            (heights, biome)
-        } else {
-            (PackedFloat32Array::new(), PackedFloat32Array::new())
-        };
+        // COLLISION path (M1.7): only LEVEL-0 pages get collision (world_view). M2.6
+        // BATCH: instead of a BLOCKING readback per page (the measured flying stall),
+        // RECORD this page as pending; the next begin_frame collects ALL pending
+        // level-0 pages in ONE batched dispatch/submit/sync and fills their heights.
+        // The page is fully usable for rendering NOW (render is GPU-resident); heights
+        // arrive a frame later and collision already retries until they're present
+        // (world_view ~line 259). cpu_readback_enabled=false (DEM review escape hatch)
+        // skips collision entirely. Levels 1-5 never read back.
+        let _ = t0;
+        if key.level == 0 && self.cpu_readback_enabled {
+            self.pending_collision.push((key, params));
+        }
 
         Some(ResidentPage {
-            texture, climate_tex, biome_tex, normal_tex, render_rids, heights, biome,
+            texture, climate_tex, biome_tex, normal_tex, render_rids,
+            heights: PackedFloat32Array::new(),
+            biome: PackedFloat32Array::new(),
         })
     }
 
