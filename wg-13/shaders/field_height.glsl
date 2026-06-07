@@ -29,9 +29,23 @@ layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 // contract intact (collision still reads height-only), packs temp+moisture into
 // one RG32F texture, the biome id into an R32F texture, and the normal gradient
 // (channels 4-5) into an RG32F texture for the display shader (seam-free normals).
+// OUTPUT — selected by RENDER_MODE (M2.6). The Rust RENDER producer prepends
+// `#define RENDER_MODE` so the SAME field math (below) writes to GPU storage
+// IMAGES sampled directly by the display shader (GPU-resident, no readback). The
+// buffer path (no define) is the original M1.7 collision/oracle output, byte-
+// identical. One file, one copy of the world math (00 §2.1 source of truth).
+#ifdef RENDER_MODE
+// binding 0 = height (R32F), 3 = climate (RG32F: temp,moist), 4 = biome (R32F),
+// 5 = normal (RG32F: nx,nz). Storage images written via imageStore.
+layout(set = 0, binding = 0, r32f)   restrict writeonly uniform image2D out_height;
+layout(set = 0, binding = 3, rg32f)  restrict writeonly uniform image2D out_climate;
+layout(set = 0, binding = 4, r32f)   restrict writeonly uniform image2D out_biome;
+layout(set = 0, binding = 5, rg32f)  restrict writeonly uniform image2D out_normal;
+#else
 layout(set = 0, binding = 0, std430) restrict writeonly buffer FieldBuffer {
     float field[];
 };
+#endif
 
 // M2.2 biome table: nearest-centroid Whittaker classifier. Flat array of
 // `biome_count` centroids, 4 floats each [temp_c, moist_c, alt_c, _pad] (vec4
@@ -314,6 +328,16 @@ void main() {
     float nx = -(hr - hl);
     float nz = -(hu - hd);
 
+#ifdef RENDER_MODE
+    // GPU-resident render path (M2.6): write the same values to storage images the
+    // display shader samples directly (no readback). height -> R; climate -> RG
+    // (temp,moist); biome -> R; normal -> RG (nx,nz).
+    ivec2 px = ivec2(cell);
+    imageStore(out_height,  px, vec4(h, 0.0, 0.0, 0.0));
+    imageStore(out_climate, px, vec4(c.x, c.y, 0.0, 0.0));
+    imageStore(out_biome,   px, vec4(bid, 0.0, 0.0, 0.0));
+    imageStore(out_normal,  px, vec4(nx, nz, 0.0, 0.0));
+#else
     // Interleaved [height, temp, moisture, biome_id, normal_x, normal_z] per cell
     // (Rust deinterleaves). Channels 0-3 are byte-identical to before (M1.7 height
     // contract intact); 4-5 are the new analytic-normal gradient.
@@ -324,4 +348,5 @@ void main() {
     field[base + 3u] = bid;
     field[base + 4u] = nx;
     field[base + 5u] = nz;
+#endif
 }
