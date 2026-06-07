@@ -42,6 +42,13 @@ const AABB_HALF_HEIGHT := 4000.0
 # of bodies. Built async off the main thread (00 §2.2 collision is a renderer
 # concern); kept cheap for the RTX 3070 minimum target.
 @export var collision_radius: int = 2       # level-0 pages each side around the tracked target with collision (M2.3-fix: 1->2 = ~+/-1.3km margin so walking up a big mountain stays collidable)
+# M2.4 geomorph: smooth the fine<->coarse clipmap boundary by morphing each page
+# toward a half-res tap of its own height near the camera-distance band where the
+# NEXT-coarser level takes over. morph_frac = where in a level's reach the morph
+# starts (fraction of that level's ring reach); the morph completes at the reach
+# edge. enable_geomorph=false restores the exact pre-M2.4 look (band -> 0).
+@export var enable_geomorph: bool = true
+@export_range(0.3, 0.95, 0.01) var morph_frac: float = 0.6
 
 var _pool: RefCounted
 var _ring_shader: Resource
@@ -366,6 +373,19 @@ func _make_page_instance(tex, level: int, gx: int, gz: int, span: float) -> Mesh
 	mat.set_shader_parameter("view_mode", _view_mode)       # current mode (recycled mats too)
 	mat.set_shader_parameter("page_world_size", span)       # span differs by level on reuse
 	mat.set_shader_parameter("cell_spacing", spacing * pow(2.0, level))
+	# M2.4 geomorph band for THIS page's level. A level-L page is the finest cover
+	# out to its ring reach (ring_radius * span); beyond that the next-coarser level
+	# takes over. Morph from morph_frac*reach to reach, so by the hand-off this page
+	# already shows its coarse (half-res) surface and meets the coarser level smoothly.
+	# Level (num_levels-1) is the coarsest blanket: nothing coarser to meet, so OFF.
+	mat.set_shader_parameter("page_res", page_res)
+	if enable_geomorph and level < num_levels - 1:
+		var reach: float = float(ring_radius) * span
+		mat.set_shader_parameter("morph_start", reach * morph_frac)
+		mat.set_shader_parameter("morph_end", reach)
+	else:
+		mat.set_shader_parameter("morph_start", 0.0)   # OFF (coarsest level or disabled)
+		mat.set_shader_parameter("morph_end", 0.0)
 	mat.set_shader_parameter("page_tint",
 		(1.0 if (gx + gz) % 2 == 0 else 0.82) if show_page_tint else 1.0)
 	mi.position = Vector3(gx * span + span * 0.5, 0.0, gz * span + span * 0.5)
