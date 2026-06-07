@@ -9,12 +9,15 @@ the scalar DEM-character idea. Do not restart parameter tuning against
 Implementation checkpoint: Step 2/3 prototype exists in `rust/structural_scaffold`.
 It generates deterministic CPU-only RegionFacts and writes
 `wg-13/_captures/m2_4b_scaffold_review.png/.md`. The first toy-line version was
-visually wrong; the current version has been rewritten toward the WG10 synthesis
-shape: style selection, domain-warped range envelopes, massif/base fields,
-primary+tributary carve masks, pass floors, and ridged/detail residuals. The unit
-gate is green for determinism, adjacent-region seam agreement, connected channel
-routes, and bounded finite values. This is not runtime-integrated and not M2.4
-visual acceptance.
+visually wrong, so it was replaced with an adapted WG10 Rust recipe port:
+`recipe_noise`, `array_ops`, and the mountain seam-safe synthesis pipeline now
+drive the scaffold facts directly. The review sheet is aligned to the archived
+WG10 mountain synthesis setup: seed `177`, 200 km span, four mountain styles, and
+WG10-style hillshade. The unit/workspace gate is green for determinism,
+adjacent-region seam agreement, nontrivial drainage signal, and bounded finite
+values. Full provenance/reproduction notes are in
+`docs/superpowers/plans/2026-06-06-m2-4b-wg10-port-record.md`. This is not
+runtime-integrated and not M2.4 visual acceptance.
 
 ## Diagnosis
 

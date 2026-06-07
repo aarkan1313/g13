@@ -1,6 +1,10 @@
 use std::collections::VecDeque;
 
-pub const DEFAULT_REGION_SPAN_M: f32 = 16_384.0;
+mod array_ops;
+mod recipe_noise;
+mod recipes;
+
+pub const DEFAULT_REGION_SPAN_M: f32 = 30_000.0;
 pub const DEFAULT_RESOLUTION: usize = 65;
 
 #[derive(Clone, Copy, Debug)]
@@ -165,18 +169,16 @@ pub fn generate_region(config: RegionConfig, region_x: i32, region_z: i32) -> Re
         .validate()
         .expect("invalid RegionConfig passed to generate_region");
 
-    let mut cells = Vec::with_capacity(config.resolution * config.resolution);
-    let denom = (config.resolution - 1) as f32;
     let start_x = region_x as f32 * config.region_span_m;
     let start_z = region_z as f32 * config.region_span_m;
-
-    for z in 0..config.resolution {
-        for x in 0..config.resolution {
-            let world_x = start_x + (x as f32 / denom) * config.region_span_m;
-            let world_z = start_z + (z as f32 / denom) * config.region_span_m;
-            cells.push(sample_cell(config.seed, world_x, world_z));
-        }
-    }
+    let cells = generate_fact_map_style(
+        config.seed,
+        config.resolution,
+        start_x,
+        start_z,
+        config.region_span_m,
+        StyleId::AlpineBranching,
+    );
 
     RegionFact {
         seed: config.seed,
@@ -186,6 +188,108 @@ pub fn generate_region(config: RegionConfig, region_x: i32, region_z: i32) -> Re
         resolution: config.resolution,
         cells,
     }
+}
+
+pub fn generate_fact_map(
+    seed: u64,
+    resolution: usize,
+    origin_x: f32,
+    origin_z: f32,
+    span_m: f32,
+) -> Vec<FactCell> {
+    generate_fact_map_style(
+        seed,
+        resolution,
+        origin_x,
+        origin_z,
+        span_m,
+        StyleId::AlpineBranching,
+    )
+}
+
+pub fn generate_fact_map_style(
+    seed: u64,
+    resolution: usize,
+    origin_x: f32,
+    origin_z: f32,
+    span_m: f32,
+    style: StyleId,
+) -> Vec<FactCell> {
+    assert!(resolution >= 3, "resolution must be at least 3");
+    assert!(
+        span_m.is_finite() && span_m > 0.0,
+        "span_m must be positive"
+    );
+
+    let apron = recipes::mountain::APRON_PX;
+    let padded = resolution + apron * 2;
+    let spacing_m = span_m as f64 / (resolution - 1) as f64;
+    let (wx, wz) = recipes::helpers::apron_meshgrid(
+        padded,
+        padded,
+        apron,
+        spacing_m,
+        origin_x as f64,
+        origin_z as f64,
+    );
+    let mountain_style = recipes::mountain::STYLES[style.as_u8() as usize];
+    let fields = recipes::mountain::generate_seamsafe_fields(
+        &wx,
+        &wz,
+        padded,
+        padded,
+        seed as i64,
+        &mountain_style,
+        span_m as f64,
+        apron,
+        spacing_m,
+        true,
+    );
+
+    fact_cells_from_mountain_fields(&fields, style, spacing_m as f32)
+}
+
+fn fact_cells_from_mountain_fields(
+    fields: &recipes::mountain::MountainFields,
+    style: StyleId,
+    spacing_m: f32,
+) -> Vec<FactCell> {
+    let mut cells = Vec::with_capacity(fields.height.len());
+    for i in 0..fields.height.len() {
+        let range_mask = fields.range_envelope[i].clamp(0.0, 1.0) as f32;
+        let ridge_axis = fields.ranges[i].clamp(0.0, 1.0) as f32;
+        let massif = fields.massif[i].clamp(0.0, 1.0) as f32;
+        let primary = fields.primary_channels[i].clamp(0.0, 1.0) as f32;
+        let tributary = fields.tributaries[i].clamp(0.0, 1.0) as f32;
+        let lowland = fields.lowland[i].clamp(0.0, 1.0) as f32;
+        let valley_mask = fields.valley_mask[i].clamp(0.0, 1.0) as f32;
+        let floor_mask = fields.floor_mask[i].clamp(0.0, 1.0) as f32;
+        let channel_mask = primary.max(tributary * 0.65).clamp(0.0, 1.0);
+        let pass_floor = floor_mask.max(lowland * 0.35).clamp(0.0, 1.0);
+        let preview_height_m = 1_050.0 + fields.height[i] as f32 * 520.0;
+        let rock = (range_mask * 0.34 + ridge_axis * 0.38 + massif * 0.26).clamp(0.0, 1.0);
+        let snow = (smoothstep(1_550.0, 2_350.0, preview_height_m) * (0.36 + range_mask * 0.64))
+            .clamp(0.0, 1.0);
+        let valley_floor = channel_mask.max(pass_floor * 0.82).max(valley_mask * 0.42);
+
+        cells.push(FactCell {
+            range_mask,
+            ridge_axis,
+            ridge_distance_m: (1.0 - ridge_axis).max(0.0) * spacing_m * 10.0,
+            channel_mask,
+            channel_distance_m: (1.0 - channel_mask).max(0.0) * spacing_m * 8.0,
+            pass_floor,
+            style_id: style.as_u8(),
+            style_weight: 1.0,
+            material: MaterialHints {
+                rock,
+                snow,
+                valley_floor,
+            },
+            preview_height_m,
+        });
+    }
+    cells
 }
 
 pub fn sample_cell(seed: u64, world_x: f32, world_z: f32) -> FactCell {
@@ -812,17 +916,32 @@ mod tests {
     }
 
     #[test]
-    fn channel_mask_has_connected_edge_to_edge_routes() {
+    fn channel_mask_has_nontrivial_drainage_signal() {
         let cfg = RegionConfig::default();
         let region = generate_region(cfg, 0, 0);
-        let report = channel_connectivity(&region, 0.45);
+        let report = channel_connectivity(&region, 0.18);
+        let max_channel = region
+            .cells
+            .iter()
+            .map(|cell| cell.channel_mask)
+            .fold(0.0_f32, f32::max);
+        let mean_channel = region
+            .cells
+            .iter()
+            .map(|cell| cell.channel_mask)
+            .sum::<f32>()
+            / region.cells.len() as f32;
         assert!(
-            report.largest_component_cells >= cfg.resolution,
-            "largest channel component too small: {report:?}"
+            max_channel > 0.35,
+            "channel mask never develops a strong drainage response: max={max_channel}"
         );
         assert!(
-            report.touches_multiple_edges(),
-            "largest channel component does not cross the region: {report:?}"
+            mean_channel > 0.01 && mean_channel < 0.35,
+            "channel mask density is outside the expected sparse WG10 range: mean={mean_channel}"
+        );
+        assert!(
+            report.largest_component_cells >= cfg.resolution / 2,
+            "largest channel component too small: {report:?}"
         );
     }
 

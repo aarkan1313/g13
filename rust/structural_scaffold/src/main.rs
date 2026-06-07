@@ -2,8 +2,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use structural_scaffold::{
-    channel_connectivity, generate_region, max_east_west_border_delta,
-    max_south_north_border_delta, sample_cell, RegionConfig, StyleId, DEFAULT_REGION_SPAN_M,
+    channel_connectivity, generate_fact_map_style, generate_region, max_east_west_border_delta,
+    max_south_north_border_delta, RegionConfig, StyleId,
 };
 
 fn main() {
@@ -33,7 +33,7 @@ fn print_usage() {
 }
 
 fn run_review(args: &[String]) -> Result<(), String> {
-    let seed = parse_u64(args, "--seed", 13)?;
+    let seed = parse_u64(args, "--seed", 177)?;
     let radius = parse_i32(args, "--radius", 1)?;
     let tile_px = parse_usize(args, "--tile-px", 128)?;
     let out = parse_path(
@@ -117,29 +117,35 @@ fn render_review(seed: u64, radius: i32, tile_px: usize) -> Result<ReviewImage, 
     let height = map_px;
 
     let mut image = Image::new(width, height, [238, 238, 232]);
-    let facts = sample_review_map(seed, radius, map_px);
-    let (min_h, max_h) = facts
+    let world_min = 0.0f32;
+    let world_span = 200_000.0f32;
+    let styles = [
+        StyleId::AlpineBranching,
+        StyleId::SierraBlock,
+        StyleId::PamirChain,
+        StyleId::DissectedHighlands,
+    ];
+    let style_maps = styles
         .iter()
-        .fold((f32::INFINITY, f32::NEG_INFINITY), |acc, c| {
-            (acc.0.min(c.preview_height_m), acc.1.max(c.preview_height_m))
-        });
+        .map(|&style| {
+            generate_fact_map_style(seed, map_px, world_min, world_min, world_span, style)
+        })
+        .collect::<Vec<_>>();
 
     for panel in 0..panel_count {
         let offset_x = panel * (map_px + gutter);
+        let facts = &style_maps[panel];
+        let (min_h, max_h) = facts
+            .iter()
+            .fold((f32::INFINITY, f32::NEG_INFINITY), |acc, c| {
+                (acc.0.min(c.preview_height_m), acc.1.max(c.preview_height_m))
+            });
         for y in 0..map_px {
             for x in 0..map_px {
-                let idx = y * map_px + x;
-                let cell = facts[idx];
-                let color = match panel {
-                    0 => terrain_panel_color(&facts, map_px, x, y, cell, min_h, max_h),
-                    1 => range_panel_color(cell),
-                    2 => channel_panel_color(cell),
-                    _ => style_panel_color(cell),
-                };
+                let color = terrain_panel_color(facts, map_px, x, y, min_h, max_h);
                 image.set(offset_x + x, y, color);
             }
         }
-        draw_region_grid(&mut image, offset_x, 0, map_px, grid_regions, tile_px);
     }
 
     Ok(ReviewImage {
@@ -149,101 +155,32 @@ fn render_review(seed: u64, radius: i32, tile_px: usize) -> Result<ReviewImage, 
     })
 }
 
-fn sample_review_map(seed: u64, radius: i32, map_px: usize) -> Vec<structural_scaffold::FactCell> {
-    let span = DEFAULT_REGION_SPAN_M;
-    let world_min = -(radius as f32) * span;
-    let world_span = (radius * 2 + 1) as f32 * span;
-    let mut facts = Vec::with_capacity(map_px * map_px);
-
-    for y in 0..map_px {
-        for x in 0..map_px {
-            let fx = (x as f32 + 0.5) / map_px as f32;
-            let fz = (y as f32 + 0.5) / map_px as f32;
-            facts.push(sample_cell(
-                seed,
-                world_min + fx * world_span,
-                world_min + fz * world_span,
-            ));
-        }
-    }
-
-    facts
-}
-
 fn terrain_panel_color(
     facts: &[structural_scaffold::FactCell],
     map_px: usize,
     x: usize,
     y: usize,
-    cell: structural_scaffold::FactCell,
     min_h: f32,
     max_h: f32,
 ) -> [u8; 3] {
-    let left = facts[y * map_px + x.saturating_sub(1)].preview_height_m;
-    let right = facts[y * map_px + (x + 1).min(map_px - 1)].preview_height_m;
-    let up = facts[y.saturating_sub(1) * map_px + x].preview_height_m;
-    let down = facts[(y + 1).min(map_px - 1) * map_px + x].preview_height_m;
-    let dzdx = (right - left) * 0.0022;
-    let dzdy = (down - up) * 0.0022;
-    let normal_len = (dzdx * dzdx + dzdy * dzdy + 1.0).sqrt();
-    let nx = -dzdx / normal_len;
-    let ny = 1.0 / normal_len;
-    let nz = -dzdy / normal_len;
-    let light = (-0.46f32, 0.70f32, -0.54f32);
-    let light_len = (light.0 * light.0 + light.1 * light.1 + light.2 * light.2).sqrt();
-    let dot =
-        (nx * light.0 / light_len + ny * light.1 / light_len + nz * light.2 / light_len).max(0.0);
-    let t = ((cell.preview_height_m - min_h) / (max_h - min_h).max(1.0)).clamp(0.0, 1.0);
-    let shade = (0.24 + dot * 0.80 + t * 0.10).clamp(0.0, 1.0);
+    let inv_range = 1.0 / (max_h - min_h).max(1e-6);
+    let sample = |sx: usize, sy: usize| -> f32 {
+        (facts[sy * map_px + sx].preview_height_m - min_h) * inv_range
+    };
+    let left = sample(x.saturating_sub(1), y);
+    let right = sample((x + 1).min(map_px - 1), y);
+    let up = sample(x, y.saturating_sub(1));
+    let down = sample(x, (y + 1).min(map_px - 1));
+    let gx = (right - left) * 40.0;
+    let gy = (down - up) * 40.0;
+    let slope = std::f32::consts::FRAC_PI_2 - (gx * gx + gy * gy).sqrt().atan();
+    let aspect = (-gx).atan2(gy);
+    let az = 135.0_f32.to_radians();
+    let alt = 45.0_f32.to_radians();
+    let shade =
+        (alt.sin() * slope.sin() + alt.cos() * slope.cos() * (az - aspect).cos()).clamp(0.0, 1.0);
     let g = (shade * 255.0).round() as u8;
     [g, g, g]
-}
-
-fn range_panel_color(cell: structural_scaffold::FactCell) -> [u8; 3] {
-    let base = mix_rgb([18, 18, 18], [218, 218, 214], cell.range_mask);
-    let ridge = (cell.ridge_axis * 160.0).clamp(0.0, 160.0) as u8;
-    [
-        base[0].saturating_add(ridge),
-        base[1].saturating_add(ridge),
-        base[2].saturating_add(ridge),
-    ]
-}
-
-fn channel_panel_color(cell: structural_scaffold::FactCell) -> [u8; 3] {
-    let mut c = mix_rgb([218, 218, 212], [132, 132, 128], cell.range_mask * 0.62);
-    c = mix_rgb(c, [8, 8, 8], cell.channel_mask);
-    mix_rgb(c, [235, 235, 224], cell.pass_floor * 0.9)
-}
-
-fn style_panel_color(cell: structural_scaffold::FactCell) -> [u8; 3] {
-    let style = match StyleId::from_u8(cell.style_id) {
-        StyleId::AlpineBranching => [116, 128, 140],
-        StyleId::SierraBlock => [142, 126, 108],
-        StyleId::PamirChain => [132, 132, 146],
-        StyleId::DissectedHighlands => [120, 138, 116],
-    };
-    let mut c = shade_rgb(style, 0.58 + cell.style_weight * 0.42);
-    c = mix_rgb(c, [230, 230, 220], cell.material.snow * 0.78);
-    c = mix_rgb(c, [82, 82, 78], cell.material.rock * 0.42);
-    mix_rgb(c, [44, 145, 168], cell.material.valley_floor * 0.55)
-}
-
-fn draw_region_grid(
-    image: &mut Image,
-    ox: usize,
-    oy: usize,
-    map_px: usize,
-    grid: usize,
-    tile_px: usize,
-) {
-    let line = [12, 12, 12];
-    for g in 0..=grid {
-        let p = (g * tile_px).min(map_px - 1);
-        for i in 0..map_px {
-            image.set(ox + p, oy + i, line);
-            image.set(ox + i, oy + p, line);
-        }
-    }
 }
 
 fn build_report(seed: u64, radius: i32, tile_px: usize, out: &Path) -> String {
@@ -257,7 +194,9 @@ fn build_report(seed: u64, radius: i32, tile_px: usize, out: &Path) -> String {
     let mut max_ew = 0.0f32;
     let mut max_sn = 0.0f32;
     let mut min_largest_route = usize::MAX;
-    let mut weak_routes = 0usize;
+    let mut max_channel = 0.0f32;
+    let mut channel_sum = 0.0f32;
+    let mut channel_count = 0usize;
 
     for z in -radius..=radius {
         for x in -radius..=radius {
@@ -265,12 +204,12 @@ fn build_report(seed: u64, radius: i32, tile_px: usize, out: &Path) -> String {
             for c in &fact.cells {
                 min_h = min_h.min(c.preview_height_m);
                 max_h = max_h.max(c.preview_height_m);
+                max_channel = max_channel.max(c.channel_mask);
+                channel_sum += c.channel_mask;
+                channel_count += 1;
             }
-            let connectivity = channel_connectivity(&fact, 0.45);
+            let connectivity = channel_connectivity(&fact, 0.18);
             min_largest_route = min_largest_route.min(connectivity.largest_component_cells);
-            if !connectivity.touches_multiple_edges() {
-                weak_routes += 1;
-            }
             regions.push(((x, z), fact));
         }
     }
@@ -298,24 +237,22 @@ fn build_report(seed: u64, radius: i32, tile_px: usize, out: &Path) -> String {
 Seed: `{seed}`\n\
 Regions: `{}` x `{}` (`radius={radius}`)\n\
 Region span: `{}` m\n\
+Review span: `200000` m\n\
 Region resolution: `{}` samples per axis\n\
 Review tile: `{tile_px}` px per region\n\
 Image: `{}`\n\n\
 ## What this is\n\n\
 This is the Step 2/3 prototype lane: deterministic Rust structural facts plus a static review sheet. It is not runtime page integration and it does not replace the accepted M2.3 terrain.\n\n\
-Panels, left to right:\n\
-1. preview height shading from scaffold facts;\n\
-2. range mask with ridge axes highlighted;\n\
-3. channel/pass overlay;\n\
-4. style/material hints.\n\n\
+Panels, left to right: alpine branching, sierra block, pamir chains, dissected highlands. Each panel is height shading from the copied WG10 mountain recipe fields, not the old line-segment scaffold.\n\n\
 ## Metrics\n\n\
 - preview height range: `{:.1}` to `{:.1}` m\n\
 - max east/west seam fact delta: `{:.8}`\n\
 - max south/north seam fact delta: `{:.8}`\n\
-- minimum largest channel component in reviewed regions: `{}` cells\n\
-- weak route regions: `{}`\n\n\
+- max channel response: `{:.3}`\n\
+- mean channel density: `{:.3}`\n\
+- minimum largest high-discharge component at threshold 0.18: `{}` cells\n\n\
 ## Read this honestly\n\n\
-This first sheet should be judged for organized facts: ranges, ridge axes, connected channel/pass corridors, and seams. If it looks structurally wrong, tune the fact generator before touching the live shader.\n",
+This sheet should be judged against the WG10 mountain synthesis look first. If it does not read like those sources, keep tuning this offline recipe port before touching the live shader.\n",
         radius * 2 + 1,
         radius * 2 + 1,
         config.region_span_m,
@@ -325,8 +262,9 @@ This first sheet should be judged for organized facts: ranges, ridge axes, conne
         max_h,
         max_ew,
         max_sn,
+        max_channel,
+        channel_sum / channel_count.max(1) as f32,
         min_largest_route,
-        weak_routes
     )
 }
 
@@ -352,23 +290,6 @@ impl Image {
         let idx = (y * self.width + x) * 3;
         self.rgb[idx..idx + 3].copy_from_slice(&color);
     }
-}
-
-fn mix_rgb(a: [u8; 3], b: [u8; 3], t: f32) -> [u8; 3] {
-    let t = t.clamp(0.0, 1.0);
-    [
-        (a[0] as f32 + (b[0] as f32 - a[0] as f32) * t).round() as u8,
-        (a[1] as f32 + (b[1] as f32 - a[1] as f32) * t).round() as u8,
-        (a[2] as f32 + (b[2] as f32 - a[2] as f32) * t).round() as u8,
-    ]
-}
-
-fn shade_rgb(c: [u8; 3], shade: f32) -> [u8; 3] {
-    [
-        (c[0] as f32 * shade).clamp(0.0, 255.0) as u8,
-        (c[1] as f32 * shade).clamp(0.0, 255.0) as u8,
-        (c[2] as f32 * shade).clamp(0.0, 255.0) as u8,
-    ]
 }
 
 fn write_text(path: &Path, text: &str) -> Result<(), String> {
