@@ -21,6 +21,8 @@ use godot::classes::rendering_device::{DataFormat, SamplerFilter, SamplerRepeatM
 use godot::classes::{RdSamplerState, RdTextureFormat, RdTextureView, RenderingDevice};
 use godot::prelude::*;
 
+use crate::macro_cache::RegionMacro;
+
 /// Create a CLAMP_TO_EDGE, LINEAR (min+mag) sampler on the given local RD.
 /// Returns its Rid (caller frees with `rd.free_rid`).
 pub fn linear_sampler(rd: &mut Gd<RenderingDevice>) -> Rid {
@@ -49,4 +51,34 @@ pub fn create_r32f_texture(rd: &mut Gd<RenderingDevice>, width: u32, height: u32
     // typed-array macro; `varray!` would produce an untyped VarArray (wrong type).
     let layers = array![&bytes];
     rd.texture_create_ex(&fmt, &view).data(&layers).done()
+}
+
+/// One region's macro fields as R32F textures on the local RD (created once,
+/// reused by every page touching the region). RIDs are freed on eviction.
+pub struct GpuRegionMacro {
+    pub region_x: i32,
+    pub region_z: i32,
+    pub resolution: u32,
+    pub height_tex: Rid,
+    pub range_tex: Rid,
+    pub channel_tex: Rid,
+}
+
+impl GpuRegionMacro {
+    pub fn upload(rd: &mut Gd<RenderingDevice>, rm: &RegionMacro) -> Self {
+        let w = rm.resolution as u32;
+        Self {
+            region_x: rm.region_x,
+            region_z: rm.region_z,
+            resolution: w,
+            height_tex: create_r32f_texture(rd, w, w, &rm.height),
+            range_tex: create_r32f_texture(rd, w, w, &rm.range_mask),
+            channel_tex: create_r32f_texture(rd, w, w, &rm.channel_mask),
+        }
+    }
+    pub fn free(&self, rd: &mut Gd<RenderingDevice>) {
+        rd.free_rid(self.height_tex);
+        rd.free_rid(self.range_tex);
+        rd.free_rid(self.channel_tex);
+    }
 }

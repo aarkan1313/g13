@@ -106,6 +106,12 @@ pub struct FieldGpu {
     /// set_biome_centroids; the std430 buffer can't be zero-length, so a 1-row
     /// default is kept until configured (biome_count in PageParams gates use).
     biome_bytes: PackedByteArray,
+    /// M2.4c step-2: shared linear, clamp-to-edge sampler for the macro textures.
+    /// Created once; consumed by the macro-sampling dispatch in Task 3.
+    sampler: Rid,
+    /// M2.4c step-2: (region_x, region_z) -> resident macro textures on this RD.
+    /// `ensure_region` uploads once per region; `evict_region` frees the RIDs.
+    macro_resident: std::collections::HashMap<(i32, i32), crate::macro_gpu::GpuRegionMacro>,
 }
 
 impl FieldGpu {
@@ -136,7 +142,17 @@ impl FieldGpu {
         // buffer is never zero-length before set_biome_centroids. With biome_count
         // left at its caller default this still classifies sanely (all -> row 0).
         let biome_bytes = PackedByteArray::from(vec![0u8; BIOME_STRIDE * 4]);
-        Some(Self { rd, shader, pipeline, biome_bytes })
+        // M2.4c step-2: one shared linear sampler for all macro textures. Consumed
+        // by the macro-sampling dispatch in Task 3.
+        let sampler = crate::macro_gpu::linear_sampler(&mut rd);
+        Some(Self {
+            rd,
+            shader,
+            pipeline,
+            biome_bytes,
+            sampler,
+            macro_resident: std::collections::HashMap::new(),
+        })
     }
 
     /// Set the M2.2 biome centroid table. `centroids` is a flat f32 list,
@@ -147,6 +163,34 @@ impl FieldGpu {
             return;
         }
         self.biome_bytes = centroids.to_byte_array();
+    }
+
+    /// M2.4c step-2: is the given region's macro already resident on this RD?
+    /// `has_region`/`evict_region` are consumed by the page lifecycle in Task 3.
+    pub fn has_region(&self, rx: i32, rz: i32) -> bool {
+        self.macro_resident.contains_key(&(rx, rz))
+    }
+
+    /// M2.4c step-2: upload a region's macro textures once (idempotent — a second
+    /// ensure for the same (rx,rz) is a no-op, so the resident count stays put).
+    pub fn ensure_region(&mut self, rm: &crate::macro_cache::RegionMacro) {
+        let key = (rm.region_x, rm.region_z);
+        if !self.macro_resident.contains_key(&key) {
+            let g = crate::macro_gpu::GpuRegionMacro::upload(&mut self.rd, rm);
+            self.macro_resident.insert(key, g);
+        }
+    }
+
+    /// M2.4c step-2: drop a region's macro and free its texture RIDs.
+    pub fn evict_region(&mut self, rx: i32, rz: i32) {
+        if let Some(g) = self.macro_resident.remove(&(rx, rz)) {
+            g.free(&mut self.rd);
+        }
+    }
+
+    /// M2.4c step-2: number of regions currently resident on this RD.
+    pub fn macro_resident_count(&self) -> usize {
+        self.macro_resident.len()
     }
 
     /// Dispatch the field over one page and read all channels back to the CPU.
