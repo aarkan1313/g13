@@ -63,6 +63,7 @@ void vertex() {
 
 uniform float height_lo = 60.0;   // approx low end of the page's height range
 uniform float height_hi = 360.0;  // approx high end (for tint contrast only)
+uniform int terrain_palette = 0;  // 0 = default WG13 green/tan, 1 = DEM review earth/rock
 // Per-page debug tint multiplier (1.0 = none). A faint checkerboard across
 // pages makes the page layout visible so seams are verifiable: if the SURFACE
 // is continuous across a tint change, there's no crack. Set to 1.0 for clean.
@@ -129,6 +130,11 @@ vec3 biome_color(float id_f) {
 }
 
 void fragment() {
+	// Use the field's analytic normal per pixel. Vertex displacement still needs
+	// mesh geometry, but lighting should not expose coarse clipmap triangles.
+	vec2 grad = texture(normal_tex, clamp(UV, vec2(0.0), vec2(1.0))).rg;
+	NORMAL = normalize(vec3(grad.x, 2.0 * cell_spacing, grad.y));
+
 	if (view_mode == 1) {
 		// Temperature view: tint by the climate texture's R channel.
 		float tv = texture(climate_tex, clamp(UV, vec2(0.0), vec2(1.0))).r;
@@ -148,7 +154,14 @@ void fragment() {
 		// Normal: flat untextured look, low ground green -> high ground tan, so
 		// shape reads without textures (those are M3). Tint only; not gameplay.
 		float t = clamp((v_height - height_lo) / max(height_hi - height_lo, 1.0), 0.0, 1.0);
-		ALBEDO = mix(vec3(0.26, 0.40, 0.20), vec3(0.55, 0.50, 0.40), t) * page_tint;
+		if (terrain_palette == 1) {
+			vec3 low = vec3(0.34, 0.30, 0.23);
+			vec3 mid = vec3(0.55, 0.47, 0.34);
+			vec3 high = vec3(0.70, 0.64, 0.52);
+			ALBEDO = mix(mix(low, mid, smoothstep(0.0, 0.58, t)), high, smoothstep(0.55, 1.0, t)) * page_tint;
+		} else {
+			ALBEDO = mix(vec3(0.26, 0.40, 0.20), vec3(0.55, 0.50, 0.40), t) * page_tint;
+		}
 		ROUGHNESS = 0.95;
 	}
 }

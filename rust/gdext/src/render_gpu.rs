@@ -18,7 +18,7 @@ use godot::classes::{
 };
 use godot::prelude::*;
 
-use crate::field_gpu::PageParams;
+use crate::field_gpu::{disabled_dem_kernel_bytes, PageParams};
 
 /// The four render textures a page produces, as MAIN-device RD texture RIDs.
 /// RAII: frees the RIDs on Drop (RD textures are NOT ref-counted). The pool keeps
@@ -50,8 +50,10 @@ pub struct RenderGpu {
     rd: Gd<RenderingDevice>,
     shader: Rid,
     pipeline: Rid,
+    uses_dem_kernel: bool,
     /// M2.2 biome centroid table bytes (binding 2), same data the local path uses.
     biome_bytes: PackedByteArray,
+    dem_kernel_bytes: PackedByteArray,
 }
 
 impl RenderGpu {
@@ -64,6 +66,7 @@ impl RenderGpu {
         // `#version` line (GLSL requires #version first). Strip the `#[compute]`
         // marker like load_glsl does.
         let src_text = read_render_glsl(field_glsl_path)?;
+        let uses_dem_kernel = src_text.to_string().contains("DemKernel");
         let mut src = RdShaderSource::new_gd();
         src.set_language(ShaderLanguage::GLSL);
         src.set_stage_source(ShaderStage::COMPUTE, &src_text);
@@ -75,13 +78,20 @@ impl RenderGpu {
         }
         let shader = rd.shader_create_from_spirv(&spirv);
         let pipeline = rd.compute_pipeline_create(shader);
-        Some(Self { rd, shader, pipeline, biome_bytes })
+        let dem_kernel_bytes = disabled_dem_kernel_bytes();
+        Some(Self { rd, shader, pipeline, uses_dem_kernel, biome_bytes, dem_kernel_bytes })
     }
 
     /// Update the biome centroid table (binding 2) to match the local path.
     pub fn set_biome_bytes(&mut self, biome_bytes: PackedByteArray) {
         if !biome_bytes.is_empty() {
             self.biome_bytes = biome_bytes;
+        }
+    }
+
+    pub fn set_dem_kernel_bytes(&mut self, bytes: PackedByteArray) {
+        if !bytes.is_empty() {
+            self.dem_kernel_bytes = bytes;
         }
     }
 
@@ -133,11 +143,27 @@ impl RenderGpu {
         let u_c = image_uniform(3, climate);
         let u_bi = image_uniform(4, biome);
         let u_n = image_uniform(5, normal);
-        let uniform_set = self.rd.uniform_set_create(
-            &array![&u_h, &u_p, &u_b, &u_c, &u_bi, &u_n],
-            self.shader,
-            0,
-        );
+        let dem_buf = if self.uses_dem_kernel {
+            Some(self.rd.storage_buffer_create_ex(self.dem_kernel_bytes.len() as u32)
+                .data(&self.dem_kernel_bytes)
+                .done())
+        } else {
+            None
+        };
+        let uniform_set = if let Some(dem_rid) = dem_buf {
+            let u_dem = buffer_uniform(6, dem_rid);
+            self.rd.uniform_set_create(
+                &array![&u_h, &u_p, &u_b, &u_c, &u_bi, &u_n, &u_dem],
+                self.shader,
+                0,
+            )
+        } else {
+            self.rd.uniform_set_create(
+                &array![&u_h, &u_p, &u_b, &u_c, &u_bi, &u_n],
+                self.shader,
+                0,
+            )
+        };
 
         let groups = ((res + 7) / 8) as u32;
         let cl = self.rd.compute_list_begin();
@@ -151,6 +177,9 @@ impl RenderGpu {
         self.rd.free_rid(uniform_set);
         self.rd.free_rid(param_buf);
         self.rd.free_rid(biome_buf);
+        if let Some(dem_buf) = dem_buf {
+            self.rd.free_rid(dem_buf);
+        }
 
         Some(RenderTextures { height, climate, biome, normal })
     }

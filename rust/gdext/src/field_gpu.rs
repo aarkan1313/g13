@@ -23,7 +23,7 @@ pub const FIELD_CHANNELS: usize = 6;
 pub const BIOME_STRIDE: usize = 4;
 
 pub(crate) fn disabled_dem_kernel_bytes() -> PackedByteArray {
-    let vals = [0.0f32, 1.0, 1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0];
+    let vals = [0.0f32, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0];
     let mut bytes: Vec<u8> = Vec::with_capacity(vals.len() * 4);
     for v in vals {
         bytes.extend_from_slice(&v.to_le_bytes());
@@ -294,6 +294,13 @@ impl FieldGpu {
         let mut out_bufs: Vec<Rid> = Vec::with_capacity(batch.len());
         let mut buffers: Vec<Rid> = Vec::new();        // param/biome (+out, added later)
         let mut uniform_sets: Vec<Rid> = Vec::new();
+        let dem_buf = if self.uses_dem_kernel {
+            Some(self.rd.storage_buffer_create_ex(self.dem_kernel_bytes.len() as u32)
+                .data(&self.dem_kernel_bytes)
+                .done())
+        } else {
+            None
+        };
 
         let cl = self.rd.compute_list_begin();
         self.rd.compute_list_bind_compute_pipeline(cl, self.pipeline);
@@ -319,7 +326,15 @@ impl FieldGpu {
             u_biome.set_uniform_type(UniformType::STORAGE_BUFFER);
             u_biome.set_binding(2);
             u_biome.add_id(biome_buf);
-            let uniform_set = self.rd.uniform_set_create(&array![&u_out, &u_param, &u_biome], self.shader, 0);
+            let uniform_set = if let Some(dem_rid) = dem_buf {
+                let mut u_dem = RdUniform::new_gd();
+                u_dem.set_uniform_type(UniformType::STORAGE_BUFFER);
+                u_dem.set_binding(6);
+                u_dem.add_id(dem_rid);
+                self.rd.uniform_set_create(&array![&u_out, &u_param, &u_biome, &u_dem], self.shader, 0)
+            } else {
+                self.rd.uniform_set_create(&array![&u_out, &u_param, &u_biome], self.shader, 0)
+            };
 
             self.rd.compute_list_bind_uniform_set(cl, uniform_set, 0);
             self.rd.compute_list_dispatch(cl, groups, groups, 1);
@@ -354,6 +369,9 @@ impl FieldGpu {
         for rid in uniform_sets { self.rd.free_rid(rid); }
         for rid in out_bufs { self.rd.free_rid(rid); }
         for rid in buffers { self.rd.free_rid(rid); }
+        if let Some(dem_buf) = dem_buf {
+            self.rd.free_rid(dem_buf);
+        }
         results
     }
 }

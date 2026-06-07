@@ -273,6 +273,23 @@ impl PagePool {
         self.cpu_readback_enabled = enabled;
     }
 
+    #[func]
+    fn load_dem_kernel_npy(&mut self, path: GString, footprint_m: f32, relief_m: f32, amplitude_m: f32) -> bool {
+        let Some(bytes) = load_dem_kernel_npy_bytes(&path, footprint_m, relief_m, amplitude_m) else {
+            godot_error!("PagePool: failed to load DEM kernel {}", path);
+            return false;
+        };
+        if let Some(gpu) = self.gpu.as_mut() {
+            gpu.set_dem_kernel_bytes(&bytes);
+        }
+        if let Some(render) = self.render.as_mut() {
+            render.set_dem_kernel_bytes(bytes.clone());
+        }
+        self.cache.clear();
+        self.pending_collision.clear();
+        true
+    }
+
     /// World span one page covers (shared-boundary-cell convention, 00 §5.1).
     #[func]
     fn page_span(&self) -> f32 {
@@ -590,4 +607,91 @@ impl PagePool {
     /// dispatch + blocking readback). The HUD reads this to attribute the
     /// fast-motion spike. Reset each begin_frame().
     #[func] fn produce_us_this_frame(&self) -> i64 { self.produce_us_this_frame }
+}
+
+pub(crate) fn load_dem_kernel_npy_bytes(path: &GString, footprint_m: f32, relief_m: f32, amplitude_m: f32) -> Option<PackedByteArray> {
+    use godot::classes::file_access::ModeFlags;
+    use godot::classes::FileAccess;
+
+    let mut f = FileAccess::open(path, ModeFlags::READ)?;
+    let len = f.get_length() as i64;
+    let raw = f.get_buffer(len);
+    let data = raw.as_slice();
+    if data.len() < 16 || &data[0..6] != b"\x93NUMPY" {
+        godot_error!("PagePool: DEM kernel is not a .npy file: {}", path);
+        return None;
+    }
+    let major = data[6];
+    let header_start;
+    let header_len;
+    if major == 1 {
+        header_start = 10usize;
+        header_len = u16::from_le_bytes([data[8], data[9]]) as usize;
+    } else if major == 2 || major == 3 {
+        header_start = 12usize;
+        header_len = u32::from_le_bytes([data[8], data[9], data[10], data[11]]) as usize;
+    } else {
+        godot_error!("PagePool: unsupported npy version {} in {}", major, path);
+        return None;
+    }
+    let data_start = header_start + header_len;
+    if data_start > data.len() {
+        godot_error!("PagePool: truncated npy header in {}", path);
+        return None;
+    }
+    let header = std::str::from_utf8(&data[header_start..data_start]).ok()?;
+    if !header.contains("'<f4'") && !header.contains("\"<f4\"") && !header.contains("'|f4'") {
+        godot_error!("PagePool: DEM kernel must be little-endian float32: {}", path);
+        return None;
+    }
+    if header.contains("True") {
+        godot_error!("PagePool: DEM kernel cannot be Fortran-order: {}", path);
+        return None;
+    }
+    let (w, h) = parse_npy_shape(header)?;
+    if w != h {
+        godot_error!("PagePool: DEM kernel must be square, got {}x{} in {}", w, h, path);
+        return None;
+    }
+    let count = w.checked_mul(h)?;
+    let byte_count = count.checked_mul(4)?;
+    if data_start + byte_count > data.len() {
+        godot_error!("PagePool: DEM kernel data is truncated in {}", path);
+        return None;
+    }
+
+    let mut out: Vec<u8> = Vec::with_capacity(8 * 4 + byte_count);
+    let meta = [
+        1.0f32,
+        w as f32,
+        footprint_m.max(1.0),
+        relief_m.max(0.0),
+        amplitude_m,
+        0.0,
+        0.0,
+        0.0,
+    ];
+    for v in meta {
+        out.extend_from_slice(&v.to_le_bytes());
+    }
+    out.extend_from_slice(&data[data_start..data_start + byte_count]);
+    Some(PackedByteArray::from(out.as_slice()))
+}
+
+fn parse_npy_shape(header: &str) -> Option<(usize, usize)> {
+    let shape_at = header.find("shape")?;
+    let rest = &header[shape_at..];
+    let open = rest.find('(')? + shape_at + 1;
+    let close = header[open..].find(')')? + open;
+    let dims: Vec<usize> = header[open..close]
+        .split(',')
+        .filter_map(|s| {
+            let t = s.trim();
+            if t.is_empty() { None } else { t.parse::<usize>().ok() }
+        })
+        .collect();
+    if dims.len() < 2 {
+        return None;
+    }
+    Some((dims[1], dims[0]))
 }

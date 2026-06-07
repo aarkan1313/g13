@@ -1,0 +1,24 @@
+[gd_scene format=3 uid="uid://crtpy41jowpes"]
+
+[ext_resource type="Script" path="res://scripts/dem_grounded_world_view.gd" id="1_view"]
+[ext_resource type="Script" path="res://scripts/player_capsule.gd" id="2_player"]
+[ext_resource type="Script" path="res://scripts/perf_hud.gd" id="3_hud"]
+[ext_resource type="Script" path="res://scripts/auto_tour.gd" id="4_tour"]
+[ext_resource type="Script" path="res://scripts/view_legend_hud.gd" id="5_legend"]
+
+[node name="DemGroundedTerrainReview" type="Node3D"]
+
+[node name="View" type="Node3D" parent="."]
+script = ExtResource("1_view")
+
+[node name="Player" type="CharacterBody3D" parent="."]
+script = ExtResource("2_player")
+
+[node name="PerfHUD" type="CanvasLayer" parent="."]
+script = ExtResource("3_hud")
+
+[node name="ViewLegendHUD" type="CanvasLayer" parent="."]
+script = ExtResource("5_legend")
+
+[node name="AutoTour" type="Node" parent="."]
+script = ExtResource("4_tour")

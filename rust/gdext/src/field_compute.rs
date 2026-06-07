@@ -6,6 +6,7 @@
 //! GPU-dispatch implementation, so there is no duplicated field code (00 §4).
 
 use crate::field_gpu::{FieldGpu, FieldPage, PageParams, BIOME_STRIDE};
+use crate::page_pool::load_dem_kernel_npy_bytes;
 use godot::classes::image::Format;
 use godot::classes::{Image, ImageTexture};
 use godot::prelude::*;
@@ -60,6 +61,20 @@ impl FieldCompute {
             gpu.set_biome_centroids(&PackedFloat32Array::from(flat.as_slice()));
         }
         self.gpu.is_some()
+    }
+
+    #[func]
+    fn load_dem_kernel_npy(&mut self, path: GString, footprint_m: f32, relief_m: f32, amplitude_m: f32) -> bool {
+        let Some(bytes) = load_dem_kernel_npy_bytes(&path, footprint_m, relief_m, amplitude_m) else {
+            godot_error!("FieldCompute: failed to load DEM kernel {}", path);
+            return false;
+        };
+        if let Some(gpu) = self.gpu.as_mut() {
+            gpu.set_dem_kernel_bytes(&bytes);
+            true
+        } else {
+            false
+        }
     }
 
     /// Build PageParams with the default continental climate + biome roster (so
