@@ -21,6 +21,12 @@ uniform sampler2D climate_tex : filter_linear, repeat_disable;
 // category, not a value — linear filtering between two ids would invent a wrong
 // in-between id at borders. (Hard borders here are expected; M2.4 blends them.)
 uniform sampler2D biome_tex : filter_nearest, repeat_disable;
+// M2.4 analytic normal page (RG32F): R = normal_x = -(hr-hl), G = normal_z = -(hu-hd),
+// the surface gradient computed in the field compute from the CONTINUOUS height
+// function at world neighbors. Reading this (instead of finite-differencing the
+// clamped height texture) gives a normal that AGREES across page edges -> no
+// per-chunk shading seam. linear filter for smooth per-pixel shading.
+uniform sampler2D normal_tex : filter_linear, repeat_disable;
 // View mode: 0 = normal height shading, 1 = temperature, 2 = moisture, 3 = biome.
 uniform int view_mode = 0;
 // World extent the page covers (page_res * spacing), so UVs map to the plane.
@@ -45,12 +51,14 @@ void vertex() {
 	v_height = h;
 	VERTEX.y = h;
 
-	// Finite-difference normal from neighboring texels.
-	float du = cell_spacing / page_world_size;
-	float hx = sample_h(uv + vec2(du, 0.0)) - sample_h(uv - vec2(du, 0.0));
-	float hz = sample_h(uv + vec2(0.0, du)) - sample_h(uv - vec2(0.0, du));
-	vec3 n = normalize(vec3(-hx, 2.0 * cell_spacing, -hz));
-	NORMAL = n;
+	// M2.4: read the analytic surface normal from normal_tex instead of finite-
+	// differencing the (UV-clamped) height texture. The stored gradient is
+	// nx = -(hr-hl), nz = -(hu-hd) over 2*spacing, so the normal is
+	// normalize(vec3(nx, 2*cell_spacing, nz)) — identical convention to the old
+	// finite difference, but the values AGREE across page edges (computed from the
+	// continuous field at true world neighbors), so there's no per-chunk seam.
+	vec2 grad = texture(normal_tex, clamp(uv, vec2(0.0), vec2(1.0))).rg;
+	NORMAL = normalize(vec3(grad.x, 2.0 * cell_spacing, grad.y));
 }
 
 uniform float height_lo = 60.0;   // approx low end of the page's height range
