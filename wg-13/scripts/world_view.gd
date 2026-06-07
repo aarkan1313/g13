@@ -27,7 +27,7 @@ const AABB_HALF_HEIGHT := 4000.0
 # M1.6: 6 levels @ base span 508m, radius 3 -> coarsest reaches ~49km (30km goal
 # with margin). Each coarser level doubles per-page span, so reach is exponential
 # for linear page cost. (level span = base_span * 2^level.)
-@export var num_levels: int = 6            # fine (0) + coarse blankets, out to the horizon
+@export var num_levels: int = 8            # fine (0) + coarse blankets — 8 levels @ base span ~508m, radius 3 -> reach ~195km (render-forever P1); the 2 new levels are coarse and route through the bounded mid-coarse path automatically
 @export var ring_radius: int = 3           # pages each side, per level, around camera
 @export var evict_margin: int = 1          # hysteresis: keep_radius = ring_radius + margin
 @export var max_new_per_frame: int = 4

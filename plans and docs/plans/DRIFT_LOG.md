@@ -4,6 +4,14 @@ The human reads this FIRST every session. The agent appends here whenever it blo
 
 ---
 
+## [2026-06-07] - RENDER-FOREVER P1 (reach 6->8 levels, ~195km) - PARKED FOR VISUAL
+TYPE: PARKED-FOR-VISUAL (test gate self-certified; the LOOK awaits human eyes — 02_WORKFLOW §2)
+WHAT: num_levels 6->8 in world_view.gd (GDScript-only, no rebuild). reach = ring_radius*base_span*2^(num_levels-1) = 3*508*128 -> ~195.1 km (was ~48.8 km). The clipmap was built to scale this way; the 2 new levels are coarse and route through the existing BOUNDED mid-coarse path automatically (only the single coarsest stays unbounded for now).
+TEST GATE (self-certified, output-proven): full 10-gate suite GREEN at 8 levels. Burst median-of-maxes 10.10ms (6lvl baseline, measured this session) -> 10.95ms (8lvl), still 0/720 over the 16.6ms budget — the 2 extra coarse levels cost ~0.85ms, absorbed by the M2.6 GPU-resident + tapered-coarse foundation. VRAM bounded (resident 368 << produced 5213, eviction reclaims). m1_4 seam / m1_7a heights / m1_7b+c collision / m2_1 climate / m2_2 biome / m2_3 composition / m2_6_vram all PASS. Reach print confirmed: "8-level clipmap, ring_radius 3, base span 508m -> reach ~195.1 km".
+VISUAL GATE — BELIEVE SATISFIED, AWAITING HUMAN: launched run.ps1. Questions for the fly: (1) does terrain now read to a FAR horizon in all directions (the "render forever" goal)? (2) THE WATCHED UNKNOWN — any vertex shimmer / precision wobble at the far distance (float precision ~195km from origin)? If shimmer appears it becomes its OWN gated step (camera-relative origin), NOT a pre-emptive fix now. NB the far edge still uses the OLD fog ratios (fog_end 0.98*reach, far 1.3*reach) so the far edge may still POP — that's exactly what P2 (next step) fixes; judge reach/horizon here, pop-in at P2.
+DID NOT PROCEED to P2. CODEBASE STATE: green at [commit pending] + Codex's inert uncommitted rust edits (untouched).
+HARDWARE NOTE: gates ran on an RTX 5090 Laptop GPU (the dev machine), not the RTX 3070 minimum target — perf headroom on the 3070 will be tighter; the 0/720 result is on the faster card. (Pre-existing; all M2.6 numbers were on this machine too.)
+
 ## [2026-06-07] - CODEX RUST DIVERGENCE RECONCILED (decision: KEEP uncommitted DEM-kernel wiring; it's inert for the render-forever track)
 TYPE: DEVIATION-AVERTED / reconciliation (resolves the "reconcile before rust work" caution in the prior two entries + HANDOFF §3)
 WHAT I CHECKED: `git diff HEAD` on the three modified rust files (field_gpu.rs +22, page_pool.rs +103, render_gpu.rs +43) and grepped for the DEM-kernel symbols across committed vs working tree.
