@@ -558,6 +558,39 @@ float biome_id(float temp, float moist, float alt) {
     return float(best);
 }
 
+// M2.4c: sample the cached macro layer from the bound 2x2 region neighborhood.
+// Selects the region the world point falls in (slot select, NOT blend -- step-1
+// borders agree to <1m so a hard select is seamless), computes that region's
+// local UV in [0,1], and hardware-bilinear samples height/range/channel.
+// macro_origin_* = world origin of slot (0,0); each region core spans
+// macro_core_span world units. present-mask gates whether the slot is real.
+struct MacroCell { float height; float range; float channel; bool present; };
+
+MacroCell macro_sample(vec2 world_xz) {
+    vec2 local = (world_xz - vec2(macro_origin_x, macro_origin_z)) / macro_core_span;
+    int dx = int(clamp(floor(local.x), 0.0, 1.0));
+    int dz = int(clamp(floor(local.y), 0.0, 1.0));
+    vec2 uv = clamp(local - vec2(float(dx), float(dz)), 0.0, 1.0); // within-region [0,1]
+    uint bit = uint(dz * 2 + dx);
+    bool present = (macro_present_mask & (1u << bit)) != 0u;
+    MacroCell m;
+    m.present = present;
+    // GLSL can't index samplers by a variable -> explicit per-slot branch.
+    if (dx == 0 && dz == 0) { m.height = texture(macro_h_00, uv).r; m.range = texture(macro_r_00, uv).r; m.channel = texture(macro_c_00, uv).r; }
+    else if (dx == 1 && dz == 0) { m.height = texture(macro_h_10, uv).r; m.range = texture(macro_r_10, uv).r; m.channel = texture(macro_c_10, uv).r; }
+    else if (dx == 0 && dz == 1) { m.height = texture(macro_h_01, uv).r; m.range = texture(macro_r_01, uv).r; m.channel = texture(macro_c_01, uv).r; }
+    else { m.height = texture(macro_h_11, uv).r; m.range = texture(macro_r_11, uv).r; m.channel = texture(macro_c_11, uv).r; }
+    return m;
+}
+
+// M2.4c: gentle per-cell detail on top of the macro (reuses value_fbm, NOT the
+// oracle's sharp channels). Small amplitude so walked ground has texture, not
+// terraces and not 1km walls. value_fbm returns ~[0,1] -> recenter to +/-70m.
+float macro_detail(vec2 world_xz, uint seed) {
+    float d = value_fbm(world_xz * 0.0016, seed ^ 0x4d414344u, 4u, 2.0, 0.5) - 0.5;
+    return d * 2.0 * 70.0;  // +/-70m fine roughness
+}
+
 void main() {
     uvec2 cell = gl_GlobalInvocationID.xy;
     if (cell.x >= page_res || cell.y >= page_res) {
@@ -569,27 +602,19 @@ void main() {
     // hand-set character). Replaces the flat M1 fbm. Climate/biome unchanged below
     // (height never feeds biome — biome uses macro_altitude; no circularity).
     float h;
-    if (terrain_mode == 1u) {
+    if (terrain_mode == 2u) {
+        // M2.4c MACRO_CACHE: LOD-stable smoothed macro + gentle per-cell detail.
+        MacroCell m = macro_sample(world_xz);
+        if (m.present) {
+            h = m.height + macro_detail(world_xz, uint(seed));
+        } else {
+            // never-black: fall back to the REFERENCE height where no macro is bound.
+            h = composition_height(world_xz, uint(seed));
+        }
+    } else if (terrain_mode == 1u) {
         h = oracle_height(world_xz, uint(scaffold_seed));
     } else {
         h = composition_height(world_xz, uint(seed));
-    }
-
-    // M2.4c keep-alive: reference all 12 macro samplers so SPIR-V retains their
-    // binding layout even though mode 0/1 never read them (Task 4 adds the real
-    // read and DELETES this whole block). The branch can never run (the runtime
-    // mask only ever sets the low 4 bits, never 0xFFFFFFFF), so output is
-    // bit-identical. What keeps this SAFE is that macro_present_mask is a
-    // NON-CONSTANT uniform: the compiler can't fold the branch away, so it must
-    // keep the branch (and thus the texture() calls / bindings) live. The
-    // `* 0.0` alone would NOT be a reliable optimizer barrier. Do not strip the
-    // mask guard.
-    if (macro_present_mask == 0xFFFFFFFFu) {
-        float keep = texture(macro_h_00, vec2(0.5)).r + texture(macro_r_00, vec2(0.5)).r + texture(macro_c_00, vec2(0.5)).r
-                   + texture(macro_h_10, vec2(0.5)).r + texture(macro_r_10, vec2(0.5)).r + texture(macro_c_10, vec2(0.5)).r
-                   + texture(macro_h_01, vec2(0.5)).r + texture(macro_r_01, vec2(0.5)).r + texture(macro_c_01, vec2(0.5)).r
-                   + texture(macro_h_11, vec2(0.5)).r + texture(macro_r_11, vec2(0.5)).r + texture(macro_c_11, vec2(0.5)).r;
-        h += keep * 0.0;
     }
 
     vec2 c = climate(world_xz, h, uint(seed));
