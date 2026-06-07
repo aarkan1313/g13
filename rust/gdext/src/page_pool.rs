@@ -112,6 +112,12 @@ struct FieldConfig {
     // M2.4b candidate terrain mode (0 = M2.3 reference, 1 = oracle) + oracle seed.
     terrain_mode: u32,
     scaffold_seed: f32,
+    // M2.4c macro-cache tunables (DATA, engine-not-a-game): metres per macro cell,
+    // world span one super-region covers, and the resident region-cache capacity.
+    // Spec start values; picked by the visual gate, not hardcoded terrain.
+    macro_bake_spacing_m: f32,
+    macro_super_region_m: f32,
+    macro_cache_cap: usize,
 }
 
 impl Default for FieldConfig {
@@ -134,6 +140,11 @@ impl Default for FieldConfig {
             biome_alt_freq: BIOME_ALT_FREQ,
             terrain_mode: 0,
             scaffold_seed: 1234.0,   // mirrors the default seed; world_view can sync it
+            // M2.4c macro-cache start values (spec): 256 m/cell, 30 km super-region,
+            // 256 resident regions. RegionCache cap is bound at init() from this.
+            macro_bake_spacing_m: 256.0,
+            macro_super_region_m: 30000.0,
+            macro_cache_cap: 256,
         }
     }
 }
@@ -144,6 +155,11 @@ pub struct PagePool {
     base: Base<RefCounted>,
     gpu: Option<FieldGpu>,
     cfg: FieldConfig,
+
+    /// M2.4c step-2: bounded LRU of baked super-region macros (CPU side). Bakes
+    /// land here once, then get GPU-resident via FieldGpu::ensure_region. Cap is
+    /// fixed at init from cfg.macro_cache_cap (live resize is out of step-2 scope).
+    region_cache: crate::macro_cache::RegionCache,
 
     cache: HashMap<PageKey, ResidentPage>,
     /// Pages currently displayed — must NOT be evicted out from under the mesh
@@ -177,10 +193,14 @@ pub struct PagePool {
 #[godot_api]
 impl IRefCounted for PagePool {
     fn init(base: Base<RefCounted>) -> Self {
+        // Build cfg once so both `cfg:` and the region-cache cap read the SAME
+        // default (no magic 256 — cap follows the tunable).
+        let cfg = FieldConfig::default();
         Self {
             base,
             gpu: None,
-            cfg: FieldConfig::default(),
+            region_cache: crate::macro_cache::RegionCache::new(cfg.macro_cache_cap),
+            cfg,
             cache: HashMap::new(),
             pinned: std::collections::HashSet::new(),
             max_new_per_frame: 4,
@@ -247,7 +267,19 @@ impl PagePool {
     /// immediately.
     #[func]
     fn set_terrain_mode(&mut self, mode: i64) {
-        self.cfg.terrain_mode = if mode == 1 { 1 } else { 0 };
+        // M2.4c: 0 = REFERENCE, 1 = SCAFFOLD_CANDIDATE (oracle), 2 = MACRO_CACHE.
+        self.cfg.terrain_mode = match mode { 1 => 1, 2 => 2, _ => 0 };
+    }
+
+    /// M2.4c: tune the macro-cache bake (metres/cell, super-region span, resident
+    /// cap). The RegionCache capacity is bound at init(); changing `cap` here only
+    /// updates cfg — it takes effect on the NEXT init (live resize is out of step-2
+    /// scope). spacing/super_m apply to the next bake.
+    #[func]
+    fn set_macro_config(&mut self, spacing: f32, super_m: f32, cap: i64) {
+        self.cfg.macro_bake_spacing_m = spacing;
+        self.cfg.macro_super_region_m = super_m;
+        self.cfg.macro_cache_cap = cap as usize;
     }
 
     /// M2.4b: set the oracle seed (defaults to the world seed). Optional tuning hook.
@@ -450,6 +482,43 @@ impl PagePool {
         }
     }
 
+    /// M2.4c step-2: ensure the 2x2 region block (lower corner r0) covering this
+    /// page is baked + GPU-resident. Returns the present-mask (bit dz*2+dx set if
+    /// slot (dx,dz) is resident). STEP-2 = SYNCHRONOUS: bakes on the main thread,
+    /// so flying into a fresh region hitches once (accepted; step 3 swaps the body
+    /// to off-thread + returns a partial mask for not-ready slots — the call site
+    /// and the shader's present-mask fallback do NOT change).
+    fn ensure_macro_neighborhood(&mut self, r0x: i32, r0z: i32) -> u32 {
+        let cfg = crate::macro_cache::MacroBakeConfig {
+            bake_spacing_m: self.cfg.macro_bake_spacing_m,
+            super_region_m: self.cfg.macro_super_region_m,
+        };
+        let seed = self.cfg.seed as u64;
+        let mut mask = 0u32;
+        for dz in 0..2i32 {
+            for dx in 0..2i32 {
+                let (rx, rz) = (r0x + dx, r0z + dz);
+                // Bake into the cache if missing (separate from the GPU-ensure to keep
+                // the cache `&` borrow from colliding with the gpu `&mut`).
+                if !self.region_cache.contains(rx, rz) {
+                    let rm = crate::macro_cache::MacroBake::bake_region(seed, rx, rz, cfg);
+                    self.region_cache.insert(rm);
+                }
+                // Upload to the GPU + mark present. Split-borrow the two distinct
+                // fields (region_cache `&` vs gpu `&mut`) explicitly so the borrow
+                // checker accepts the simultaneous use without cloning RegionMacro.
+                let PagePool { region_cache, gpu, .. } = self;
+                if let Some(rm) = region_cache.get(rx, rz) {
+                    if let Some(gpu) = gpu.as_mut() {
+                        gpu.ensure_region(rm);
+                    }
+                    mask |= 1u32 << (dz * 2 + dx) as u32;
+                }
+            }
+        }
+        mask
+    }
+
     /// Produce one page on the GPU (via shared FieldGpu): the height array AND
     /// the R32F texture packed from it, kept together as a ResidentPage so they
     /// can't drift (M1.7 one-source-of-truth). Coarser levels stretch origin
@@ -459,7 +528,7 @@ impl PagePool {
         let t0 = std::time::Instant::now();
         let scale = (1 << key.level.max(0)) as f32;
         let span = self.page_span() * scale;
-        let params = PageParams {
+        let mut params = PageParams {
             origin_x: key.gx as f32 * span,
             origin_z: key.gz as f32 * span,
             spacing: self.cfg.spacing * scale,
@@ -480,19 +549,43 @@ impl PagePool {
             biome_alt_freq: self.cfg.biome_alt_freq,
             terrain_mode: self.cfg.terrain_mode,
             scaffold_seed: self.cfg.scaffold_seed,
-            // M2.4c: macro neighborhood is filled by Task 5 (page-pool computes the
-            // 2x2 region block + ensures residency). For now defaults: empty mask,
-            // core_span 1.0 (not 0.0) to avoid any divide-by-zero in Task 4's shader.
+            // M2.4c: macro defaults for mode 0/1 (empty mask, core_span 1.0 not 0.0
+            // to avoid any divide-by-zero in the shader). In MACRO_CACHE mode (2)
+            // the block below overwrites these from the ensured 2x2 region block.
             macro_origin_x: 0.0,
             macro_origin_z: 0.0,
             macro_core_span: 1.0,
             macro_present_mask: 0,
         };
+        // M2.4c: in MACRO_CACHE mode, ensure + bind the page's 2x2 region block.
+        let neighborhood = if self.cfg.terrain_mode == 2 {
+            let mcfg = crate::macro_cache::MacroBakeConfig {
+                bake_spacing_m: self.cfg.macro_bake_spacing_m,
+                super_region_m: self.cfg.macro_super_region_m,
+            };
+            let core_span = mcfg.core_span_m();
+            // r0 = the region containing the page's origin (min corner). A fine page
+            // is <= one region across, so its cells fall in the 2x2 block r0..r0+1.
+            // (A COARSE page can span MANY regions -> its far cells get present=0 and
+            // fall back to composition_height. Accepted for step 2; the walk-test is
+            // at fine LOD near the player. Documented for Task 6 / step 3.)
+            let r0x = (params.origin_x / core_span).floor() as i32;
+            let r0z = (params.origin_z / core_span).floor() as i32;
+            let mask = self.ensure_macro_neighborhood(r0x, r0z);
+            params.macro_origin_x = r0x as f32 * core_span;
+            params.macro_origin_z = r0z as f32 * core_span;
+            params.macro_core_span = core_span;
+            params.macro_present_mask = mask;
+            [(r0x, r0z), (r0x + 1, r0z), (r0x, r0z + 1), (r0x + 1, r0z + 1)]
+        } else {
+            [(0, 0); 4]
+        };
         // Profiled region: GPU dispatch + blocking readback (rd.sync) — the
         // suspected fast-motion spike source. Accumulated per frame (M1.9.1).
         // neighborhood slots (dx,dz) = (0,0),(1,0),(0,1),(1,1) -- must match the
-        // GLSL macro_*_00..11 binding order. Empty for now; wired in Task 5.
-        let FieldPage { heights, temp, moisture, biome } = self.gpu.as_mut()?.dispatch_page(params, [(0, 0); 4])?;
+        // GLSL macro_*_00..11 binding order and the present-mask bit dz*2+dx.
+        let FieldPage { heights, temp, moisture, biome } =
+            self.gpu.as_mut()?.dispatch_page(params, neighborhood)?;
         self.produce_us_this_frame += t0.elapsed().as_micros() as i64;
         let res = self.cfg.page_res as i32;
         // Height texture: R32F, byte-identical to `heights` (M1.7 contract).

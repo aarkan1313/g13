@@ -51,11 +51,12 @@ var _ring_shader: Resource
 # path real biome textures will use in M3).
 var _view_mode := 0
 const VIEW_MODE_NAMES := ["normal", "temperature", "moisture", "biome"]
-# M2.4b — live terrain mode: 0 = REFERENCE (M2.3 composition), 1 = SCAFFOLD_CANDIDATE
-# (per-cell oracle). Cycled by B; pushed to the pool, then all resident pages are
-# flushed so the whole visible world refreshes to the new mode immediately.
+# M2.4b/c — live terrain mode: 0 = REFERENCE (M2.3 composition), 1 = SCAFFOLD_CANDIDATE
+# (per-cell oracle), 2 = MACRO_CACHE (sample the baked GPU-resident macro region).
+# Cycled by B; pushed to the pool, then all resident pages are flushed so the whole
+# visible world refreshes to the new mode immediately.
 var _terrain_mode := 0
-const TERRAIN_MODE_NAMES := ["REFERENCE (M2.3)", "SCAFFOLD_CANDIDATE (oracle)"]
+const TERRAIN_MODE_NAMES := ["REFERENCE (M2.3)", "SCAFFOLD_CANDIDATE (oracle)", "MACRO_CACHE"]
 var _instances := {}                       # "L:gx:gz" -> MeshInstance3D
 var _inst_meta := {}                        # "L:gx:gz" -> Vector3i(level,gx,gz) — parsed once, so
                                             # the per-frame loops never re-split the string key (M1.9.3c)
