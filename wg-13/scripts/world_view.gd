@@ -186,14 +186,17 @@ func _unhandled_input(event: InputEvent) -> void:
 		_view_mode = (_view_mode + 1) % VIEW_MODE_NAMES.size()
 		_apply_view_mode()
 		print("view mode: %s" % VIEW_MODE_NAMES[_view_mode])
-	# M2.4b — B cycles the TERRAIN mode (REFERENCE M2.3 <-> SCAFFOLD_CANDIDATE oracle)
-	# and flushes resident pages so the whole world re-produces in the new mode.
-	elif event is InputEventKey and event.pressed and not event.echo \
-			and event.keycode == KEY_B:
-		_terrain_mode = (_terrain_mode + 1) % TERRAIN_MODE_NAMES.size()
-		_pool.set_terrain_mode(_terrain_mode)
-		_force_regen_all_pages()
-		print("terrain mode: %s" % TERRAIN_MODE_NAMES[_terrain_mode])
+	# M2.4: the B-key terrain-mode toggle is DISABLED. The candidate lanes it cycled
+	# (1 = SCAFFOLD_CANDIDATE oracle, 2 = MACRO_CACHE) both failed visual review, so
+	# the live demo stays on REFERENCE (M2.3 composition — the visual-passed terrain)
+	# with no way to land on the bad lanes. The lane CODE is parked (not deleted) for
+	# the M2.4e terrain review; re-enable this handler to compare them again.
+	# elif event is InputEventKey and event.pressed and not event.echo \
+	#		and event.keycode == KEY_B:
+	#	_terrain_mode = (_terrain_mode + 1) % TERRAIN_MODE_NAMES.size()
+	#	_pool.set_terrain_mode(_terrain_mode)
+	#	_force_regen_all_pages()
+	#	print("terrain mode: %s" % TERRAIN_MODE_NAMES[_terrain_mode])
 
 # M2.4b — flush every resident page so the next _process re-requests them in the
 # current terrain_mode: recycle all mesh instances, drop their meta, free all
