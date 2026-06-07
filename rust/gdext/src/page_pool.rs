@@ -297,11 +297,12 @@ impl PagePool {
         let pinned = &self.pinned;
         let mut removed = 0i64;
         let mut violated = false;
-        // M2.6 Stage 3: collect the evicted pages' render RIDs so we can free them
-        // AFTER retain (the render device borrow can't overlap the cache borrow).
-        // RD textures are NOT ref-counted; not freeing here leaks VRAM.
-        let mut to_free: Vec<RenderTextures> = Vec::new();
-        self.cache.retain(|k, page| {
+        // M2.6 Stage 3 (RAII): dropping an evicted ResidentPage drops its
+        // RenderTextures, whose Drop frees the GPU RIDs on the main device — so the
+        // RID lifetime == the page's residency, no manual free, no use-after-free.
+        // (world_view clears recycled materials' textures BEFORE this, so no material
+        // still references a dropped page's Texture2DRD.)
+        self.cache.retain(|k, _page| {
             if k.level != level {
                 return true; // only manage the requested level here
             }
@@ -314,15 +315,8 @@ impl PagePool {
                 return true;
             }
             removed += 1;
-            to_free.push(page.render_rids);  // Rid fields are Copy
-            false
+            false  // dropped here -> ResidentPage::Drop -> RenderTextures::Drop frees RIDs
         });
-        // Free the evicted render textures on the main device (Stage 3).
-        if let Some(render) = self.render.as_mut() {
-            for t in &to_free {
-                render.free_textures(t);
-            }
-        }
         if violated {
             self.pin_violation = true;
         }

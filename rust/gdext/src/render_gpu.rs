@@ -20,14 +20,29 @@ use godot::prelude::*;
 
 use crate::field_gpu::PageParams;
 
-/// The four render textures a page produces, as MAIN-device RD texture RIDs. The
-/// pool wraps each in a Texture2DRD for material binding and frees them on evict.
-#[derive(Clone, Copy)]
+/// The four render textures a page produces, as MAIN-device RD texture RIDs.
+/// RAII: frees the RIDs on Drop (RD textures are NOT ref-counted). The pool keeps
+/// this alive for as long as the page is resident; dropping it (page evicted) frees
+/// the GPU textures. The pool MUST ensure no material still references the page's
+/// Texture2DRD when this drops (world_view clears recycled materials' textures).
 pub struct RenderTextures {
     pub height: Rid,   // R32F  — vertex displacement
     pub climate: Rid,  // RG32F — temperature, moisture
     pub biome: Rid,    // R32F  — biome id (float-encoded)
     pub normal: Rid,   // RG32F — normal_x, normal_z (seam-free analytic gradient)
+}
+
+impl Drop for RenderTextures {
+    fn drop(&mut self) {
+        // Free on the MAIN device. Acquire it here so lifetime == this struct's.
+        if let Some(mut rd) = RenderingServer::singleton().get_rendering_device() {
+            for rid in [self.height, self.climate, self.biome, self.normal] {
+                if rid != Rid::Invalid {
+                    rd.free_rid(rid);
+                }
+            }
+        }
+    }
 }
 
 /// Owns the MAIN RenderingDevice handle + the RENDER_MODE field pipeline.
@@ -138,14 +153,6 @@ impl RenderGpu {
         self.rd.free_rid(biome_buf);
 
         Some(RenderTextures { height, climate, biome, normal })
-    }
-
-    /// Free a page's render texture RIDs (Stage 3 eviction; not auto-freed).
-    pub fn free_textures(&mut self, t: &RenderTextures) {
-        self.rd.free_rid(t.height);
-        self.rd.free_rid(t.climate);
-        self.rd.free_rid(t.biome);
-        self.rd.free_rid(t.normal);
     }
 }
 

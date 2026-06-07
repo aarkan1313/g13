@@ -388,8 +388,19 @@ func _make_page_instance(tex, level: int, gx: int, gz: int, span: float) -> Mesh
 
 # Return an evicted instance to the free-list instead of freeing it (no churn):
 # hide it and keep it parented for reuse next time a page spawns.
+# M2.6: the render textures are GPU-resident Texture2DRDs the pool FREES when the
+# page evicts (right after this, same frame). So we MUST drop this material's
+# references to them now — otherwise the hidden material still points at a freed
+# RD texture and the renderer logs "invalid texture" every frame. Null the texture
+# params (the material is re-pointed to fresh textures on reuse in _make_page_instance).
 func _recycle_instance(mi: MeshInstance3D) -> void:
 	mi.visible = false
+	var mat: ShaderMaterial = mi.material_override
+	if mat != null:
+		mat.set_shader_parameter("height_tex", null)
+		mat.set_shader_parameter("climate_tex", null)
+		mat.set_shader_parameter("biome_tex", null)
+		mat.set_shader_parameter("normal_tex", null)
 	_free_instances.push_back(mi)
 
 func _spawn_camera() -> void:

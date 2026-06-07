@@ -18,12 +18,15 @@ extends CanvasLayer
 @export var show_position: bool = true
 @export var show_memory: bool = true
 @export var show_profiler: bool = true      # M1.9 per-system frame breakdown (key 5)
+@export var spike_log: bool = true          # M2.6 DIAGNOSTIC: print over-threshold frames to console
+@export var spike_log_ms: float = 10.0      # log frames above this (headroom: well under the 16.6 budget)
 
 var _label: Label
 var _panel: PanelContainer
 var _view: Node3D
 var _samples := PackedFloat32Array()        # recent frame delta ms (ring)
 var _accum := 0.0                           # time since last label refresh
+var _frames_seen := 0                       # M2.6 spike-log: skip startup warm frames
 
 func _ready() -> void:
 	layer = 100                             # draw over the 3D scene
@@ -68,6 +71,22 @@ func _process(delta: float) -> void:
 	_samples.push_back(ms)
 	while _samples.size() > window_frames:
 		_samples.remove_at(0)
+
+	# M2.6 DIAGNOSTIC: log every OVER-BUDGET live frame with the per-system
+	# breakdown, so a real-input hitch is captured as data (probes couldn't repro
+	# it). Toggle off via spike_log=false. Skips the first frames (startup warm).
+	if spike_log and _view != null and _view._pool != null and _frames_seen > 30 and ms > spike_log_ms:
+		var pool = _view._pool
+		var prod: float = pool.produce_us_this_frame() / 1000.0
+		var vproc: float = (_view.prof_process_us / 1000.0) if ("prof_process_us" in _view) else -1.0
+		var vmesh: float = (_view.prof_mesh_us / 1000.0) if ("prof_mesh_us" in _view) else -1.0
+		var bodies := 0
+		if "_collisions" in _view:
+			bodies = _view._collisions.size()
+		print("SPIKE frame=%.1fms prod=%.1f view=%.1f mesh=%.1f made=%d eager=%d bodies=%d pages=%d" % [
+			ms, prod, vproc, vmesh, pool.produced_this_frame(), pool.eager_this_frame(),
+			bodies, pool.resident_count()])
+	_frames_seen += 1
 
 	_accum += delta
 	if _accum < 1.0 / maxf(update_hz, 0.5):
