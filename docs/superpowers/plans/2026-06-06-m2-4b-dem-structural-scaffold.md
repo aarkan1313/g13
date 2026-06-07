@@ -219,11 +219,31 @@ Visual gates:
 
 ## Immediate Next Implementation Bite
 
-Step 2 and the first Step 3 review artifacts now exist. The next bite is
-scale/readability tuning on the playable-scale review scene, then a runtime
-candidate lane separate from the accepted M2.3 baseline.
+UPDATE 2026-06-06: the per-cell oracle (`sample_cell`) has now been rendered and
+reviewed (oracle review bite complete — see
+`docs/superpowers/plans/2026-06-06-m2-4b-oracle-review-bite.md`). Static review was
+INCONCLUSIVE: the oracle has real relief and renders, but reads flat at honest 64 km
+playable scale, and the fly-only review scenes cannot judge walkability. So the
+static-panel filter has hit its ceiling.
+
+DECISION (human-confirmed, spec Branch 1 — see
+`docs/superpowers/specs/2026-06-06-m2-4b-oracle-validation-and-integration-design.md`):
+proceed to Step 4 (runtime candidate lane) NOW, integrating the oracle into live
+`demo.tscn` as a toggleable candidate beside M2.3, so it can be FLOWN AND WALKED with
+real collision and compared. Anchor rationale: this integration work is SHARED with
+the deferred Approach C (window-based GPU pipeline) — the candidate toggle, the
+Rust->shader param plumbing, the GLSL per-cell primitives, and the collision/biome
+contract are all needed either way; only the analytic sine-curve channels (~20%) are
+throwaway if C later proves necessary. ~40% the oracle walks well and C is skipped;
+~60% it needs C, but entered then with a real walk-test as evidence (not a guess),
+avoiding the attempt #1-12 "big risky rebuild on a hunch" failure mode.
+
+The next bite is the INTEGRATION plan: port `synthesize_cell` -> GLSL as a candidate
+height path in `field_height.glsl`, a terrain-mode switch (REFERENCE = M2.3,
+SCAFFOLD_CANDIDATE = oracle), scaffold params plumbed Rust->shader like climate/biome,
+height/collision contract preserved, M2.1/2.2/2.3/m1_7c green, and a human fly+walk
+visual gate. NOTE Step 5 (apron/super-region fact cache) belongs to Approach C, not
+this per-cell integration.
 
 Do not use the compressed four-panel macro scene as gameplay scale. It is a
-structure proof. The runtime candidate should preserve the promising range/
-channel language while choosing sane horizontal span, vertical scale, traversal
-budgets, and material readability.
+structure proof.
