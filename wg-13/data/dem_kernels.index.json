@@ -1,0 +1,9 @@
+{
+  "format": "WGK1",
+  "kernel_size": 128,
+  "keep_per_archetype": 32,
+  "archetypes": [
+    { "archetype": "mountain", "kernels": 32 },
+    { "archetype": "grassland", "kernels": 32 }
+  ]
+}

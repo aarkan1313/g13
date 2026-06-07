@@ -289,16 +289,48 @@ git commit -F "d:\tmp\m24d_t4.txt"
 
 ---
 
-## Phase B sketch (locked intent; bite-sized tasks written by Task 4 Step 5)
+## Phase B — DEM-driven bake (written post-spike, against the resolved kernel asset)
 
-After the spike resolves the kernel representation, Phase B builds the DEM-driven bake. Intended tasks (shape locked by the spec; exact code written post-spike against the resolved kernel type):
+**Spike outcome (Task 4):** raw-atlas infeasible (~23 GB); kernels are diverse (corr~0). DECISION: ship a CURATED subset — `wg-13/data/dem_kernels.bin` (git-tracked, 4 MB now / ~24 MB at 12 archetypes), format `WGK1`: magic `b"WGK1"`, `u32 size`(=128), `u32 n_arche`, then per archetype `{u32 name_len, name bytes, u32 n_kernels, n_kernels*(size*size) f32 [0,1]}`. 32 kernels/archetype @ 128². The loader/blender + DEM-driven bake follow.
 
-- **Task 5 — Load the kernel asset into the runtime + a `MacroBake` blend hook.** `macro_cache` loads `dem_kernels.*` once (read the binary asset — NOT a `.tif`); add a `kernel_surface(world_xz, archetype, seed)` that samples/blends the kernels (domain-warped, multi-patch-mixed) for a region. Unit-test: deterministic, finite, [0,1]-ish, non-repeating across a wide scan.
-- **Task 6 — DEM-driven `MacroBake` for MOUNTAIN.** Replace the single-alpine height assembly: structure from the composition machine (calibrated by the mountain fingerprint — slope_p95/ridge/spectrum), surface character from `kernel_surface`. Keep `base + carves`, drop the jagged procedural detail bands (the kernels replace them). Gate: determinism, seam <1 m, real relief, mode 0/1 bit-identical. PARK: human walk-test mountains.
-- **Task 7 — Add GRASSLAND + archetype routing/transition.** Route archetype from the biome/climate field (mountain where high+steep, grassland where low+moderate); blend two banks across the transition. Gate + PARK: human walk-test the contrast + transition (the seamless-blend proof).
-- **Task 8 — Tune to AAA-ish by eye.** Iterate kernel-mix amplitude, structure calibration, detail gating using the visual lanes. PARK: human final visual gate → if it passes, M2.4d closes; update PROGRESS/DRIFT_LOG/HANDOFF.
+### Task 5: Load the kernel atlas + a deterministic kernel blender (pure Rust)
 
-Risks carried into Phase B (from the spec §9): seamless non-repeating blend (the spike de-risks the representation; Task 5 proves the blend), archetype-boundary seams (Task 7), over-smooth-vs-noise balance (Task 8 by eye). The async-BakeScheduler carry-forwards (HANDOFF §3) are a SEPARATE later step, not M2.4d.
+**Files:**
+- Create: `rust/gdext/src/macro_cache/kernels.rs` (load `WGK1`, `kernel_surface`)
+- Modify: `rust/gdext/src/macro_cache/mod.rs` (`mod kernels; pub use ...`)
+
+- [ ] **Step 1: Write the failing test** — `kernels.rs` `#[cfg(test)]`: a tiny in-memory `WGK1` blob (1 archetype, 2 kernels, size 2) parses to a `KernelAtlas` with `.kernels("mountain").len()==2`; and `kernel_surface` is deterministic (same args → same value) + finite + in ~[0,1]. Run `cargo test -p wg13 kernels` → FAIL (no module).
+- [ ] **Step 2: Implement `KernelAtlas::parse(&[u8]) -> KernelAtlas`** mirroring `serialize_atlas` (read magic/size/n_arche, then per-archetype blocks into a `HashMap<String, Vec<Vec<f32>>>`). And `KernelAtlas::load(path) -> Option<Self>` (reads the .bin — the runtime's ONE allowed file read here is the distilled asset, NOT a .tif). `kernel_surface(atlas, archetype, world_xz, seed) -> f32`: pick 2–3 kernels by a hash of a coarse world-cell + seed, sample each at a domain-warped UV (warp by low-freq noise so patch edges don't tile), bilinear-sample the kernel, blend with hash weights → a [0,1] surface-character value. Deterministic, world-anchored (spacing-independent, like the macro). Run the test → PASS.
+- [ ] **Step 3: Non-repeat scan test** — assert over a wide world scan (e.g. 64 points 2 km apart) the `kernel_surface` values aren't periodic (no exact repeats within the scan; variance above a floor). PASS.
+- [ ] **Step 4: Commit** (`git add rust/gdext/src/macro_cache/kernels.rs rust/gdext/src/macro_cache/mod.rs`).
+
+### Task 6: DEM-driven `MacroBake` for MOUNTAIN (height = structure × DEM surface)
+
+**Files:**
+- Modify: `rust/gdext/src/macro_cache/bake.rs` (load the atlas once; height assembly uses `kernel_surface`; drop the jagged procedural detail bands via `ridge_gain=0/detail_gain=0` — the kernels replace them)
+- Modify: `rust/gdext/src/macro_cache/region.rs` or `bake.rs` (the atlas handle; a `MacroBakeConfig` archetype field, defaulted "mountain" for this task)
+
+- [ ] **Step 1: Failing test** — `bake.rs` test: a mountain-baked region is deterministic, finite, has real relief (>100 m), seam-agrees with its neighbor (<1 m, the existing `adjacent_regions_agree_on_shared_border` style), AND differs measurably from the pre-DEM bake (the DEM character is actually applied). Run → FAIL.
+- [ ] **Step 2: Wire the atlas + height assembly** — load `dem_kernels.bin` once (lazy static or passed in); in `bake_region`, keep the composition machine's `base` + carves (structure), set `ridge_gain=0/detail_gain=0` (drop the jagged bands — `macro_alpine()` style), and ADD `kernel_surface` modulation scaled by structure (more on ranges via `range_envelope`, less in basins). Keep `1050 + h*520` height convention or retune. Determinism: kernel pick is world-anchored + seed-driven. Run → PASS.
+- [ ] **Step 3: Full regression + the macro live gate** — `cargo test --workspace` green; `m2_4c_macro_live_check` PASS (determinism/seam/relief); mode 0/1 bit-identical (the bake only feeds mode 2). Editor closed; vulkan.
+- [ ] **Step 4: Commit + relaunch + PARK** — human walk-test MOUNTAIN terrain (judge by SHAPE — ranges/valleys/drainage reading like real mountains; user has deuteranopia, frame around form not color). Capture verdict; tune kernel amplitude by eye if needed.
+
+### Task 7: GRASSLAND + archetype routing + transition
+
+**Files:**
+- Modify: `rust/gdext/src/macro_cache/bake.rs` (route archetype per region from the biome/climate field; blend mountain↔grassland banks across the transition)
+
+- [ ] **Step 1: Failing test** — a low/moderate region bakes grassland-character (gentler relief, different surface) and a high/steep region bakes mountain; a transition region blends both with a bounded seam. Run → FAIL.
+- [ ] **Step 2: Implement routing** — derive the region archetype from the existing macro-altitude/climate (mountain where high+steep, grassland where low+moderate; reuse the M2.2 biome inputs). Near the boundary, blend the two archetypes' `kernel_surface` by a smooth weight. Run → PASS.
+- [ ] **Step 3: Regression + gate** — workspace green; macro live gate PASS; seam bounded across an archetype boundary. 
+- [ ] **Step 4: Commit + PARK** — human walk-test the mountain↔grassland CONTRAST + transition (the seamless-blend proof). Judge by shape.
+
+### Task 8: Tune to AAA-ish by eye + close M2.4d
+
+- [ ] **Step 1:** Iterate the look-levers (kernel amplitude, structure calibration via the mountain/grassland fingerprints, the `detail_gate` constants) over relaunch+walk cycles with the human. No code gate decides "good" — the human visual gate does.
+- [ ] **Step 2:** When the human approves the look: full regression green, mode 0/1 bit-identical; update PROGRESS/DRIFT_LOG/HANDOFF (M2.4d → done; the live default may switch from REFERENCE to MACRO_CACHE if the human wants). Commit + push. Then consider M2.5/next.
+
+Risks carried into Phase B (spec §9): non-repeat (de-risked by the spike + Task 5's scan test), archetype-boundary seams (Task 7), over-smooth-vs-noise balance (Task 8 by eye). The async-BakeScheduler carry-forwards (HANDOFF §3) remain a SEPARATE later step, not M2.4d.
 
 ---
 
