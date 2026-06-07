@@ -4,6 +4,19 @@ The human reads this FIRST every session. The agent appends here whenever it blo
 
 ---
 
+## [2026-06-07] - CODEX RUST DIVERGENCE RECONCILED (decision: KEEP uncommitted DEM-kernel wiring; it's inert for the render-forever track)
+TYPE: DEVIATION-AVERTED / reconciliation (resolves the "reconcile before rust work" caution in the prior two entries + HANDOFF §3)
+WHAT I CHECKED: `git diff HEAD` on the three modified rust files (field_gpu.rs +22, page_pool.rs +103, render_gpu.rs +43) and grepped for the DEM-kernel symbols across committed vs working tree.
+FINDING — most of the DEM-kernel infra is ALREADY COMMITTED at HEAD (a376fe4): field_gpu.rs already has `uses_dem_kernel`/`dem_kernel_bytes` fields, `disabled_dem_kernel_bytes()`, `set_dem_kernel_bytes`, AND the DEM-buf path in the SINGLE-page dispatch. The prior session folded Codex's field-side DEM work into M2.6 already. So the handoff's "diverges from committed M2.6" warning is mostly stale.
+WHAT'S STILL UNCOMMITTED (working tree only) — a coherent, additive completion of that wiring:
+  1. field_gpu.rs: DEM-buf support in the BATCH dispatch (dispatch_height_batch) — brings it to parity with the already-committed single-dispatch path; + `disabled_dem_kernel_bytes` 9->8 floats (matches the .npy loader's 8 meta floats).
+  2. render_gpu.rs: DEM-kernel support on the RENDER path — mirrors the committed field path exactly.
+  3. page_pool.rs: new `load_dem_kernel_npy` + a minimal .npy parser (additive entry point; doesn't touch the M2.6 hot path).
+KEY SAFETY FACT: `uses_dem_kernel` is set by `src.contains("DemKernel")`. Only the UNTRACKED `wg-13/shaders/field_height_dem_grounded.glsl` contains "DemKernel"; the production `field_height.glsl` does NOT. So on the production / render-forever path `uses_dem_kernel == false` -> `dem_buf` is never created -> EVERY one of these uncommitted changes is INERT for committed M2.6 behavior (incl. the 9->8 float layout change, which only feeds the dem_buf). Verified by grep: DemKernel appears in exactly one file (the dem_grounded shader).
+DECISION (pillar call, stated not bounced): KEEP the uncommitted changes in the working tree; do NOT commit them now, do NOT rebuild over them blindly. Rationale by pillars — Quality: the batch path was left half-wired vs the single path; this finishes it consistently (no slop). Survivability: inert for the main track -> zero risk to the banked M2.6 perf. Modularity: DEM kernel is DATA loaded via .npy, not baked into core. They belong to Codex's DEM-grounded track and will commit under that milestone; they will NOT interfere with "render forever" (which touches clipmap levels / fog / streaming caps, not the dem_buf path). If I need to rebuild the DLL for the render-forever work, these changes compile and are safe to carry along.
+CODEBASE STATE: green at a376fe4 + these 3 inert uncommitted rust edits (Codex's DEM track). Untracked dem_grounded_* files left untouched.
+WHAT I DID NOT DO: did not commit Codex's changes, did not revert them, did not rebuild over them blindly, did not touch the dem_grounded_* files.
+
 ## [2026-06-07] - SESSION END: perf verdict "its fine"; NEXT BIG TRACK = render FOREVER (extend range + fog + spread streaming)
 TYPE: handoff / direction-setting
 PERF VERDICT (human, after the final test-fly): "its fine." The M2.6 perf pass is ACCEPTED + banked (burst 47->13ms, low-fly 8.0->7.1ms, 609 errors->0, all 10 gates green). Done for now.
