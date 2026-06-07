@@ -84,6 +84,12 @@ impl FieldCompute {
             // stays bit-identical to M2.3; scaffold_seed mirrors seed.
             terrain_mode: 0,
             scaffold_seed: seed,
+            // M2.4c: no macro neighborhood for the test oracle (mode 0/1 ignore it).
+            // core_span defaults to 1.0 (not 0.0) to avoid divide-by-zero in Task 4.
+            macro_origin_x: 0.0,
+            macro_origin_z: 0.0,
+            macro_core_span: 1.0,
+            macro_present_mask: 0,
         }
     }
 
@@ -99,7 +105,9 @@ impl FieldCompute {
             return PackedFloat32Array::new();
         };
         let p = Self::params(origin_x, origin_z, spacing, seed, page_res, octaves, base_freq, amplitude);
-        gpu.dispatch_page(p).map(|fp| fp.heights).unwrap_or_default()
+        // M2.4c: empty macro neighborhood (mask stays 0 from defaults) — mode 0/1
+        // don't read the macro; the 4 slots bind the placeholder.
+        gpu.dispatch_page(p, [(0, 0); 4]).map(|fp| fp.heights).unwrap_or_default()
     }
 
     /// M2.1: produce one page and return its CLIMATE channels interleaved
@@ -118,7 +126,7 @@ impl FieldCompute {
             return PackedFloat32Array::new();
         };
         let p = Self::params(origin_x, origin_z, spacing, seed, page_res, octaves, base_freq, amplitude);
-        let Some(FieldPage { temp, moisture, .. }) = gpu.dispatch_page(p) else {
+        let Some(FieldPage { temp, moisture, .. }) = gpu.dispatch_page(p, [(0, 0); 4]) else {
             return PackedFloat32Array::new();
         };
         let n = temp.len();
@@ -148,7 +156,7 @@ impl FieldCompute {
             return PackedFloat32Array::new();
         };
         let p = Self::params(origin_x, origin_z, spacing, seed, page_res, octaves, base_freq, amplitude);
-        gpu.dispatch_page(p).map(|fp| fp.biome).unwrap_or_default()
+        gpu.dispatch_page(p, [(0, 0); 4]).map(|fp| fp.biome).unwrap_or_default()
     }
 
     /// M2.4b: produce one page's HEIGHT channel in SCAFFOLD_CANDIDATE mode (the
@@ -169,7 +177,7 @@ impl FieldCompute {
         let mut p = Self::params(origin_x, origin_z, spacing, seed, page_res, octaves, base_freq, amplitude);
         p.terrain_mode = 1;
         p.scaffold_seed = seed;
-        gpu.dispatch_page(p).map(|fp| fp.heights).unwrap_or_default()
+        gpu.dispatch_page(p, [(0, 0); 4]).map(|fp| fp.heights).unwrap_or_default()
     }
 
     /// M2.4c step-2 SPIKE gate: prove the R32F-texture + linear-sampler path on

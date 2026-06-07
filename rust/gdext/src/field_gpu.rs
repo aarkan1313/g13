@@ -20,8 +20,8 @@ pub const FIELD_CHANNELS: usize = 4;
 pub const BIOME_STRIDE: usize = 4;
 
 /// Parameters for one page production. Mirrors the GLSL `Params` block layout,
-/// std430-friendly: 20 × 4 bytes = 80 bytes (8 height + 6 climate + 6 biome,
-/// the last 3 of which are pad). Field order MUST match field_height.glsl.
+/// std430-friendly: 24 × 4 bytes = 96 bytes (8 height + 6 climate + 6 biome +
+/// 4 macro-neighborhood). Field order MUST match field_height.glsl.
 #[derive(Clone, Copy)]
 pub struct PageParams {
     pub origin_x: f32,
@@ -47,6 +47,11 @@ pub struct PageParams {
     // --- M2.4b terrain mode + scaffold seed (replaces the 2 former pads) ---
     pub terrain_mode: u32,   // 0 = REFERENCE (M2.3 composition), 1 = SCAFFOLD_CANDIDATE (oracle)
     pub scaffold_seed: f32,  // oracle seed (default = `seed`); kept separate for future tuning
+    // --- M2.4c macro neighborhood: the 2x2 region block covering this page ---
+    pub macro_origin_x: f32,    // world X of region-slot (0,0)'s core origin
+    pub macro_origin_z: f32,    // world Z of region-slot (0,0)'s core origin
+    pub macro_core_span: f32,   // region core span (world units across one region)
+    pub macro_present_mask: u32, // bit (dz*2+dx) set if slot (dx,dz) is resident
 }
 
 impl PageParams {
@@ -54,7 +59,7 @@ impl PageParams {
     /// byte count is unit-testable without a live RenderingDevice). `to_bytes`
     /// wraps this into a PackedByteArray for the GPU buffer.
     fn to_byte_vec(&self) -> Vec<u8> {
-        let mut v: Vec<u8> = Vec::with_capacity(80);
+        let mut v: Vec<u8> = Vec::with_capacity(96);
         v.extend_from_slice(&self.origin_x.to_le_bytes());
         v.extend_from_slice(&self.origin_z.to_le_bytes());
         v.extend_from_slice(&self.spacing.to_le_bytes());
@@ -75,6 +80,10 @@ impl PageParams {
         v.extend_from_slice(&self.biome_alt_freq.to_le_bytes());
         v.extend_from_slice(&self.terrain_mode.to_le_bytes());  // was _biome_pad0
         v.extend_from_slice(&self.scaffold_seed.to_le_bytes()); // was _biome_pad1
+        v.extend_from_slice(&self.macro_origin_x.to_le_bytes());
+        v.extend_from_slice(&self.macro_origin_z.to_le_bytes());
+        v.extend_from_slice(&self.macro_core_span.to_le_bytes());
+        v.extend_from_slice(&self.macro_present_mask.to_le_bytes());
         v
     }
 
@@ -111,6 +120,11 @@ pub struct FieldGpu {
     /// implicitly when the local `rd` drops (like `shader`/`pipeline`), unlike the
     /// `macro_resident` textures which are explicitly `.free()`'d on eviction.
     sampler: Rid,
+    /// M2.4c step-2: a persistent 1x1 R32F texture (value 0.0) bound for any macro
+    /// slot that is NOT resident, so `dispatch_page`'s uniform set is always
+    /// complete (all 12 macro sampler bindings filled). Created once in `new`;
+    /// freed implicitly when the local `rd` drops (like `sampler`/`shader`).
+    placeholder_tex: Rid,
     /// M2.4c step-2: (region_x, region_z) -> resident macro textures on this RD.
     /// `ensure_region` uploads once per region; `evict_region` frees the RIDs.
     macro_resident: std::collections::HashMap<(i32, i32), crate::macro_gpu::GpuRegionMacro>,
@@ -147,12 +161,16 @@ impl FieldGpu {
         // M2.4c step-2: one shared linear sampler for all macro textures. Consumed
         // by the macro-sampling dispatch in Task 3.
         let sampler = crate::macro_gpu::linear_sampler(&mut rd);
+        // M2.4c step-2: a 1x1 R32F placeholder (0.0) bound for not-resident macro
+        // slots so the dispatch_page uniform set is always complete.
+        let placeholder_tex = crate::macro_gpu::create_r32f_texture(&mut rd, 1, 1, &[0.0]);
         Some(Self {
             rd,
             shader,
             pipeline,
             biome_bytes,
             sampler,
+            placeholder_tex,
             macro_resident: std::collections::HashMap::new(),
         })
     }
@@ -199,7 +217,15 @@ impl FieldGpu {
     /// Returns a FieldPage with deinterleaved height/temp/moisture arrays, each
     /// PAGE_RES*PAGE_RES floats, row-major (z * page_res + x). ONE dispatch, ONE
     /// readback — climate rides along with height (00 §2.1).
-    pub fn dispatch_page(&mut self, params: PageParams) -> Option<FieldPage> {
+    ///
+    /// M2.4c step-2: `neighborhood` is the 2x2 macro region block covering this
+    /// page — the region keys for slots (dx,dz) = (0,0),(1,0),(0,1),(1,1) in that
+    /// order. Each resident slot binds its 3 macro field textures
+    /// (height/range/channel) as SAMPLER_WITH_TEXTURE (bindings 3..14); a
+    /// not-resident slot binds the persistent 1x1 placeholder so the uniform set
+    /// is always complete. This task only BINDS them (the shader declares + keeps
+    /// them alive but does not read for height); Task 4 adds the mode-2 read.
+    pub fn dispatch_page(&mut self, params: PageParams, neighborhood: [(i32, i32); 4]) -> Option<FieldPage> {
         let res = params.page_res;
         let n = (res * res) as usize;
 
@@ -227,7 +253,42 @@ impl FieldGpu {
         u_biome.set_binding(2);
         u_biome.add_id(biome_buf);
 
-        let uniforms = array![&u_out, &u_param, &u_biome];
+        // M2.4c step-2: bind the page's 2x2 macro region neighborhood as 12
+        // SAMPLER_WITH_TEXTURE uniforms (bindings 3..14): for each slot (in order
+        // (0,0),(1,0),(0,1),(1,1)) its height/range/channel R32F textures, or the
+        // persistent 1x1 placeholder for a not-resident slot. Read the 12 texture
+        // RIDs out FIRST (Rid is Copy) so we don't hold a borrow of `self.macro_resident`
+        // while also mutably borrowing `self.rd` to build the uniforms.
+        let mut slot_texes: [Rid; 12] = [self.placeholder_tex; 12];
+        for (i, key) in neighborhood.iter().enumerate() {
+            let (h_t, r_t, c_t) = match self.macro_resident.get(key) {
+                Some(g) => (g.height_tex, g.range_tex, g.channel_tex),
+                None => (self.placeholder_tex, self.placeholder_tex, self.placeholder_tex),
+            };
+            slot_texes[i * 3] = h_t;
+            slot_texes[i * 3 + 1] = r_t;
+            slot_texes[i * 3 + 2] = c_t;
+        }
+        let samp = self.sampler;
+        // bindings 3..14 in the GLSL order: h_00,r_00,c_00, h_10,r_10,c_10,
+        // h_01,r_01,c_01, h_11,r_11,c_11 (matches slot_texes laid out above).
+        let mut macro_uniforms: Vec<Gd<RdUniform>> = Vec::with_capacity(12);
+        for (i, tex) in slot_texes.iter().enumerate() {
+            let mut u = RdUniform::new_gd();
+            u.set_uniform_type(UniformType::SAMPLER_WITH_TEXTURE);
+            u.set_binding(3 + i as i32);
+            u.add_id(samp);
+            u.add_id(*tex);
+            macro_uniforms.push(u);
+        }
+
+        let uniforms = array![
+            &u_out, &u_param, &u_biome,
+            &macro_uniforms[0], &macro_uniforms[1], &macro_uniforms[2],
+            &macro_uniforms[3], &macro_uniforms[4], &macro_uniforms[5],
+            &macro_uniforms[6], &macro_uniforms[7], &macro_uniforms[8],
+            &macro_uniforms[9], &macro_uniforms[10], &macro_uniforms[11],
+        ];
         let uniform_set = self.rd.uniform_set_create(&uniforms, self.shader, 0);
 
         let groups = (res + 7) / 8;
@@ -370,7 +431,7 @@ void main() {
 mod params_tests {
     use super::*;
     #[test]
-    fn page_params_is_80_bytes() {
+    fn page_params_is_96_bytes() {
         let p = PageParams {
             origin_x: 0.0, origin_z: 0.0, spacing: 1.0, seed: 1.0,
             page_res: 8, octaves: 5, base_freq: 0.001, amplitude: 1.0,
@@ -378,10 +439,11 @@ mod params_tests {
             climate_lapse: 0.3, climate_moist_freq: 1.0,
             biome_count: 1, biome_w_temp: 1.0, biome_w_moist: 1.0, biome_w_alt: 1.0,
             biome_alt_freq: 1.0, terrain_mode: 0, scaffold_seed: 1.0,
+            macro_origin_x: 0.0, macro_origin_z: 0.0, macro_core_span: 1.0, macro_present_mask: 0,
         };
         // to_byte_vec is pure Rust (no Godot FFI), so the std430 byte count is
-        // testable without a live RenderingDevice. 20 fields x 4 bytes = 80.
-        assert_eq!(p.to_byte_vec().len(), 80);
+        // testable without a live RenderingDevice. 24 fields x 4 bytes = 96.
+        assert_eq!(p.to_byte_vec().len(), 96);
     }
 }
 

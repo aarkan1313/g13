@@ -68,7 +68,27 @@ layout(set = 0, binding = 1, std430) restrict readonly buffer Params {
     float biome_alt_freq;      // 1/world-units; low (continental landmass scale)
     uint  terrain_mode;        // M2.4b: 0 = REFERENCE (composition), 1 = SCAFFOLD_CANDIDATE (oracle)
     float scaffold_seed;       // M2.4b: oracle seed (defaults to seed)
+    float macro_origin_x;   // M2.4c: world X of macro region-slot (0,0)
+    float macro_origin_z;   // M2.4c: world Z of macro region-slot (0,0)
+    float macro_core_span;  // M2.4c: world span of one macro region core
+    uint  macro_present_mask; // M2.4c: bit (dz*2+dx) set if slot (dx,dz) resident
 };
+
+// M2.4c: the page's 2x2 macro region neighborhood (slot (dx,dz), dx,dz in {0,1}).
+// Bound by dispatch_page; READ in Task 4 (macro_sample). Declared here so the
+// uniform set matches the binding layout even before mode 2 reads them.
+layout(set = 0, binding = 3)  uniform sampler2D macro_h_00;
+layout(set = 0, binding = 4)  uniform sampler2D macro_r_00;
+layout(set = 0, binding = 5)  uniform sampler2D macro_c_00;
+layout(set = 0, binding = 6)  uniform sampler2D macro_h_10;
+layout(set = 0, binding = 7)  uniform sampler2D macro_r_10;
+layout(set = 0, binding = 8)  uniform sampler2D macro_c_10;
+layout(set = 0, binding = 9)  uniform sampler2D macro_h_01;
+layout(set = 0, binding = 10) uniform sampler2D macro_r_01;
+layout(set = 0, binding = 11) uniform sampler2D macro_c_01;
+layout(set = 0, binding = 12) uniform sampler2D macro_h_11;
+layout(set = 0, binding = 13) uniform sampler2D macro_r_11;
+layout(set = 0, binding = 14) uniform sampler2D macro_c_11;
 
 // --- deterministic hash-based value noise (no textures, no state) ---------
 
@@ -554,6 +574,18 @@ void main() {
     } else {
         h = composition_height(world_xz, uint(seed));
     }
+
+    // M2.4c: keep the 12 macro samplers live in the binding layout even though
+    // mode 0/1 don't sample them (Task 4 adds the real read). This NEVER changes
+    // output: the branch is guarded by a mask bit AND multiplied by 0.
+    if (macro_present_mask == 0xFFFFFFFFu) {
+        float keep = texture(macro_h_00, vec2(0.5)).r + texture(macro_r_00, vec2(0.5)).r + texture(macro_c_00, vec2(0.5)).r
+                   + texture(macro_h_10, vec2(0.5)).r + texture(macro_r_10, vec2(0.5)).r + texture(macro_c_10, vec2(0.5)).r
+                   + texture(macro_h_01, vec2(0.5)).r + texture(macro_r_01, vec2(0.5)).r + texture(macro_c_01, vec2(0.5)).r
+                   + texture(macro_h_11, vec2(0.5)).r + texture(macro_r_11, vec2(0.5)).r + texture(macro_c_11, vec2(0.5)).r;
+        h += keep * 0.0;
+    }
+
     vec2 c = climate(world_xz, h, uint(seed));
 
     // M2.2: altitude axis = MACRO continental landform (already normalized [0,1]).

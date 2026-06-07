@@ -480,10 +480,17 @@ impl PagePool {
             biome_alt_freq: self.cfg.biome_alt_freq,
             terrain_mode: self.cfg.terrain_mode,
             scaffold_seed: self.cfg.scaffold_seed,
+            // M2.4c: macro neighborhood is filled by Task 5 (page-pool computes the
+            // 2x2 region block + ensures residency). For now defaults: empty mask,
+            // core_span 1.0 (not 0.0) to avoid any divide-by-zero in Task 4's shader.
+            macro_origin_x: 0.0,
+            macro_origin_z: 0.0,
+            macro_core_span: 1.0,
+            macro_present_mask: 0,
         };
         // Profiled region: GPU dispatch + blocking readback (rd.sync) — the
         // suspected fast-motion spike source. Accumulated per frame (M1.9.1).
-        let FieldPage { heights, temp, moisture, biome } = self.gpu.as_mut()?.dispatch_page(params)?;
+        let FieldPage { heights, temp, moisture, biome } = self.gpu.as_mut()?.dispatch_page(params, [(0, 0); 4])?;
         self.produce_us_this_frame += t0.elapsed().as_micros() as i64;
         let res = self.cfg.page_res as i32;
         // Height texture: R32F, byte-identical to `heights` (M1.7 contract).
