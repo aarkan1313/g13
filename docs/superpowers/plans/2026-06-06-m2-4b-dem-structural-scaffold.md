@@ -238,12 +238,24 @@ throwaway if C later proves necessary. ~40% the oracle walks well and C is skipp
 ~60% it needs C, but entered then with a real walk-test as evidence (not a guess),
 avoiding the attempt #1-12 "big risky rebuild on a hunch" failure mode.
 
-The next bite is the INTEGRATION plan: port `synthesize_cell` -> GLSL as a candidate
-height path in `field_height.glsl`, a terrain-mode switch (REFERENCE = M2.3,
-SCAFFOLD_CANDIDATE = oracle), scaffold params plumbed Rust->shader like climate/biome,
-height/collision contract preserved, M2.1/2.2/2.3/m1_7c green, and a human fly+walk
-visual gate. NOTE Step 5 (apron/super-region fact cache) belongs to Approach C, not
-this per-cell integration.
+RESOLVED 2026-06-07 — the integration plan was executed and the oracle walk-tested.
+The per-cell oracle is now LIVE as a toggleable candidate (B key; terrain_mode
+0=REFERENCE/1=SCAFFOLD_CANDIDATE). All output gates green. WALK-TEST FAILED:
+persistent dark crater/walls + flat/wrong terrain. ROOT CAUSE (measured): the oracle
+is spacing-independent but its coarse-LOD max adjacent step is 1076m vs M2.3's 482m —
+its sharp analytic channel/carve features alias at coarse LOD into ~1km walls between
+cells/LOD levels. A per-cell field can't do the Gaussian neighbor-smoothing that made
+the WG10 window-port read well, so the per-cell approach structurally fights the
+clipmap (same family as the M2.4a corduroy failure).
+
+DECISION (human-confirmed Branch 3): ESCALATE to Approach C = the window-based GPU
+pipeline. This is what Step 4/5 below (apron / super-region fact cache / off-frame
+routing) were always pointing at. Approach C re-architects page production: super-
+region apron, multi-pass GPU compute (blur + flow routing) seam-safe at every LOD,
+collision reading the multi-pass field. It is a MILESTONE-SCALE step and needs its
+own brainstorm + spec + plan before any code. The oracle candidate lane STAYS as the
+non-destructive per-cell base layer C builds on (toggle/param/collision plumbing
+reused). The analytic sine-curve channels are the part C replaces with real routing.
 
 Do not use the compressed four-panel macro scene as gameplay scale. It is a
 structure proof.

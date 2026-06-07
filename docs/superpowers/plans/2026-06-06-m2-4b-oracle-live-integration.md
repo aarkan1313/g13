@@ -468,7 +468,16 @@ EOF
 
 ---
 
-## Task 7: Human fly + walk visual gate (PARK)
+## Task 7: Human fly + walk visual gate (PARK) — DONE 2026-06-07: FAILED -> Branch 3 (escalate to Approach C)
+
+OUTCOME: walk-test showed persistent dark crater/walls + flat/wrong terrain. Root
+cause (measured): oracle coarse-LOD max step 1076m vs M2.3's 482m — sharp analytic
+channel/carve features alias at coarse LOD into ~1km walls; a per-cell field can't do
+the Gaussian neighbor-smoothing the window-port relies on. Human chose Branch 3:
+escalate to Approach C (window-based GPU pipeline). Oracle candidate lane stays as the
+non-destructive per-cell base. See DRIFT_LOG 2026-06-07. The steps below are the
+original plan (kept for the record).
+
 
 **Files:** docs at the gate (PROGRESS, HANDOFF, DRIFT_LOG, M2.4b plan).
 
