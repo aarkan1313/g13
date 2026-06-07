@@ -16,6 +16,7 @@ mod field_gpu;     // shared GPU field machinery (one place that runs the field)
 mod field_compute; // test oracle over field_gpu (M1.2/M1.4 gates)
 mod page_pool;     // runtime: bounded pool + residency + streaming over field_gpu
 mod macro_cache;   // M2.4c: cached macro structure layer (pure-Rust data types first)
+mod macro_gpu;     // M2.4c: GPU bridge — R32F texture create + linear sampler on the local RD
 
 /// The extension library marker. Godot calls the generated `gdext_rust_init`
 /// entry symbol (see wg13.gdextension) to register everything below.

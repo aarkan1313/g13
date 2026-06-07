@@ -172,6 +172,26 @@ impl FieldCompute {
         gpu.dispatch_page(p).map(|fp| fp.heights).unwrap_or_default()
     }
 
+    /// M2.4c step-2 SPIKE gate: prove the R32F-texture + linear-sampler path on
+    /// FieldGpu's local RenderingDevice end-to-end. Delegates to
+    /// FieldGpu::macro_roundtrip_probe (uploads a 2x2 R32F texture [10,20,30,40],
+    /// samples the 4 texel centers in a compute dispatch, reads back). Returns the
+    /// 4 floats; the gate asserts they match [10,20,30,40] exactly. Empty on a
+    /// missing device. Requires `initialize` first (it builds the local RD).
+    #[func]
+    fn macro_roundtrip_probe(&mut self) -> PackedFloat32Array {
+        if self.gpu.is_none() {
+            // The probe only needs the local RD, not the field shader; initialize
+            // with the field shader path so callers don't have to pre-initialize.
+            self.gpu = FieldGpu::new(&GString::from("res://shaders/field_height.glsl"));
+        }
+        let Some(gpu) = self.gpu.as_mut() else {
+            godot_error!("FieldCompute: no local RenderingDevice (need --rendering-driver vulkan).");
+            return PackedFloat32Array::new();
+        };
+        gpu.macro_roundtrip_probe()
+    }
+
     /// Produce one page packed into an R32F ImageTexture (for a render shader).
     #[func]
     fn produce_page_texture(

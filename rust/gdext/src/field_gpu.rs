@@ -228,6 +228,96 @@ impl FieldGpu {
         }
         Some(FieldPage { heights, temp, moisture, biome })
     }
+
+    /// M2.4c step-2 SPIKE: prove the R32F-texture + linear-sampler path works
+    /// end-to-end on this same local RenderingDevice. Uploads a 2x2 R32F texture
+    /// [10,20,30,40] (row-major), binds it as a SAMPLER_WITH_TEXTURE uniform with
+    /// a linear sampler, runs a tiny throwaway compute shader that samples the 4
+    /// texel centers into a storage buffer, syncs, reads back, frees, and returns
+    /// the 4 floats. At texel centers bilinear returns the exact texel value, so
+    /// a correct round-trip yields [10,20,30,40] exactly. Returns empty on any
+    /// failure (compile/dispatch). This backs the PERMANENT round-trip gate —
+    /// it pins the gdext texture/sampler API for the rest of Approach C step 2.
+    pub fn macro_roundtrip_probe(&mut self) -> PackedFloat32Array {
+        // 1. 2x2 R32F texture, row-major: (col,row) -> (0,0)=10 (1,0)=20 (0,1)=30 (1,1)=40.
+        let tex_data = [10.0_f32, 20.0, 30.0, 40.0];
+        let tex = crate::macro_gpu::create_r32f_texture(&mut self.rd, 2, 2, &tex_data);
+        // 2. Linear, clamp-to-edge sampler.
+        let samp = crate::macro_gpu::linear_sampler(&mut self.rd);
+
+        // 3. Tiny throwaway compute shader. NO leading `#[compute]` marker — we
+        // feed raw GLSL straight to set_stage_source(COMPUTE), exactly what
+        // FieldGpu::load_glsl produces after stripping those marker lines.
+        let glsl = "\
+#version 450
+layout(local_size_x = 4, local_size_y = 1, local_size_z = 1) in;
+layout(set = 0, binding = 0) uniform sampler2D src;
+layout(set = 0, binding = 1, std430) writeonly buffer Out { float o[]; };
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= 4u) return;
+    // Texel centers of a 2x2: uv = ((col + 0.5) / 2, (row + 0.5) / 2).
+    vec2 uv = vec2((float(i % 2u) + 0.5) / 2.0, (float(i / 2u) + 0.5) / 2.0);
+    o[i] = texture(src, uv).r;
+}
+";
+        let mut shader_source = RdShaderSource::new_gd();
+        shader_source.set_language(ShaderLanguage::GLSL);
+        shader_source.set_stage_source(ShaderStage::COMPUTE, &GString::from(glsl));
+        let Some(spirv) = self.rd.shader_compile_spirv_from_source(&shader_source) else {
+            godot_error!("macro_roundtrip_probe: SPIR-V compile returned null.");
+            self.rd.free_rid(tex);
+            self.rd.free_rid(samp);
+            return PackedFloat32Array::new();
+        };
+        let err = spirv.get_stage_compile_error(ShaderStage::COMPUTE);
+        if !err.is_empty() {
+            godot_error!("macro_roundtrip_probe: shader compile error: {}", err);
+            self.rd.free_rid(tex);
+            self.rd.free_rid(samp);
+            return PackedFloat32Array::new();
+        }
+        let probe_shader = self.rd.shader_create_from_spirv(&spirv);
+        let probe_pipeline = self.rd.compute_pipeline_create(probe_shader);
+
+        // Output storage buffer: 4 floats.
+        let out_bytes = PackedByteArray::from(vec![0u8; 4 * 4]);
+        let out_buf = self.rd.storage_buffer_create_ex(out_bytes.len() as u32).data(&out_bytes).done();
+
+        // 4. binding 0 = SAMPLER_WITH_TEXTURE (sampler id FIRST, then texture id);
+        //    binding 1 = output storage buffer.
+        let mut u_tex = RdUniform::new_gd();
+        u_tex.set_uniform_type(UniformType::SAMPLER_WITH_TEXTURE);
+        u_tex.set_binding(0);
+        u_tex.add_id(samp);
+        u_tex.add_id(tex);
+        let mut u_out = RdUniform::new_gd();
+        u_out.set_uniform_type(UniformType::STORAGE_BUFFER);
+        u_out.set_binding(1);
+        u_out.add_id(out_buf);
+
+        let uniforms = array![&u_tex, &u_out];
+        let uniform_set = self.rd.uniform_set_create(&uniforms, probe_shader, 0);
+
+        let cl = self.rd.compute_list_begin();
+        self.rd.compute_list_bind_compute_pipeline(cl, probe_pipeline);
+        self.rd.compute_list_bind_uniform_set(cl, uniform_set, 0);
+        self.rd.compute_list_dispatch(cl, 1, 1, 1);
+        self.rd.compute_list_end();
+        self.rd.submit();
+        self.rd.sync();
+
+        let result = self.rd.buffer_get_data(out_buf).to_float32_array();
+
+        self.rd.free_rid(uniform_set);
+        self.rd.free_rid(out_buf);
+        self.rd.free_rid(probe_pipeline);
+        self.rd.free_rid(probe_shader);
+        self.rd.free_rid(samp);
+        self.rd.free_rid(tex);
+
+        result
+    }
 }
 
 #[cfg(test)]
