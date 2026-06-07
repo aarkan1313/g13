@@ -4,6 +4,18 @@ The human reads this FIRST every session. The agent appends here whenever it blo
 
 ---
 
+## [2026-06-07] - SESSION END: perf verdict "its fine"; NEXT BIG TRACK = render FOREVER (extend range + fog + spread streaming)
+TYPE: handoff / direction-setting
+PERF VERDICT (human, after the final test-fly): "its fine." The M2.6 perf pass is ACCEPTED + banked (burst 47->13ms, low-fly 8.0->7.1ms, 609 errors->0, all 10 gates green). Done for now.
+NEXT BIG TRACK the user wants (their words): "extend range out way farther, have stuff be visible forever in all directions using fogs to make it not pop in, always loading stuff / spreading it out so we arent loading it all at once." Four pillars:
+  1. FAR GREATER VIEW DISTANCE — more clipmap levels / larger reach so terrain reads to the horizon in every direction (today: 6 levels, ring_radius 3, ~49km reach; far cam plane = reach*1.3). Add levels/radius; watch the coarse-mesh subdivision taper (already level-halved) and AABB.
+  2. NO POP-IN — fog/depth fade tuned so new terrain DISSOLVES in from the fog rather than appearing (this is the long-deferred "far-edge streaming pop-in" item, finally solved AT the new range; pair fog distance with the coarsest-level reach so the frontier is always inside fog).
+  3. CONTINUOUS / SPREAD-OUT STREAMING — always produce a little each frame, never a big batch at once. Builds directly on the work just done: max_eager_per_frame / max_new_per_frame caps + the BATCHED collision readback + GPU-resident render. The perf foundation (no per-page readback stall) is exactly what makes "always loading, spread out, no hitch" feasible.
+  4. HOLD THE BUDGET at the bigger range — re-measure with m2_6_burst_perf_check after extending; the GPU-resident + batch foundation should absorb it.
+  This is a natural M2.6+/M3-adjacent perf+range pass; brainstorm it first (gated, the working method). It also INTERSECTS the DEM-grounded track (more visible range = more terrain to feed, whatever the source).
+CAUTION FOR NEXT CHAT — CODEX HAS DIVERGED render_gpu.rs: Codex's DEM-grounded prototype now MODIFIES rust/gdext/src/render_gpu.rs (adds DemKernel support: uses_dem_kernel, disabled_dem_kernel_bytes, binding 6, set_dem_kernel_bytes) and field_gpu.rs. These are UNCOMMITTED and DIVERGE from my committed M2.6 version. Before any rust work next chat: reconcile — `git diff` render_gpu.rs/field_gpu.rs vs HEAD to see Codex's DEM changes; decide what's kept. Don't blindly rebuild/commit over them. The DEM-grounded prototype files (wg-13/scripts/dem_grounded_*, wg-13/shaders/field_height_dem_grounded.glsl, wg-13/captures/dem_grounded_*, wg-13/scenes/dem_grounded_terrain_review.tscn, docs/.../2026-06-07-dem-grounded-procedural-terrain-architecture.md) are Codex's active track — leave them, fold into the DEM brainstorm.
+ALSO STILL PENDING: M2.5 general-terrain visual acceptance (skipped by the out-of-order perf work).
+
 ## [2026-06-07] - M2.6 BATCH collision readback DONE -> perf pass effectively complete (banked, all gates green)
 TYPE: PERF increment landed (committed fa32d85) + session handoff
 WHAT: batched the level-0 collision readback. produce() records pending level-0 pages (render textures stay immediate/GPU-resident); next begin_frame runs field_gpu.dispatch_height_batch over ALL pending in ONE compute list / ONE submit / ONE sync, fills heights. This is how to honor the local-RD single-submit constraint that killed the earlier per-page async attempt (one submit for the whole batch, not per page). Heights arrive one frame later; collision already tolerates it (retries). m1_7a updated: triggers a 2nd begin_frame to collect before asserting; heights still bit-identical to FieldCompute (no drift, M1.7 intact).
