@@ -40,11 +40,8 @@ wg-13/                          (the Godot project, res://)
     field_height.glsl           THE FIELD (compute): world-space terrain page.
                                 M2.3 height = one composition machine (domain warp,
                                 uplift_field places ranges/hills vs lowlands,
-                                ridged/value relief, valley_carve, composition_height).
-                                M2.4 adds a DEM-derived character table from
-                                dem_fingerprints.json (slope/ridge/spectrum) and
-                                terrain_character() continuously tunes relief,
-                                ridge scale/gain, detail, and carve. Also carries
+                                ridged/value relief, valley_carve, composition_height;
+                                hand-set character, DEM-tuned in M2.4). Also carries
                                 M2.1 climate (temp + moisture) + M2.2 biome id
                                 (nearest-centroid over temp/moist/macro-altitude),
                                 ALL in the SAME dispatch. Output [h,t,m,biome]/cell
@@ -119,7 +116,6 @@ wg-13/                          (the Godot project, res://)
     m2_1_climate_check.gd       (M2.1) climate determinism + range [0,1] + low-freq smoothness (anti-confetti) + latitude gradient, on the real GPU readback
     m2_2_biome_check.gd         (M2.2) biome determinism + valid ids [0,N) + contiguity (low adjacent-differ, no confetti) + global variety + seed sensitivity
     m2_3_composition_check.gd   (M2.3) composition-machine guardrail: determinism + structure-not-uniform relief spread + no-cliff max step
-    m2_4_dem_character_check.gd (M2.4) DEM-character guardrail: determinism + broad character variation + retained structure + no-cliff max step
     hud_smoke_check.gd          (smoke) perf HUD loads, finds the view, all sections show sane values matching the pool, toggles work
     tour_smoke_check.gd         (smoke) auto-tour starts OFF, drives the real fly-cam, advances steps, pause restores control, resume works
   captures/                     SCREENSHOT TOOLS (evidence, not gates).
@@ -173,4 +169,3 @@ Fly the live world: `.\run.ps1` (agent launches a windowed instance on the user'
 | m2_1_climate_check.gd | M2.1 | climate determinism (same page+seed → bit-identical); range [0,1]; low-freq/smooth (anti-confetti); latitude gradient real |
 | m2_2_biome_check.gd | M2.2 | biome determinism; valid integer ids [0,N); contiguity (low adjacent-differ); global variety; seed sensitivity |
 | m2_3_composition_check.gd | M2.3 | composition-machine determinism; relief spread proves lowlands+ranges are not uniform; no-cliff max step guardrail |
-| m2_4_dem_character_check.gd | M2.4 | DEM-character determinism; roughness and roughness/relief ratio vary across regions; roughest pages beat gentlest pages; structure retained; no-cliff max step |

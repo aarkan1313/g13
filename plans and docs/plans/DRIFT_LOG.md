@@ -4,14 +4,6 @@ The human reads this FIRST every session. The agent appends here whenever it blo
 
 ---
 
-## [2026-06-06] - M2.4 DEM character integration test PASS, visual PARKED
-TYPE: PARKED-FOR-VISUAL (test guardrail self-certified; terrain look awaits human eyes)
-WHAT: M2.4 wired DEM fingerprint character into the existing M2.3 composition machine. The shader now has a compact DEM-derived character table from `wg-13/data/dem_fingerprints.json` (slope_p95, ridge_character, spectrum centroid, fine energy), sorted gentle -> steep. `terrain_character()` blends continuously across it using uplift plus a low-frequency region field, then tunes existing knobs: relief, ridge scale/gain, detail, and carve. It does NOT replace uplift structure, does NOT use biome shape recipes, and does NOT start erosion.
-TEST GATE: `m2_4_dem_character_check.gd` PASS. Determinism PASS. Broad scan: rough 0.505..13.250 (spread 0.96), roughness/relief ratio spread 0.78, relief 42.0..1187.0 (spread 0.96), scan max step 107.9 < 180. Roughest third avg 1.805 > gentlest third avg 0.592. This proves the field is not one-note while keeping continuity bounded.
-REGRESSIONS: `m2_3_composition_check` PASS (structure spread 0.71, no-cliff max step 4.2), `m2_2_biome_check` PASS, `m2_1_climate_check` PASS, `m1_7c_stand_check` PASS.
-VISUAL STATUS: parked. Launch live and judge whether the terrain still keeps the good M2.3 macro world but now reads with more varied real-terrain character. If it passes, mark M2.4 [x] and move current to M2.5. If it fails, tune only the DEM-character mapping, not the architecture.
-CODEBASE STATE: test-green with uncommitted M2.4 shader/gate/docs at time of this log entry.
-
 ## [2026-06-06] - M2.3 composition machine VISUAL PASS (human) + next is DEM character
 TYPE: PARKED-FOR-VISUAL -> PASS (human)
 HUMAN VERDICT: after relaunching the AABB-fixed build, user flew the live world and confirmed the terrain shape: "terrain looks really good"; "this scene is in a good spot" for an early mountain/plain world. This resolves the M2.3 visual gate.
