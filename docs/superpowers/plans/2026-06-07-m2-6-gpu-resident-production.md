@@ -20,6 +20,15 @@
 - **Never-black (MUST preserve):** coarse pages form the blanket under un-loaded fine pages; eviction must never remove a displayed page out from under the mesh.
 - **Uncertain API surface:** the exact gdext Rust calls for creating a sampleable RD texture on the MAIN device and binding it to a material via `Texture2DRD` are NOT yet verified in code. Stage 1 therefore STARTS with a minimal proof-of-concept spike (Task 1.0) that must work before the full render-path rewrite. Do NOT write the full rewrite before the spike proves the path.
 
+- **RESEARCH FINDINGS (2026-06-07, before spike) — main-device compute rules differ from our local-device path:**
+  - **No `submit()`/`sync()` on the main device** — it errors ("Only local devices can submit and sync"). Auto-barriers order compute→draw. This is what removes our stall (good), but means production is no longer a synchronous "dispatch and get the texture back now" call.
+  - **Main-device RenderingDevice calls must run on the RENDER thread** via `RenderingServer::call_on_render_thread(callable)`, NOT the main game thread (unsafe under the multi-threaded render model). => GPU-resident production is inherently DEFERRED: enqueue on the render thread; the texture fills in shortly after. `world_view._process` can't call produce() and get a ready texture in the same line. Task 1.1 MUST be designed around render-thread-deferred production (the page shows its coarse blanket until its render texture is filled — fits never-black).
+  - **`Texture2DRD` does NOT auto-free its RID** (confirmed leak). Reinforces Stage 3.
+  - **Don't swap `set_texture_rd_rid` from a render-thread callback mid-frame** (invalidates uniform sets); create the Texture2DRD / set material params on the main thread.
+  - **Confirmed gdext names:** `godot::classes::Texture2Drd` (lowercase d), `set_texture_rd_rid(Rid)`; `rendering_device::TextureUsageBits::{SAMPLING_BIT, STORAGE_BIT, CAN_COPY_TO_BIT}`; `DataFormat::{R32_SFLOAT, R32G32B32A32_SFLOAT}`; `UniformType::IMAGE` (storage image, GLSL `image2D` + `imageStore`); `rd.free_rid(rid)`.
+  - **UNCONFIRMED (spike must resolve in code):** `get_rendering_device()` return type (Option<Gd<>> vs Gd<>); `texture_create` arity / `_ex` builder for the data param; `BarrierMask::COMPUTE` path; empty-`Rid` spelling.
+  - Reference: Godot official compute/texture/water_plane demo is the canonical example of this exact pattern.
+
 ---
 
 ## Stage 0 — Reliable burst perf gate (DO FIRST; nothing else ships without it)
@@ -191,9 +200,31 @@ git commit -F $f
 Remove-Item $f
 ```
 
+### Task 1.0 RESULT (2026-06-07): SPIKE PASSED — path proven, API resolved
+
+The throwaway spike compiled and the capture showed the compute-written gradient+
+stripe pattern rendering on a mesh via `Texture2Drd` with NO readback. Confirmed in
+real compiling code (resolving the prior UNCONFIRMED items):
+- `RenderingServer::singleton().get_rendering_device()` -> `Option<Gd<RenderingDevice>>`.
+- `rd.texture_create(&tf, &view)` is the **2-arg** form (no data param).
+- Main-device compute: `compute_list_begin/bind/dispatch/end` with **NO submit()/sync()**
+  works; auto-barriers order compute->draw. (Ran from a single-threaded test scene on
+  the main thread without error; the live runtime may need `call_on_render_thread` if
+  the project's render thread model is multi-threaded — verify in Task 1.1.)
+- `RdTextureFormat`: `set_format(DataFormat::R32G32B32A32_SFLOAT)`, `set_texture_type(
+  TextureType::TYPE_2D)`, `set_width/height(u32)`, `set_depth(1)`, `set_array_layers(1)`,
+  `set_mipmaps(1)`, `set_usage_bits(TextureUsageBits::SAMPLING_BIT | STORAGE_BIT |
+  CAN_COPY_TO_BIT)`. `RdTextureView::new_gd()` default.
+- Storage-image uniform: `RdUniform` `set_uniform_type(UniformType::IMAGE)`, `add_id(rid)`;
+  GLSL `layout(set=0, binding=0, rgba32f) uniform image2D; imageStore(...)`.
+- `Texture2Drd::new_gd()` + `set_texture_rd_rid(rid)`; bind via `set_shader_parameter`.
+- `Rid::Invalid` is the empty-RID spelling; `rd.free_rid(rid)` frees (no auto-free).
+Spike files were deleted (throwaway); finding recorded here + in DRIFT_LOG.
+
 ### Task 1.1: Produce the real field render textures on the main device
 
-**Only after Task 1.0 proves the path.** Detailed steps for this task will be written once the spike confirms the exact working API (the spike removes the current API uncertainty). At minimum it will: add a main-device field-compute path in `field_gpu.rs` (or a new `field_gpu_resident.rs`) that runs `field_height.glsl` writing height/climate/normal into RD storage-images; expose per-page `Texture2DRD`s from `PagePool`; bind them in `world_view.gd`'s `_make_page_instance` in place of the ImageTextures for RENDERING; KEEP the existing local-device readback feeding collision unchanged. Gate: `m2_6_burst_perf_check` median-of-maxes beats the Stage 0 baseline; `m1_4`/`m1_7c`/`m2_1`/`m2_2`/`m2_3` PASS; human feel-check (smooth, seam gone, shape unchanged).
+**Only after Task 1.0 proves the path.** (Task 1.0 PASSED — see above. Expand the
+bite-sized steps below using the resolved API before implementing.) Detailed steps for this task will be written once the spike confirms the exact working API (the spike removes the current API uncertainty). At minimum it will: add a main-device field-compute path in `field_gpu.rs` (or a new `field_gpu_resident.rs`) that runs `field_height.glsl` writing height/climate/normal into RD storage-images; expose per-page `Texture2DRD`s from `PagePool`; bind them in `world_view.gd`'s `_make_page_instance` in place of the ImageTextures for RENDERING; KEEP the existing local-device readback feeding collision unchanged. Gate: `m2_6_burst_perf_check` median-of-maxes beats the Stage 0 baseline; `m1_4`/`m1_7c`/`m2_1`/`m2_2`/`m2_3` PASS; human feel-check (smooth, seam gone, shape unchanged).
 
 > **Plan note:** Task 1.1's bite-sized steps are intentionally deferred until the Task 1.0 spike resolves the API uncertainty. This is a deliberate de-risking gate, not a placeholder — writing exact rewrite code now would be guessing at unverified signatures. After the spike, return here and expand Task 1.1 into concrete steps before implementing.
 
