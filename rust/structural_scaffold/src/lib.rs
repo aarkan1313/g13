@@ -4,6 +4,16 @@ mod array_ops;
 mod recipe_noise;
 mod recipes;
 
+/// Public surface for the runtime MACRO BAKE (Approach C). Re-exports the seam-safe
+/// window-port pieces the engine's macro_cache calls to bake one super-region.
+/// Stable for the gdext crate; the underlying recipe modules stay private.
+pub mod bake {
+    pub use crate::recipes::helpers::{apron_meshgrid, S_REF};
+    pub use crate::recipes::mountain::{
+        generate_seamsafe_fields, MountainFields, MountainStyle, ALPINE_BRANCHING, APRON_PX, STYLES,
+    };
+}
+
 pub const DEFAULT_REGION_SPAN_M: f32 = 30_000.0;
 pub const DEFAULT_RESOLUTION: usize = 65;
 
