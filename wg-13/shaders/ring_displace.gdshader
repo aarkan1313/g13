@@ -30,11 +30,37 @@ uniform float height_scale = 1.0;
 // Spacing between cells in world units (for finite-difference normals).
 uniform float cell_spacing = 4.0;
 
+// --- M2.4 clipmap geomorph (display-only; smooths fine<->coarse ring boundaries) ---
+// Page texel resolution (so we can snap a vertex UV to half resolution for the
+// coarse tap). Matches PagePool page_res (128).
+uniform int page_res = 128;
+// Camera-distance morph band (world units). Beyond morph_end the page shows its
+// coarse (half-res) surface; before morph_start it shows full detail; between, it
+// blends. Set per-page from the level's ring geometry by world_view.gd. When
+// morph_end <= morph_start the morph is OFF (factor stays 0) -> identical to pre-M2.4.
+uniform float morph_start = 0.0;
+uniform float morph_end = 0.0;
+
 varying float v_height;
 
 // Sample height at a UV (clamped to [0,1]).
 float sample_h(vec2 uv) {
 	return texture(height_tex, clamp(uv, vec2(0.0), vec2(1.0))).r * height_scale;
+}
+
+// Sample height at the UV SNAPPED to half resolution (one coarser clipmap step):
+// the height this vertex would have on a page of half the texel density. Snap to
+// texel centers of the half-res grid so the tap is stable. Clamped like sample_h.
+float sample_h_coarse(vec2 uv) {
+	float half_res = max(float(page_res) * 0.5, 1.0);
+	vec2 snapped = (floor(uv * half_res) + 0.5) / half_res;
+	return sample_h(snapped);
+}
+
+// Camera-distance morph factor in [0,1]: 0 = full detail, 1 = fully coarse.
+float morph_factor(float cam_dist) {
+	if (morph_end <= morph_start) return 0.0;   // morph OFF
+	return clamp((cam_dist - morph_start) / (morph_end - morph_start), 0.0, 1.0);
 }
 
 void vertex() {
