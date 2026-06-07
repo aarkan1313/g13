@@ -193,6 +193,270 @@ float composition_height(vec2 world_xz, uint seed) {
     return base + relief - carve + detail;
 }
 
+// --- M2.4b oracle (per-cell scaffold) ---------------------------------------
+// Faithful GLSL port of structural_scaffold::synthesize_cell + helpers. Same
+// structure, constants, frequencies, octaves, and 4 style families as the
+// reviewed Rust oracle. Uses a 32-bit hash (osc_*) adapted from the shader's
+// hash_u family — NOT a bit-exact 64-bit splitmix emulation (GLSL has no verified
+// int64 here; the reviewed sheet was inconclusive so a pixel-match buys nothing).
+// So live mode-1 terrain is a STATISTICAL TWIN of the reviewed oracle: same range
+// spacing / valley structure / character, different exact noise. Pure fn of
+// (world coords, seed): no neighbors, no apron, no blur — this is what fits a
+// per-cell GPU field. See docs/superpowers/plans/2026-06-06-m2-4b-oracle-port-map.md.
+
+const float OSC_TAU = 6.28318530717958647692;
+
+float osc_smootherstep(float x) {
+    float t = clamp(x, 0.0, 1.0);
+    return t * t * t * (t * (t * 6.0 - 15.0) + 10.0);
+}
+
+// Deterministic [0,1) from a lattice point + seed + salt (mirrors rand01_i's role).
+float osc_rand01(int x, int z, uint seed, uint salt) {
+    uint h = hash_u(uint(x) * 0x9e3779b9u
+        ^ hash_u(uint(z) * 0x85ebca6bu
+        ^ hash_u(seed ^ (salt * 0x68bc21ebu))));
+    return float(h) * (1.0 / 4294967296.0);
+}
+
+// Value noise at world position p (scaled by freq), smootherstep-interpolated.
+float osc_value_noise(vec2 p, float freq, uint seed, uint salt) {
+    vec2 s = p * freq;
+    int x0 = int(floor(s.x));
+    int z0 = int(floor(s.y));
+    float fx = s.x - float(x0);
+    float fz = s.y - float(z0);
+    float ux = osc_smootherstep(fx);
+    float uz = osc_smootherstep(fz);
+    float n00 = osc_rand01(x0, z0, seed, salt);
+    float n10 = osc_rand01(x0 + 1, z0, seed, salt);
+    float n01 = osc_rand01(x0, z0 + 1, seed, salt);
+    float n11 = osc_rand01(x0 + 1, z0 + 1, seed, salt);
+    float nx0 = mix(n00, n10, ux);
+    float nx1 = mix(n01, n11, ux);
+    return mix(nx0, nx1, uz);
+}
+
+float osc_fbm(vec2 p, float freq, int oct, float lac, float gain, uint seed, uint salt) {
+    float sum = 0.0, amp = 1.0, norm = 0.0, f = freq;
+    for (int o = 0; o < oct; o++) {
+        sum  += osc_value_noise(p, f, seed, salt ^ (uint(o + 1) * 0x9e3779b9u)) * amp;
+        norm += amp; amp *= gain; f *= lac;
+    }
+    return sum / max(norm, 1e-6);
+}
+
+float osc_ridged_fbm(vec2 p, float freq, int oct, uint seed, uint salt) {
+    float sum = 0.0, amp = 0.55, norm = 0.0, f = freq, prev = 1.0;
+    for (int o = 0; o < oct; o++) {
+        float n = osc_value_noise(p, f, seed, salt ^ (uint(o + 3) * 0x68bc21ebu));
+        float r = 1.0 - abs(2.0 * n - 1.0);
+        float rounded = smoothstep(0.08, 0.92, r);
+        float weighted = rounded * (0.58 + prev * 0.42);
+        sum += weighted * amp; norm += amp; prev = rounded; amp *= 0.52; f *= 2.04;
+    }
+    return sum / max(norm, 1e-6);
+}
+
+vec2 osc_rotate2(vec2 p, float angle) {
+    float ca = cos(angle), sa = sin(angle);
+    return vec2(p.x * ca - p.y * sa, p.x * sa + p.y * ca);
+}
+
+float osc_point_seg_dist(vec2 p, vec2 a, vec2 b) {
+    vec2 v = b - a;
+    vec2 w = p - a;
+    float denom = dot(v, v);
+    if (denom <= 1e-12) return length(p - a);
+    float t = clamp(dot(w, v) / denom, 0.0, 1.0);
+    return length(p - (a + v * t));
+}
+
+struct OscStyleParams {
+    float range_cell_m; float range_width_m; float ridge_width_m;
+    float range_len_min; float range_len_max; float relief_m;
+    float primary_spacing_m; float primary_width_m; float primary_amp_m;
+    float tributary_width_m; float tributary_len_m; float detail_amp_m; float detail_freq;
+};
+
+struct OscRangeField { float envelope; float massif; float ridge_axis; float ridge_distance_m; };
+struct OscSegment { float ax; float az; float bx; float bz; float weight; };
+
+// style id 0..3 in .x, weight in .y (mirrors style_at).
+vec2 osc_style_at(vec2 p, uint seed) {
+    float signal = osc_fbm(p, 1.0 / 140000.0, 3, 2.0, 0.55, seed ^ 0xa53c1f2du, 0u);
+    float scaled = clamp(signal * 4.0, 0.0, 3.999);
+    float id = floor(scaled);
+    float center = id + 0.5;
+    return vec2(id, clamp(1.0 - abs(scaled - center) * 2.0, 0.0, 1.0));
+}
+
+OscStyleParams osc_style_params(int style) {
+    OscStyleParams s;
+    if (style == 0) {        // AlpineBranching
+        s = OscStyleParams(20000.0, 5600.0, 1850.0, 17000.0, 31000.0, 1280.0,
+                           12500.0, 1550.0, 3250.0, 900.0, 8000.0, 145.0, 1.0 / 5800.0);
+    } else if (style == 1) { // SierraBlock
+        s = OscStyleParams(28000.0, 7200.0, 2300.0, 24000.0, 42000.0, 1080.0,
+                           14000.0, 1750.0, 2300.0, 1050.0, 10500.0, 115.0, 1.0 / 7200.0);
+    } else if (style == 2) { // PamirChain
+        s = OscStyleParams(24000.0, 5900.0, 1650.0, 28000.0, 48000.0, 1360.0,
+                           10500.0, 1450.0, 2100.0, 820.0, 9500.0, 135.0, 1.0 / 5200.0);
+    } else {                 // DissectedHighlands
+        s = OscStyleParams(18500.0, 4800.0, 1450.0, 12500.0, 25000.0, 950.0,
+                           11500.0, 1420.0, 2900.0, 760.0, 7200.0, 160.0, 1.0 / 4700.0);
+    }
+    return s;
+}
+
+vec2 osc_domain_warp(vec2 p, int style, uint seed) {
+    float amount = (style == 1) ? 2200.0 : (style == 2) ? 1450.0 : (style == 0) ? 3200.0 : 3650.0;
+    float dx = (osc_fbm(p, 1.0 / 58000.0, 3, 2.0, 0.55, seed ^ 0x1515a11au, 0u) - 0.5) * amount;
+    float dz = (osc_fbm(p, 1.0 / 61000.0, 3, 2.0, 0.55, seed ^ 0x2d33cafeu, 0u) - 0.5) * amount;
+    return p + vec2(dx, dz);
+}
+
+OscSegment osc_range_segment(int style, OscStyleParams params, int gx, int gz, int lane, uint seed) {
+    float cell_size = params.range_cell_m;
+    uint slane = uint(lane);
+    float center_x = (float(gx) + 0.12 + osc_rand01(gx, gz, seed, 11u + slane) * 0.76) * cell_size;
+    float center_z = (float(gz) + 0.12 + osc_rand01(gx, gz, seed, 31u + slane) * 0.76) * cell_size;
+    float coherent = osc_value_noise(vec2(center_x, center_z), 1.0 / 150000.0, seed ^ 0x7311cafeu, 0u);
+    float local = osc_rand01(gx, gz, seed, 53u + slane);
+    float style_bias = ((style == 0) ? 0.16 : (style == 1) ? 0.08 : (style == 2) ? 0.28 : 0.20) * OSC_TAU;
+    float angle = style_bias + (coherent * 0.70 + local * 0.30) * OSC_TAU;
+    float length_m = params.range_len_min
+        + osc_rand01(gx, gz, seed, 71u + slane) * (params.range_len_max - params.range_len_min);
+    float dx = cos(angle) * length_m * 0.5;
+    float dz = sin(angle) * length_m * 0.5;
+    OscSegment seg;
+    seg.ax = center_x - dx; seg.az = center_z - dz;
+    seg.bx = center_x + dx; seg.bz = center_z + dz;
+    seg.weight = 0.68 + osc_rand01(gx, gz, seed, 97u + slane) * 0.32;
+    return seg;
+}
+
+OscRangeField osc_range_field(int style, OscStyleParams params, vec2 p, uint seed) {
+    float cell_size = params.range_cell_m;
+    int cx = int(floor(p.x / cell_size));
+    int cz = int(floor(p.y / cell_size));
+    float best_dist = 1e30;
+    float best_score = 0.0;
+    float best_ridge = 0.0;
+    int lane_count = (style == 0 || style == 3) ? 3 : 2;
+    for (int dz = -2; dz <= 2; dz++) {
+        for (int dx = -2; dx <= 2; dx++) {
+            int gx = cx + dx;
+            int gz = cz + dz;
+            for (int lane = 0; lane < lane_count; lane++) {
+                OscSegment seg = osc_range_segment(style, params, gx, gz, lane, seed);
+                float dist = osc_point_seg_dist(p, vec2(seg.ax, seg.az), vec2(seg.bx, seg.bz));
+                float e = exp(-pow(dist / params.range_width_m, 2.0)) * seg.weight;
+                float r = exp(-pow(dist / params.ridge_width_m, 2.0)) * seg.weight;
+                best_dist = min(best_dist, dist);
+                best_score = max(best_score, e);
+                best_ridge = max(best_ridge, r);
+            }
+        }
+    }
+    float regional = osc_fbm(p, 1.0 / 92000.0, 4, 2.03, 0.52, seed ^ 0x6d2b79f5u, 0u);
+    float envelope = smoothstep(0.22, 0.78, best_score * 0.90 + regional * 0.22);
+    float massif_noise = osc_fbm(p, 1.0 / 18000.0, 3, 2.0, 0.52, seed ^ 0x61e72cadu, 0u);
+    OscRangeField rf;
+    rf.envelope = envelope;
+    rf.massif = clamp(envelope * (0.48 + massif_noise * 0.52), 0.0, 1.0);
+    rf.ridge_axis = clamp(best_ridge * envelope, 0.0, 1.0);
+    rf.ridge_distance_m = best_dist;
+    return rf;
+}
+
+float osc_primary_channel_dist(int style, OscStyleParams params, vec2 p, uint seed) {
+    float angle = ((style == 0) ? 0.36 : (style == 1) ? 0.72 : (style == 2) ? 1.42 : 0.98)
+        + (osc_rand01(0, 0, seed ^ 0xabc17133u, uint(style)) - 0.5) * 0.38;
+    vec2 uv = osc_rotate2(p, angle);
+    float u = uv.x;
+    float v = uv.y;
+    float spacing = params.primary_spacing_m;
+    int k0 = int(floor(v / spacing));
+    float best = 1e30;
+    for (int k = k0 - 2; k <= k0 + 2; k++) {
+        float phase = osc_rand01(k, style, seed ^ 0xabc17133u, 17u) * OSC_TAU;
+        float offset = (osc_rand01(k, style, seed ^ 0xabc17133u, 19u) - 0.5) * spacing * 0.35;
+        float curve = float(k) * spacing
+            + offset
+            + params.primary_amp_m * sin(u / 17000.0 + phase)
+            + params.primary_amp_m * 0.34 * sin(u / 8500.0 + phase * 1.7);
+        best = min(best, abs(v - curve));
+    }
+    return best;
+}
+
+float osc_tributary_channel_dist(int style, OscStyleParams params, vec2 p, uint seed) {
+    float cell_size = params.tributary_len_m * 1.45;
+    int cx = int(floor(p.x / cell_size));
+    int cz = int(floor(p.y / cell_size));
+    float best = 1e30;
+    for (int dz = -2; dz <= 2; dz++) {
+        for (int dx = -2; dx <= 2; dx++) {
+            int gx = cx + dx;
+            int gz = cz + dz;
+            float center_x = (float(gx) + 0.12 + osc_rand01(gx, gz, seed ^ 0x93ab41e9u, 23u) * 0.76) * cell_size;
+            float center_z = (float(gz) + 0.12 + osc_rand01(gx, gz, seed ^ 0x93ab41e9u, 29u) * 0.76) * cell_size;
+            float coherent = osc_value_noise(vec2(center_x, center_z), 1.0 / 74000.0, seed ^ 0x44c291afu, 0u);
+            float local = osc_rand01(gx, gz, seed ^ 0x93ab41e9u, 31u);
+            float style_turn = (style == 0) ? 0.35 : (style == 1) ? 0.18 : (style == 2) ? 0.50 : 0.72;
+            float angle = (coherent * (1.0 - style_turn) + local * style_turn) * OSC_TAU;
+            float length_m = params.tributary_len_m * (0.55 + osc_rand01(gx, gz, seed ^ 0x93ab41e9u, 37u) * 0.85);
+            float ax = center_x - cos(angle) * length_m * 0.5;
+            float az = center_z - sin(angle) * length_m * 0.5;
+            float bx = center_x + cos(angle) * length_m * 0.5;
+            float bz = center_z + sin(angle) * length_m * 0.5;
+            best = min(best, osc_point_seg_dist(p, vec2(ax, az), vec2(bx, bz)));
+        }
+    }
+    return best;
+}
+
+// Per-cell oracle height — mirrors synthesize_cell's preview_height_m assembly.
+float oracle_height(vec2 world_xz, uint seed) {
+    vec2 sa = osc_style_at(world_xz, seed);
+    int style = int(sa.x);
+    OscStyleParams params = osc_style_params(style);
+    vec2 w = osc_domain_warp(world_xz, style, seed);
+    OscRangeField range = osc_range_field(style, params, w, seed);
+
+    float primary_distance = osc_primary_channel_dist(style, params, world_xz, seed);
+    float tributary_distance = osc_tributary_channel_dist(style, params, w, seed);
+
+    float primary_mask = 1.0 - smoothstep(0.0, params.primary_width_m, primary_distance);
+    float tributary_mask = (1.0 - smoothstep(0.0, params.tributary_width_m, tributary_distance)) * range.envelope;
+    float carve_mask = clamp(max(primary_mask, tributary_mask * 0.34), 0.0, 1.0);
+    float pass_floor = clamp(primary_mask * range.envelope * (1.0 - range.ridge_axis * 0.35), 0.0, 1.0);
+
+    float base = (osc_fbm(w, 1.0 / 120000.0, 4, 2.0, 0.55, seed ^ 0x5198f00du, 0u) - 0.42) * 340.0;
+    float regional_lift = smoothstep(0.36, 0.78,
+        osc_fbm(w, 1.0 / 84000.0, 3, 2.1, 0.50, seed ^ 0xf137d00du, 0u));
+    float ridge_texture = osc_ridged_fbm(w, params.detail_freq * 0.72, 5, seed ^ 0x88ac4e21u, 0u);
+    float near_detail = (osc_fbm(w, params.detail_freq * 1.8, 4, 2.04, 0.48, seed ^ 0x1c69b3f1u, 0u) - 0.5)
+        * params.detail_amp_m;
+    float ridge_micro = (osc_ridged_fbm(w + vec2(913.0, -421.0), params.detail_freq * 3.1, 5, seed ^ 0xa17e55edu, 0u) - 0.45)
+        * params.relief_m * 0.20 * range.envelope;
+    float branch_detail = (osc_fbm(w + vec2(-701.0, 1303.0), params.detail_freq * 4.4, 4, 2.08, 0.46, seed ^ 0x5eaf1075u, 0u) - 0.5)
+        * params.detail_amp_m * 0.75 * range.envelope;
+
+    float massif_height = range.massif * params.relief_m * (0.55 + regional_lift * 0.45);
+    float ridge_height = range.envelope
+        * (0.35 + range.ridge_axis * 0.65)
+        * (0.45 + ridge_texture * 0.55)
+        * params.relief_m * 0.72;
+    float carve = carve_mask * (115.0 + range.envelope * params.relief_m * 0.22);
+    float pass_cut = pass_floor * (90.0 + params.relief_m * 0.08);
+    float lowland_smooth = (1.0 - range.envelope) * 70.0;
+
+    return 140.0 + base + massif_height + ridge_height + ridge_micro + branch_detail + near_detail
+        - carve - pass_cut + lowland_smooth;
+}
+
 // --- M2.1 climate (world-space, low-frequency, deterministic) ----------------
 // Per-feature seeds are DERIVED by hashing the master seed (00 §5), never by
 // incrementing a shared counter, so temp/moisture are decorrelated from height
