@@ -66,8 +66,8 @@ layout(set = 0, binding = 1, std430) restrict readonly buffer Params {
     // like the climate noises) so biomes stay contiguous at every LOD instead of
     // inheriting the detailed height's much-higher frequency (which fragments them).
     float biome_alt_freq;      // 1/world-units; low (continental landmass scale)
-    float _biome_pad0;         // pad block to 20 floats (80 bytes)
-    float _biome_pad1;
+    uint  terrain_mode;        // M2.4b: 0 = REFERENCE (composition), 1 = SCAFFOLD_CANDIDATE (oracle)
+    float scaffold_seed;       // M2.4b: oracle seed (defaults to seed)
 };
 
 // --- deterministic hash-based value noise (no textures, no state) ---------
@@ -548,7 +548,12 @@ void main() {
     // M2.3: general terrain from the composition machine (uplift places structure,
     // hand-set character). Replaces the flat M1 fbm. Climate/biome unchanged below
     // (height never feeds biome — biome uses macro_altitude; no circularity).
-    float h = composition_height(world_xz, uint(seed));
+    float h;
+    if (terrain_mode == 1u) {
+        h = oracle_height(world_xz, uint(scaffold_seed));
+    } else {
+        h = composition_height(world_xz, uint(seed));
+    }
     vec2 c = climate(world_xz, h, uint(seed));
 
     // M2.2: altitude axis = MACRO continental landform (already normalized [0,1]).

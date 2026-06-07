@@ -109,6 +109,9 @@ struct FieldConfig {
     biome_w_moist: f32,
     biome_w_alt: f32,
     biome_alt_freq: f32,
+    // M2.4b candidate terrain mode (0 = M2.3 reference, 1 = oracle) + oracle seed.
+    terrain_mode: u32,
+    scaffold_seed: f32,
 }
 
 impl Default for FieldConfig {
@@ -129,6 +132,8 @@ impl Default for FieldConfig {
             biome_w_moist: BIOME_W_MOIST,
             biome_w_alt: BIOME_W_ALT,
             biome_alt_freq: BIOME_ALT_FREQ,
+            terrain_mode: 0,
+            scaffold_seed: 1234.0,   // mirrors the default seed; world_view can sync it
         }
     }
 }
@@ -234,6 +239,27 @@ impl PagePool {
         self.cfg.climate_temp_noise = temp_noise;
         self.cfg.climate_lapse = lapse;
         self.cfg.climate_moist_freq = moist_freq;
+    }
+
+    /// M2.4b: switch live terrain between REFERENCE (0 = M2.3 composition) and
+    /// SCAFFOLD_CANDIDATE (1 = per-cell oracle). Pages produced after this use the
+    /// new mode; world_view evicts resident pages on toggle so the change shows
+    /// immediately.
+    #[func]
+    fn set_terrain_mode(&mut self, mode: i64) {
+        self.cfg.terrain_mode = if mode == 1 { 1 } else { 0 };
+    }
+
+    /// M2.4b: set the oracle seed (defaults to the world seed). Optional tuning hook.
+    #[func]
+    fn set_scaffold_seed(&mut self, seed: f32) {
+        self.cfg.scaffold_seed = seed;
+    }
+
+    /// M2.4b introspection for the HUD/gate.
+    #[func]
+    fn terrain_mode(&self) -> i64 {
+        self.cfg.terrain_mode as i64
     }
 
     /// M1.9.3b: per-frame cap for MID-coarse eager pages (the coarsest level
@@ -443,6 +469,8 @@ impl PagePool {
             biome_w_moist: self.cfg.biome_w_moist,
             biome_w_alt: self.cfg.biome_w_alt,
             biome_alt_freq: self.cfg.biome_alt_freq,
+            terrain_mode: self.cfg.terrain_mode,
+            scaffold_seed: self.cfg.scaffold_seed,
         };
         // Profiled region: GPU dispatch + blocking readback (rd.sync) — the
         // suspected fast-motion spike source. Accumulated per frame (M1.9.1).

@@ -80,6 +80,10 @@ impl FieldCompute {
             biome_w_moist: BIOME_WEIGHTS[1],
             biome_w_alt: BIOME_WEIGHTS[2],
             biome_alt_freq: BIOME_ALT_FREQ,
+            // M2.4b: default REFERENCE mode so every existing gate's height path
+            // stays bit-identical to M2.3; scaffold_seed mirrors seed.
+            terrain_mode: 0,
+            scaffold_seed: seed,
         }
     }
 
@@ -145,6 +149,27 @@ impl FieldCompute {
         };
         let p = Self::params(origin_x, origin_z, spacing, seed, page_res, octaves, base_freq, amplitude);
         gpu.dispatch_page(p).map(|fp| fp.biome).unwrap_or_default()
+    }
+
+    /// M2.4b: produce one page's HEIGHT channel in SCAFFOLD_CANDIDATE mode (the
+    /// per-cell oracle), page_res*page_res floats row-major. Same params as
+    /// produce_page but terrain_mode=1, so the m2_4b_oracle_live gate can prove the
+    /// oracle path is live, deterministic, finite, non-flat, and distinct from the
+    /// REFERENCE (mode 0) height. scaffold_seed mirrors seed.
+    #[func]
+    fn produce_oracle_page(
+        &mut self,
+        origin_x: f32, origin_z: f32, spacing: f32, seed: f32,
+        page_res: i64, octaves: i64, base_freq: f32, amplitude: f32,
+    ) -> PackedFloat32Array {
+        let Some(gpu) = self.gpu.as_mut() else {
+            godot_error!("FieldCompute: not initialized.");
+            return PackedFloat32Array::new();
+        };
+        let mut p = Self::params(origin_x, origin_z, spacing, seed, page_res, octaves, base_freq, amplitude);
+        p.terrain_mode = 1;
+        p.scaffold_seed = seed;
+        gpu.dispatch_page(p).map(|fp| fp.heights).unwrap_or_default()
     }
 
     /// Produce one page packed into an R32F ImageTexture (for a render shader).

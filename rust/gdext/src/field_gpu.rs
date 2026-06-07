@@ -44,10 +44,16 @@ pub struct PageParams {
     pub biome_w_moist: f32,
     pub biome_w_alt: f32,
     pub biome_alt_freq: f32, // macro-altitude frequency (continental, low)
+    // --- M2.4b terrain mode + scaffold seed (replaces the 2 former pads) ---
+    pub terrain_mode: u32,   // 0 = REFERENCE (M2.3 composition), 1 = SCAFFOLD_CANDIDATE (oracle)
+    pub scaffold_seed: f32,  // oracle seed (default = `seed`); kept separate for future tuning
 }
 
 impl PageParams {
-    fn to_bytes(&self) -> PackedByteArray {
+    /// Serialize to the raw std430 byte layout (pure Rust, no Godot FFI — so the
+    /// byte count is unit-testable without a live RenderingDevice). `to_bytes`
+    /// wraps this into a PackedByteArray for the GPU buffer.
+    fn to_byte_vec(&self) -> Vec<u8> {
         let mut v: Vec<u8> = Vec::with_capacity(80);
         v.extend_from_slice(&self.origin_x.to_le_bytes());
         v.extend_from_slice(&self.origin_z.to_le_bytes());
@@ -67,9 +73,13 @@ impl PageParams {
         v.extend_from_slice(&self.biome_w_moist.to_le_bytes());
         v.extend_from_slice(&self.biome_w_alt.to_le_bytes());
         v.extend_from_slice(&self.biome_alt_freq.to_le_bytes());
-        v.extend_from_slice(&0f32.to_le_bytes());   // _biome_pad0
-        v.extend_from_slice(&0f32.to_le_bytes());   // _biome_pad1
-        PackedByteArray::from(v.as_slice())
+        v.extend_from_slice(&self.terrain_mode.to_le_bytes());  // was _biome_pad0
+        v.extend_from_slice(&self.scaffold_seed.to_le_bytes()); // was _biome_pad1
+        v
+    }
+
+    fn to_bytes(&self) -> PackedByteArray {
+        PackedByteArray::from(self.to_byte_vec().as_slice())
     }
 }
 
@@ -217,6 +227,25 @@ impl FieldGpu {
             bm[i] = src[b + 3];
         }
         Some(FieldPage { heights, temp, moisture, biome })
+    }
+}
+
+#[cfg(test)]
+mod params_tests {
+    use super::*;
+    #[test]
+    fn page_params_is_80_bytes() {
+        let p = PageParams {
+            origin_x: 0.0, origin_z: 0.0, spacing: 1.0, seed: 1.0,
+            page_res: 8, octaves: 5, base_freq: 0.001, amplitude: 1.0,
+            climate_lat_scale: 1.0, climate_temp_freq: 1.0, climate_temp_noise: 0.1,
+            climate_lapse: 0.3, climate_moist_freq: 1.0,
+            biome_count: 1, biome_w_temp: 1.0, biome_w_moist: 1.0, biome_w_alt: 1.0,
+            biome_alt_freq: 1.0, terrain_mode: 0, scaffold_seed: 1.0,
+        };
+        // to_byte_vec is pure Rust (no Godot FFI), so the std430 byte count is
+        // testable without a live RenderingDevice. 20 fields x 4 bytes = 80.
+        assert_eq!(p.to_byte_vec().len(), 80);
     }
 }
 
