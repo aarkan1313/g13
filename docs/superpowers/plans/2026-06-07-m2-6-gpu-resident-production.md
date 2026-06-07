@@ -226,7 +226,67 @@ Spike files were deleted (throwaway); finding recorded here + in DRIFT_LOG.
 **Only after Task 1.0 proves the path.** (Task 1.0 PASSED — see above. Expand the
 bite-sized steps below using the resolved API before implementing.) Detailed steps for this task will be written once the spike confirms the exact working API (the spike removes the current API uncertainty). At minimum it will: add a main-device field-compute path in `field_gpu.rs` (or a new `field_gpu_resident.rs`) that runs `field_height.glsl` writing height/climate/normal into RD storage-images; expose per-page `Texture2DRD`s from `PagePool`; bind them in `world_view.gd`'s `_make_page_instance` in place of the ImageTextures for RENDERING; KEEP the existing local-device readback feeding collision unchanged. Gate: `m2_6_burst_perf_check` median-of-maxes beats the Stage 0 baseline; `m1_4`/`m1_7c`/`m2_1`/`m2_2`/`m2_3` PASS; human feel-check (smooth, seam gone, shape unchanged).
 
-> **Plan note:** Task 1.1's bite-sized steps are intentionally deferred until the Task 1.0 spike resolves the API uncertainty. This is a deliberate de-risking gate, not a placeholder — writing exact rewrite code now would be guessing at unverified signatures. After the spike, return here and expand Task 1.1 into concrete steps before implementing.
+**EXPANDED (post-spike). Render-thread decision (pillar call 2026-06-07): produce
+inline on the main thread (project is Single-Safe; the spike proved it). Escalation
+trigger: if the live runtime throws RD threading errors or shows glitches, switch
+that dispatch to `RenderingServer::call_on_render_thread`. Production STAYS
+synchronous (produce() returns ready textures) — preserves the pool/view/M1.7
+contract. Collision keeps the EXISTING local-device readback unchanged this stage;
+Stage 2 trims it. So Stage 1.1 temporarily does BOTH paths — the win is render no
+longer syncs/reads back.**
+
+File structure for Stage 1.1:
+- New `rust/gdext/src/render_gpu.rs` — owns the MAIN RenderingDevice, compiles the
+  field shader once, and per page produces the 4 render textures as main-device RD
+  textures (height R32F, climate RG32F, biome R32F, normal RG32F), returning their
+  RIDs. Mirrors `field_gpu.rs` but: main device, no sync/readback, outputs storage
+  images instead of a readback buffer. The field GLSL is shared (one source).
+- `field_height.glsl` — add storage-image outputs (or a second entry/variant) so the
+  same field math can write to images for the render path. Keep the buffer-output
+  path for the collision/oracle (local device).
+- `page_pool.rs` — `ResidentPage` gains the render RD-texture RIDs + their
+  `Texture2Drd` wrappers; `request_*` return `Gd<Texture2Drd>`; the getters return
+  the render `Texture2Drd`s. Keep `heights` (collision) from the existing local path.
+- `world_view.gd` — bind the `Texture2Drd`s to materials (same uniform names).
+- `ring_displace.gdshader` — unchanged sampler uniforms; it already samples
+  height_tex/climate_tex/biome_tex; they're now Texture2DRD-backed. (Verify a
+  vertex-stage `texture()` works on a Texture2DRD — the spike used fragment; if
+  vertex sampling of Texture2DRD has issues, that's a finding to handle.)
+
+- [ ] **Step 1: GLSL — add image outputs.** In `field_height.glsl`, add `layout(...,
+  rgba32f/r32f) uniform image2D` outputs and `imageStore` the same h/climate/biome/
+  normal values currently written to the buffer, guarded so the SAME shader can run
+  either the buffer path (collision/oracle) or the image path (render) — e.g. a
+  `params.output_mode` uint (0=buffer, 1=images) branch, or a `#define`. Keep buffer
+  output byte-identical for mode 0 (M1.7/gates).
+- [ ] **Step 2: Build + run m1_4/m2_3 to confirm the buffer path is unchanged** (mode
+  0 still bit-identical). Commit GLSL.
+- [ ] **Step 3: render_gpu.rs — main-device producer.** Implement per the spike's
+  proven API: get main RD, create the 4 RD textures (usage SAMPLING|STORAGE|
+  CAN_COPY_TO), bind as IMAGE uniforms, dispatch the field shader in image mode, NO
+  sync/readback, return the RIDs. Build.
+- [ ] **Step 4: page_pool — wire render textures.** ResidentPage holds the render RIDs
+  + Texture2Drd wrappers; produce() calls render_gpu for the render textures AND still
+  calls the local field_gpu for the collision `heights` (unchanged). request_*/getters
+  return the Texture2Drd. Build.
+- [ ] **Step 5: world_view — bind Texture2Drd.** Update `_make_page_instance` to accept/
+  bind the Texture2Drd render textures (height for displacement, climate/biome/normal).
+- [ ] **Step 6: Run the burst perf gate.** Expect median-of-maxes well below the ~47ms
+  baseline (render no longer syncs/reads back). Record the number.
+- [ ] **Step 7: Run the full gate suite** (m1_4, m1_5c, m1_6, m1_7c, m2_1, m2_2, m2_3) —
+  all PASS. Heights/collision intact (still from the local path).
+- [ ] **Step 8: Human feel-check + capture.** Launch; fly low + fast: smooth (no burst
+  hitch), seam still gone, shape unchanged, climate/biome view modes (V) still correct.
+  Self-verify in a capture first.
+- [ ] **Step 9: Commit Stage 1.1** with before/after burst numbers.
+
+> **Note for the executor:** this stage is large. If any step reveals the render-
+> thread inline approach fails live (threading errors/glitches), STOP and switch that
+> dispatch to call_on_render_thread (the pre-declared escalation), don't stack hacks.
+> If Texture2DRD can't be sampled in the VERTEX stage (height displacement needs it),
+> that's a real blocker — report it; a fallback is keeping height as a readback/
+> ImageTexture while climate/biome/normal go GPU-resident (still a big win, since
+> height is 1 of 4 and the normal/climate are the seam/perf-relevant ones).
 
 ---
 
