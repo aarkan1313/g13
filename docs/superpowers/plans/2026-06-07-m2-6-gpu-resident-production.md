@@ -283,10 +283,12 @@ File structure for Stage 1.1:
 > **Note for the executor:** this stage is large. If any step reveals the render-
 > thread inline approach fails live (threading errors/glitches), STOP and switch that
 > dispatch to call_on_render_thread (the pre-declared escalation), don't stack hacks.
-> If Texture2DRD can't be sampled in the VERTEX stage (height displacement needs it),
-> that's a real blocker — report it; a fallback is keeping height as a readback/
-> ImageTexture while climate/biome/normal go GPU-resident (still a big win, since
-> height is 1 of 4 and the normal/climate are the seam/perf-relevant ones).
+
+**VERTEX-SAMPLING PRE-CHECK (2026-06-07): PASSED.** A second throwaway spike sampled a
+compute-written `Texture2Drd` in the VERTEX stage to displace a subdivided plane — the
+dome rendered correctly. So height displacement (which samples in vertex) CAN be
+GPU-resident; the "keep height as ImageTexture" fallback is NOT needed. Full scope
+(all 4 render textures GPU-resident) is confirmed viable. Both spikes deleted.
 
 ---
 
