@@ -253,12 +253,17 @@ float lone_peaks(vec2 p, uint seed) {
     return h;
 }
 
-// M2.5b composition: blend archetypes by MACRO climate, add lone-peak landmarks.
+// M2.5b composition + M2.5c meso modulation: blend archetypes by MACRO climate,
+// vary each archetype's contribution by the MESO sub-region field, add lone peaks.
 float composition_height(vec2 world_xz, uint seed) {
     vec2 rp = domain_warp(world_xz, seed ^ 0x52454749u, 3000.0, 0.00003);
     float macro_alt = macro_altitude(rp, seed);
     vec2  mc = macro_climate(rp, seed, macro_alt);
     float temp = mc.x, moist = mc.y;
+
+    // M2.5c: meso sub-region field (the middle tier). meso_mod in [-1,1].
+    const float MESO_FREQ = 0.00012;     // ~1/8.3km sub-regions (spec §4 default)
+    float meso_mod = meso_field(world_xz, seed, MESO_FREQ).x;
 
     float macro_base = (macro_alt - 0.35) * 1400.0;
 
@@ -270,13 +275,24 @@ float composition_height(vec2 world_xz, uint seed) {
     float w_plains   = band(macro_alt, 0.32, 0.18);
     float wsum = w_alpine + w_highland + w_forest + w_mesa + w_swamp + w_plains + 1e-4;
 
+    // Per-archetype meso response (2b will make this a data column). Each archetype's
+    // contribution is scaled by (1 + meso_mod*strength): high meso_mod -> this
+    // sub-region of the region rises; low -> it sinks toward a saddle/basin. Clamped
+    // so a sub-region never inverts the landform (stays >= 0.25 of base).
+    float ma = clamp(1.0 + meso_mod * 0.65, 0.25, 1.75);   // alpine: strong relief
+    float mh = clamp(1.0 + meso_mod * 0.55, 0.25, 1.75);   // highland
+    float mf = clamp(1.0 + meso_mod * 0.40, 0.35, 1.65);   // forest hills
+    float mm = clamp(1.0 + meso_mod * 0.50, 0.30, 1.70);   // mesa
+    float ms = clamp(1.0 + meso_mod * 0.30, 0.50, 1.50);   // swamp: gentle
+    float mp = clamp(1.0 + meso_mod * 0.35, 0.45, 1.55);   // plains: gentle
+
     float h = macro_base + (
-          w_alpine   * arch_alpine(world_xz, seed)
-        + w_highland * arch_highlands(world_xz, seed)
-        + w_forest   * arch_forest_hills(world_xz, seed)
-        + w_mesa     * arch_mesa(world_xz, seed)
-        + w_swamp    * arch_swamp(world_xz, seed)
-        + w_plains   * arch_plains(world_xz, seed)
+          w_alpine   * arch_alpine(world_xz, seed)     * ma
+        + w_highland * arch_highlands(world_xz, seed)  * mh
+        + w_forest   * arch_forest_hills(world_xz, seed) * mf
+        + w_mesa     * arch_mesa(world_xz, seed)       * mm
+        + w_swamp    * arch_swamp(world_xz, seed)      * ms
+        + w_plains   * arch_plains(world_xz, seed)     * mp
     ) / wsum;
 
     h += lone_peaks(world_xz, seed);
