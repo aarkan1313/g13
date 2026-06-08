@@ -59,10 +59,15 @@ func _ready() -> void:
 	# Climb ANY slope (just slower on steep grades, handled in _physics_process):
 	# treat almost everything as walkable floor instead of an unclimbable wall.
 	# Default floor_max_angle (45 deg) makes steep mountain faces act as walls you
-	# slide off; raise it so the capsule ascends them. Floor snap keeps it stuck to
-	# the surface over bumps/crests instead of launching.
+	# slide off; raise it so the capsule ascends them.
 	floor_max_angle = deg_to_rad(89.0)
-	floor_snap_length = max(capsule_height, 4.0)
+	# M2.7 quick-fix: floor_snap was 6m (= capsule_height) — it YANKED the body back
+	# to the surface every frame, so cresting a bump at speed never launched into an
+	# arc (the "run fast over a bump and just stay at that height, never fall" bug).
+	# A SMALL snap (0.3m) still keeps the capsule glued on gentle contiguous ground
+	# (no flat-terrain jitter) but can't grab it back down off a crest -> real
+	# ballistic arcs / falling. Full character-feel (jump tuning, slope camera) = M2.7.
+	floor_snap_length = 0.3
 	floor_stop_on_slope = false      # don't freeze on a slope; let movement drive up it
 
 	# Our walk camera (eye-level), inactive until WALK.
@@ -103,8 +108,9 @@ func _unhandled_input(event: InputEvent) -> void:
 			_turbo = not _turbo            # CapsLock = toggle TURBO walk (cover ground fast)
 			print("WALK turbo %s (x%.0f)" % ["ON" if _turbo else "OFF", turbo_mult])
 	# Mouse-look only in WALK (FLY mode is the view's fly_camera's job).
+	# LEFT-mouse drag = look (matches fly_camera.gd's left-click look).
 	if _walking:
-		if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_RIGHT:
+		if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 			_captured = event.pressed
 			Input.mouse_mode = Input.MOUSE_MODE_CAPTURED if _captured else Input.MOUSE_MODE_VISIBLE
 		elif event is InputEventMouseMotion and _captured:
