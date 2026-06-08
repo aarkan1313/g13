@@ -434,10 +434,15 @@ func _attach_collision_body(key: String, body: StaticBody3D) -> void:
 # pages are currently displayed, hide the coarse page (fine has it); otherwise
 # show it (it's the blanket filling a not-yet-loaded hole -> never black).
 func _update_annulus_visibility() -> void:
-	# Build a fast lookup of which pages are displayed, per level.
-	var displayed := {}                        # "L:gx:gz" -> true
+	# PERF (2026-06-07): the old version rebuilt a redundant `displayed` dict (every
+	# instance IS displayed) and did 4 "%d:%d:%d"-string-format lookups per coarse
+	# page — ~366x4 string allocs/frame, a measured chunk of the 120fps dip. Now:
+	# build ONE integer-keyed set of resident (level,gx,gz) from _inst_meta (no
+	# strings), and the footprint check is integer hashes. Same annulus logic.
+	var resident := {}                         # packed int -> true (no string keys)
 	for key in _instances.keys():
-		displayed[key] = true
+		var m: Vector3i = _inst_meta[key]
+		resident[_pack_key(m.x, m.y, m.z)] = true
 	for key in _instances.keys():
 		var m: Vector3i = _inst_meta[key]      # parsed at creation, not here (M1.9.3c)
 		var level := m.x
@@ -446,13 +451,21 @@ func _update_annulus_visibility() -> void:
 			continue
 		var cgx := m.y
 		var cgz := m.z
-		# Is the entire finer (level-1) footprint displayed?
-		var finer_covers := true
-		for dz in range(2):
-			for dx in range(2):
-				if not displayed.has("%d:%d:%d" % [level - 1, 2 * cgx + dx, 2 * cgz + dz]):
-					finer_covers = false
+		# Is the entire finer (level-1) footprint displayed? (2x2 child footprint)
+		var fl := level - 1
+		var bx := 2 * cgx
+		var bz := 2 * cgz
+		var finer_covers: bool = resident.has(_pack_key(fl, bx, bz)) \
+			and resident.has(_pack_key(fl, bx + 1, bz)) \
+			and resident.has(_pack_key(fl, bx, bz + 1)) \
+			and resident.has(_pack_key(fl, bx + 1, bz + 1))
 		_instances[key].visible = not finer_covers
+
+# Pack (level,gx,gz) into one int64 key for hot-loop dict lookups (no string
+# formatting). gx/gz fit in 24 bits each here (|coord| << 8M cells even at the
+# coarsest reach); level in the top bits. Used by the annulus pass.
+func _pack_key(level: int, gx: int, gz: int) -> int:
+	return (level << 56) | ((gx & 0xFFFFFF) << 28) | (gz & 0xFFFFFF)
 
 # Shared PlaneMesh for a level — identical geometry for every page at that level,
 # so it's built once and referenced by all (no per-page mesh alloc). Cached.
