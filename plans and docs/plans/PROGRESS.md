@@ -92,4 +92,13 @@ STATUS: streaming pop-in / centering NOT fixed. Next steps not decided. Throwawa
 diagnostic captures/popin_probe.gd exists (uncommitted). Untracked editor-regenerated
 files stashed on main earlier ("editor-regenerated uid/tscn files on main, 2026-06-07").
 
+## Render-Forever + Rust streaming + terrain shape (2026-06-07 session — RESOLVED all the above + more)
+RF.popin [x] POP-IN root cause = fog was OFF (fog_density=0 zeroed the depth-fog term; prior begin/end tuning inert). fog on + frontier buried in haze + cam.far<=fog_end. Human PASS "the pop in is good". (commit e41fff1)
+RF.perf [x] PERF: dem-grounded prototype had abandoned the M2.6 config (ring_radius 5/eager 128 = 85.7ms burst, 198/720 over); restored production (r3/8lvl/eager8) -> 9.2ms, 0/720. Human PASS. Reach lever = num_levels (2^L), NOT ring_radius (quadratic pages). (commit bf1f84a)
+RF.rust [x] STREAMING POLICY -> RUST (00 §4): PagePool.update_streaming owns the per-frame ring scan/pin/evict/annulus, returns add/remove/show/hide DIFF; views are thin presenters; killed 366 pin FFI/frame; ~120->194fps dip. gate m1_5d. Ported to BOTH views. (commits bf49649 module+gate, 1500cc8 dem, 849e784 production)
+RF.origin [x] FLOATING ORIGIN (world_origin.gd, gate m1_8): whole-cell camera-relative rebase; world stays centered + float precision at distance; terrain bit-identical across rebase. (the roadmap's parked origin-rebasing item, done early)
+RF.reach [x] reach = 100km (num_levels 7). PROVEN by vista captures: "view distance" is terrain composition, NOT reach/fog (49km vs 779km pixel-identical). (commit bf48719)
+M2.5a [x] macro relief retune (uplift everywhere). Gates green (m2_3 spread 0.95, max-step 16.5 no-cliff). Human gate: TOO BINARY ("just mountains with some plains") -> pivoted to M2.5b. (commit e43673f)
+M2.5b [~] REGIONAL-ARCHETYPE terrain BASELINE. composition_height rewritten: 6 archetypes (plains/forest_hills/alpine/swamp/mesa/highlands) blended by macro climate + lone_peaks landmarks; biome color matched to shape (dominant_biome); old uplift deleted; framework + seam fix + collision kept. Gates green (m1_4/m2_3 spread 0.93/m2_1/m2_2/m1_7a/c), perf held (burst 9.27ms 0/720). Human verdict: "not terrible — want FAR GREATER DIVERSITY, better SCALE, gonna take a while + work." ARCHITECTURE ACCEPTED, look is FIRST PASS. (commits 1a9d78b/8c560a6, ckpt 0a0eb81). Spec/plan: docs/superpowers/.../2026-06-07-m2-5b-regional-archetype-terrain.*. NEXT: diversity+scale (its OWN brainstorm — more archetypes + richer character + tuned scale), then pull M5 water / M6 erosion earlier.
+
 ## Beyond: see ROADMAP.md (headers only, by design)
