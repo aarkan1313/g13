@@ -27,7 +27,7 @@ const AABB_HALF_HEIGHT := 4000.0
 # M1.6: 6 levels @ base span 508m, radius 3 -> coarsest reaches ~49km (30km goal
 # with margin). Each coarser level doubles per-page span, so reach is exponential
 # for linear page cost. (level span = base_span * 2^level.)
-@export var num_levels: int = 8            # fine (0) + coarse blankets — 8 levels @ base span ~508m, radius 3 -> reach ~195km (render-forever P1); the 2 new levels are coarse and route through the bounded mid-coarse path automatically
+@export var num_levels: int = 10           # fine (0) + coarse blankets. 10 levels @ base span 508m, radius 3 -> reach ~780km (was 8=195km). Reach DOUBLES per level for ~one ring of cheap tapered coarse pages (the Rust streaming + perf headroom absorbs it); far horizon you can't outrun in turbo. Coarsest stays the unbounded never-black floor.
 @export var ring_radius: int = 3           # pages each side, per level, around camera
 @export var evict_margin: int = 1          # hysteresis: keep_radius = ring_radius + margin
 @export var max_new_per_frame: int = 4
@@ -61,6 +61,16 @@ var _cam: Camera3D
 # Without this, walking away from the drop point left the collision zone -> the
 # capsule fell through rendered-but-not-collidable terrain. Set via set_track_target().
 var _track: Node3D
+# Floating origin (engine module): keeps the camera near the Godot origin by
+# rebasing the displayed world in whole fine-cells, so the world stays CENTERED and
+# float precision holds at distance. The field is computed in ABSOLUTE coords via
+# _origin.to_absolute(); rebase is whole-cell so generation is unchanged (m1_8).
+var _origin: RefCounted
+# Smoothed travel direction (world XZ) for the Rust streaming's direction bias
+# (build pages AHEAD of you first). EMA so a single jittery frame doesn't swing it.
+var _prev_track_x: float = INF
+var _prev_track_z: float = INF
+var _travel_dir := Vector2.ZERO
 # M1.9.3a — kill the per-page alloc spike (measured: mesh+material `new` on the
 # eager burst was the dominant cost). (1) One SHARED PlaneMesh per level: every
 # page at a level has identical geometry, so build it once and reference it.
@@ -89,6 +99,8 @@ func _ready() -> void:
 	_pool.configure(page_res, spacing, seed_val, octaves, base_freq, amplitude, max_new_per_frame)
 	_pool.set_max_eager_per_frame(max_eager_per_frame)
 	_ring_shader = load(RING)
+	# Floating origin: rebase quantum = the level-0 page span (one fine cell).
+	_origin = load("res://scripts/world_origin.gd").new(_pool.page_span())
 	_spawn_camera()
 	_track = _cam            # default: stream/collide around the fly camera (WALK overrides)
 	var span: float = _pool.page_span()
@@ -103,73 +115,90 @@ func _process(_dt: float) -> void:
 	_mesh_us_accum = 0
 	_pool.begin_frame()
 	var base_span: float = _pool.page_span()
-	var keep: int = ring_radius + evict_margin
 	# Stream + collide around the ACTIVE controller (the capsule in WALK mode, else
 	# the fly camera). Reading the frozen fly-cam here is what let a walking player
 	# leave the collision zone and fall through (M2.3-fix). Guard against a freed
 	# target by falling back to the camera.
 	var tracker: Node3D = _track if (_track != null and is_instance_valid(_track)) else _cam
-	var cam_x: float = tracker.global_position.x
-	var cam_z: float = tracker.global_position.z
 
-	# Request coarsest first. Three production modes (M1.9.3b):
-	#  - COARSEST level: unbounded eager — the never-black FLOOR, always complete.
-	#  - MID-coarse (0 < level < coarsest): bounded eager — spread over frames;
-	#    a missing one falls back to the coarser blanket beneath (never black),
-	#    which kills the fast-motion burst (was up to 28 coarse pages in 1 frame).
-	#  - FINE (0): bounded — the expensive detail, capped per frame as before.
-	var coarsest := num_levels - 1
-	for level in range(coarsest, -1, -1):
-		var span: float = base_span * pow(2.0, level)
-		var ccx: int = int(floor(cam_x / span))
-		var ccz: int = int(floor(cam_z / span))
-		for gz in range(ccz - ring_radius, ccz + ring_radius + 1):
-			for gx in range(ccx - ring_radius, ccx + ring_radius + 1):
-				var key := "%d:%d:%d" % [level, gx, gz]
-				if _instances.has(key):
-					continue
-				var tex
-				if level == coarsest:
-					tex = _pool.request_page_eager(level, gx, gz)          # floor
-				elif level > 0:
-					tex = _pool.request_page_eager_bounded(level, gx, gz)  # spread
-				else:
-					tex = _pool.request_page(level, gx, gz)                # fine
-				if tex == null:
-					continue                  # over budget; coarser blanket covers it
-				_instances[key] = _make_page_instance(tex, level, gx, gz, span)
-				_inst_meta[key] = Vector3i(level, gx, gz)   # parse the key ONCE, here
+	# FLOATING ORIGIN: pull the displayed world back toward the Godot origin if the
+	# camera drifted >= one fine cell. Moving THIS node (View) shifts every page
+	# instance, collision body, and the fly camera in one op; the Player (sibling) is
+	# shifted separately. Whole-cell -> absolute grid index unchanged -> terrain
+	# bit-identical (m1_8). Keeps the world centered + float precision at distance.
+	var shift: Vector3 = _origin.maybe_rebase(tracker.global_position)
+	if shift != Vector3.ZERO:
+		position -= shift
+		if _track != null and _track != _cam and is_instance_valid(_track):
+			_track.global_position -= shift
 
-	# Per-level camera page-center, precomputed once (was recomputed per instance).
-	var lvl_ccx := PackedInt32Array(); lvl_ccx.resize(num_levels)
-	var lvl_ccz := PackedInt32Array(); lvl_ccz.resize(num_levels)
-	for level in range(num_levels):
-		var span: float = base_span * pow(2.0, level)
-		lvl_ccx[level] = int(floor(cam_x / span))
-		lvl_ccz[level] = int(floor(cam_z / span))
+	# Absolute camera position (the field's grid index is rebase-invariant).
+	var abs_track: Vector3 = _origin.to_absolute(tracker.global_position)
+	var cam_x: float = abs_track.x
+	var cam_z: float = abs_track.z
 
-	# ONE pass over instances (no per-level re-iteration, no string parsing):
-	# drop stale -> recycle; pin the rest. (Drop before pin so a stale page isn't
-	# pinned then evicted.) Reads coords from _inst_meta (parsed at creation).
-	for key in _instances.keys():
-		var m: Vector3i = _inst_meta[key]
-		var cheb: int = maxi(absi(m.y - lvl_ccx[m.x]), absi(m.z - lvl_ccz[m.x]))
-		if cheb > keep:
-			_recycle_instance(_instances[key])
-			_instances.erase(key)
-			_inst_meta.erase(key)
+	# Smoothed travel direction (XZ) for the Rust streaming's direction bias.
+	if _prev_track_x != INF:
+		var mv := Vector2(cam_x - _prev_track_x, cam_z - _prev_track_z)
+		if mv.length() > 0.01:
+			_travel_dir = (_travel_dir * 0.8 + mv.normalized() * 0.2)
 		else:
-			_pool.pin_page(m.x, m.y, m.z)             # still displayed -> pin
-	# Evict pool pages outside keep radius, per level (cheap; bounded level count).
-	for level in range(num_levels):
-		_pool.evict_outside(level, lvl_ccx[level], lvl_ccz[level], keep)
+			_travel_dir *= 0.8
+	_prev_track_x = cam_x
+	_prev_track_z = cam_z
+	var dir_len: float = _travel_dir.length()
+	var travel_n := (_travel_dir / dir_len) if dir_len > 0.001 else Vector2.ZERO
 
-	_update_annulus_visibility()
+	# STREAMING POLICY IS IN RUST (00 §4): one call does the whole per-frame ring
+	# scan + ordering + 3-mode bounded production + pin + evict + annulus visibility,
+	# on the absolute grid, returning a DIFF the view applies as node ops only.
+	var diff: Dictionary = _pool.update_streaming(
+		cam_x, cam_z, ring_radius, evict_margin, num_levels, travel_n.x, travel_n.y)
+	_apply_stream_diff(diff)
+
 	_update_collision(cam_x, cam_z, base_span)
 
 	# M1.9 profiling: record this frame's view-side cost for the HUD.
 	prof_mesh_us = _mesh_us_accum
 	prof_process_us = Time.get_ticks_usec() - _t_start
+
+# Apply the Rust streaming DIFF: create ADDED instances (binding textures via the
+# pool getters — cache hits), recycle REMOVED, set SHOW/HIDE visibility. Flat
+# PackedInt32Array [level,gx,gz, ...] strided by 3. Replaces the old per-frame
+# GDScript ring scan / pin / evict / annulus passes (now in Rust, 00 §4).
+func _apply_stream_diff(diff: Dictionary) -> void:
+	var base_span: float = _pool.page_span()
+	var added: PackedInt32Array = diff["added"]
+	for i in range(0, added.size(), 3):
+		var level: int = added[i]
+		var gx: int = added[i + 1]
+		var gz: int = added[i + 2]
+		var key := "%d:%d:%d" % [level, gx, gz]
+		if _instances.has(key):
+			continue
+		var span: float = base_span * pow(2.0, level)
+		var tex = _pool.get_page_height_tex(level, gx, gz)
+		if tex == null:
+			continue
+		_instances[key] = _make_page_instance(tex, level, gx, gz, span)
+		_inst_meta[key] = Vector3i(level, gx, gz)
+	var removed: PackedInt32Array = diff["removed"]
+	for i in range(0, removed.size(), 3):
+		var rkey := "%d:%d:%d" % [removed[i], removed[i + 1], removed[i + 2]]
+		if _instances.has(rkey):
+			_recycle_instance(_instances[rkey])
+			_instances.erase(rkey)
+			_inst_meta.erase(rkey)
+	var show: PackedInt32Array = diff["show"]
+	for i in range(0, show.size(), 3):
+		var skey := "%d:%d:%d" % [show[i], show[i + 1], show[i + 2]]
+		if _instances.has(skey):
+			_instances[skey].visible = true
+	var hide: PackedInt32Array = diff["hide"]
+	for i in range(0, hide.size(), 3):
+		var hkey := "%d:%d:%d" % [hide[i], hide[i + 1], hide[i + 2]]
+		if _instances.has(hkey):
+			_instances[hkey].visible = false
 
 # M2.1 — V cycles the view mode (normal -> temperature -> moisture -> normal) and
 # pushes it to every live page material so the climate fields show on the terrain.
@@ -212,6 +241,12 @@ func set_track_target(target: Node3D) -> void:
 # physics query); the render/collision paths don't depend on this.
 func page_terrain_height(wx: float, wz: float) -> float:
 	var span: float = page_span_value()
+	# Caller passes GODOT-space XZ; pages are keyed by ABSOLUTE grid index, so convert
+	# through the floating origin first (else after a rebase we'd read the wrong page).
+	if _origin != null:
+		var a: Vector3 = _origin.to_absolute(Vector3(wx, 0.0, wz))
+		wx = a.x
+		wz = a.z
 	var gx: int = int(floor(wx / span))
 	var gz: int = int(floor(wz / span))
 	var heights: PackedFloat32Array = _pool.get_page_heights(0, gx, gz)
@@ -297,31 +332,8 @@ func _attach_collision_body(key: String, body: StaticBody3D) -> void:
 	else:
 		body.queue_free()                      # already built (shouldn't happen, but no double-add)
 
-# Annulus rule (no overlap -> no z-fighting): a coarse page is VISIBLE only where
-# the finer level does NOT fully cover it. A coarse page (L, cgx, cgz) covers the
-# 2x2 footprint of level L-1 pages (2cgx..+1, 2cgz..+1); if ALL of those finer
-# pages are currently displayed, hide the coarse page (fine has it); otherwise
-# show it (it's the blanket filling a not-yet-loaded hole -> never black).
-func _update_annulus_visibility() -> void:
-	# Build a fast lookup of which pages are displayed, per level.
-	var displayed := {}                        # "L:gx:gz" -> true
-	for key in _instances.keys():
-		displayed[key] = true
-	for key in _instances.keys():
-		var m: Vector3i = _inst_meta[key]      # parsed at creation, not here (M1.9.3c)
-		var level := m.x
-		if level == 0:
-			_instances[key].visible = true     # finest is always shown
-			continue
-		var cgx := m.y
-		var cgz := m.z
-		# Is the entire finer (level-1) footprint displayed?
-		var finer_covers := true
-		for dz in range(2):
-			for dx in range(2):
-				if not displayed.has("%d:%d:%d" % [level - 1, 2 * cgx + dx, 2 * cgz + dz]):
-					finer_covers = false
-		_instances[key].visible = not finer_covers
+# (Annulus visibility + the per-frame ring scan / pin / evict moved to Rust
+# PagePool.update_streaming, 00 §4; the view applies its diff in _apply_stream_diff.)
 
 # Shared PlaneMesh for a level — identical geometry for every page at that level,
 # so it's built once and referenced by all (no per-page mesh alloc). Cached.

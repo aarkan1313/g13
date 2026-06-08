@@ -4,6 +4,18 @@ The human reads this FIRST every session. The agent appends here whenever it blo
 
 ---
 
+## [2026-06-07] - RUST STREAMING MIGRATION COMPLETE (both views) + reach boosted to 780km - PARKED FOR VISUAL
+TYPE: ARCHITECTURE FIX (00 §4) + perf + range boost -> PARKED-FOR-VISUAL (human flying production now)
+CONTEXT: user noted "the engine was supposed to be all rust as possible for performance" -- correct: 00 §4 says Rust owns page scheduling/residency/the read-only view; the per-frame streaming loop was in GDScript (a pre-existing deviation, and the source of the remaining 120fps-dip cost: per-frame ring scan + 366 pin_page FFI/frame). Migrated it to Rust.
+WHAT SHIPPED (3 gated steps, all committed):
+  STEP 1 (P6): PagePool.update_streaming in page_pool.rs -- owns ring scan + nearest-first/dir-bias ordering + 3-mode bounded production + pin + evict + annulus visibility on the integer grid, returns a DIFF (added/removed/show/hide flat PackedInt32Array) against an internal `displayed` map. New gate m1_5d_rust_streaming_check PASS (never-black floor, annulus rule, no pinned evicted under flight, diff reconciles resident==displayed).
+  STEP 2 (P7): wired dem_grounded_world_view.gd to update_streaming + _apply_stream_diff; DELETED its GDScript ring scan/pin/evict/annulus/_pack_key/scan-skip (140 lines removed, 64 added). Added PagePool.get_page_height_tex. Perf: stationary process 499->90us; dip 6.28->5.14ms (~194fps). Session arc 120->194fps.
+  STEP 3 (P8, this entry): ported the SAME pass to production world_view.gd (it was the OLDER loop -- no floating origin, no dir-bias). Now BOTH views run the same engine modules: Rust update_streaming + the world_origin floating-origin module. Production page_terrain_height converts Godot->absolute. Deleted production's GDScript annulus too.
+BOOST: num_levels 8 -> 10 on BOTH views. reach 195km -> ~780km (reach doubles per level for ~one ring of cheap tapered coarse pages). "boost it hard" with the headroom the migration freed.
+EVIDENCE (production, 10-level/780km): m2_6_burst median 7.14 | median-of-maxes 11.55ms | 0/720 over budget -- HELD the budget at 4x the reach, and BETTER than the pre-migration 13.23ms baseline. VRAM bounded (peak resident 524, evicted 4776/5270 produced, no leak). Gates m1_5d/m1_7a/m1_7c/m1_8 PASS. Both scenes load clean.
+VISUAL GATE -- AWAITING HUMAN (production demo.tscn launched): (1) does terrain read to a FAR horizon now (~780km) -- can you still outrun the edge in turbo? (2) never-black holds (annulus now in Rust) while streaming hard? (3) any vertex shimmer at the far distance despite the floating origin? (4) walk (G) after flying far still collides? If reach still feels short, num_levels is the one lever (11=1560km). If far z-fighting appears, that's a cam.far/depth-precision tune, its own step.
+CODEBASE STATE: dem-grounded branch. Both views on Rust streaming + floating origin + 10 levels. page_pool.rs rebuilt. Rust hot-path migration DONE -- remaining view GDScript is legit node assembly (make/recycle instance, collision bodies) per §4, NOT policy.
+
 ## [2026-06-07] - "perf is bad" + "reach the edge" ROOT-CAUSED + FIXED (measured); 120fps-dip perf pass underway
 TYPE: ROOT-CAUSE (measured) + FIX (GDScript-only) -> human perf PASS on the big items; micro-opt continuing
 RESOLVES the [2026-06-07] "streaming POP-IN / CENTERING - UNRESOLVED" entry's PERF + EDGE complaints. POP-IN was the fog-off fix (earlier entry). CENTERING got a floating-origin module (below) but that was NOT the felt symptom.

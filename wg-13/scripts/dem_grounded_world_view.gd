@@ -40,7 +40,7 @@ const AABB_HALF_HEIGHT := 6000.0
 # eager8 at 13.2ms, 1/720. Reach comes from num_levels (2^L), NOT ring_radius
 # (which costs pages QUADRATICALLY for only linear reach), so 8 levels gives MORE
 # reach (~195km) than the old 7-level/r5 (~162km) for FAR fewer pages. (A/B measured.)
-@export var num_levels: int = 8            # 8 levels @ base span 508m, radius 3 -> reach ~195km (render-forever P1). reach doubles per level for ~one ring's worth of cheap coarse pages.
+@export var num_levels: int = 10           # 10 levels @ base span 508m, radius 3 -> reach ~780km (was 8=195km). reach doubles per level for ~one ring of cheap tapered coarse pages; far horizon you can't outrun in turbo.
 @export var ring_radius: int = 3           # pages each side, per level. NOT the reach lever -- raising it scales pages quadratically (r5 = 1100 resident, the lag). Reach = num_levels.
 @export var evict_margin: int = 1          # hysteresis: keep_radius = ring_radius + margin
 @export var max_new_per_frame: int = 4
