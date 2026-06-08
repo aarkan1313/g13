@@ -346,6 +346,41 @@ float biome_id(float temp, float moist, float alt) {
     return float(best);
 }
 
+// M2.5b: biome COLOR == archetype SHAPE. The display color must agree with the
+// landform a region was BUILT from (a swamp-shaped region must read swamp). So
+// instead of the Whittaker nearest-centroid classifier, the render path picks the
+// DOMINANT archetype here and maps it to the matching BIOME_COLORS index (the
+// table lives in ring_displace.gdshader: 0 snow, 1 tundra, 2 taiga, 3 rock,
+// 4 grassland, 5 forest, 6 rainforest, 7 desert, 8 savanna, 9 tropical).
+// This recomputes the SAME band() weights composition_height uses (cheap — no
+// fbm), so color and shape are the same region by construction. The weights are
+// driven by macro_altitude (low frequency) -> the dominant id is contiguous like
+// the shape, keeping the m2_2 contiguity invariant. biome_id is kept for the
+// gate/oracle path. NOTE: keep these band() params in lockstep with the weights
+// in composition_height above.
+float dominant_biome(vec2 world_xz, uint seed) {
+    vec2 rp = domain_warp(world_xz, seed ^ 0x52454749u, 3000.0, 0.00003);
+    float macro_alt = macro_altitude(rp, seed);
+    vec2  mc = macro_climate(rp, seed, macro_alt);
+    float temp = mc.x, moist = mc.y;
+
+    float w_alpine   = band(macro_alt, 0.85, 0.16);
+    float w_highland = band(macro_alt, 0.62, 0.14);
+    float w_forest   = band(macro_alt, 0.45, 0.16) * band(moist, 0.6, 0.35);
+    float w_mesa     = band(macro_alt, 0.5, 0.2) * band(moist, 0.15, 0.18) * band(temp, 0.8, 0.3);
+    float w_swamp    = band(macro_alt, 0.28, 0.12) * band(moist, 0.85, 0.25);
+    float w_plains   = band(macro_alt, 0.32, 0.18);
+
+    // pick the max-weight archetype -> its BIOME_COLORS index.
+    float bestw = w_plains; float id = 4.0;            // grassland default (plains)
+    if (w_forest   > bestw) { bestw = w_forest;   id = 5.0; }   // temperate forest
+    if (w_highland > bestw) { bestw = w_highland; id = 3.0; }   // bare mountain rock
+    if (w_mesa     > bestw) { bestw = w_mesa;     id = 7.0; }   // desert
+    if (w_swamp    > bestw) { bestw = w_swamp;    id = 9.0; }   // tropical/wet (greenest wet)
+    if (w_alpine   > bestw) { bestw = w_alpine;   id = (temp < 0.35) ? 0.0 : 3.0; } // snow if cold else rock
+    return id;
+}
+
 void main() {
     uvec2 cell = gl_GlobalInvocationID.xy;
     if (cell.x >= page_res || cell.y >= page_res) {
@@ -360,11 +395,14 @@ void main() {
     float h = composition_height(world_xz, uint(seed));
     vec2 c = climate(world_xz, h, uint(seed));
 
-    // M2.2: altitude axis = MACRO continental landform (already normalized [0,1]).
-    // Low-frequency by construction -> biomes contiguous at every LOD (full height
-    // would fragment them into confetti at coarse cell spacing).
-    float alt = macro_altitude(world_xz, uint(seed));
-    float bid = biome_id(c.x, c.y, alt);
+    // M2.5b: biome COLOR == archetype SHAPE. Pick the dominant archetype here and
+    // map it to the matching display color index, so a swamp-shaped region reads
+    // swamp etc. (Option A — no Rust change). dominant_biome recomputes the same
+    // low-frequency band() weights composition_height used, so color and shape are
+    // the same region by construction, and the id is contiguous at every LOD. The
+    // M2.2 nearest-centroid biome_id is kept (gate/oracle path) but no longer the
+    // render color source.
+    float bid = dominant_biome(world_xz, uint(seed));
 
     // Analytic surface normal from the CONTINUOUS height function, evaluated at the
     // true world neighbors (+/- spacing). Because composition_height is pure world
