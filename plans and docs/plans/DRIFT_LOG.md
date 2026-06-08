@@ -4,6 +4,25 @@ The human reads this FIRST every session. The agent appends here whenever it blo
 
 ---
 
+## [2026-06-07] - "perf is bad" + "reach the edge" ROOT-CAUSED + FIXED (measured); 120fps-dip perf pass underway
+TYPE: ROOT-CAUSE (measured) + FIX (GDScript-only) -> human perf PASS on the big items; micro-opt continuing
+RESOLVES the [2026-06-07] "streaming POP-IN / CENTERING - UNRESOLVED" entry's PERF + EDGE complaints. POP-IN was the fog-off fix (earlier entry). CENTERING got a floating-origin module (below) but that was NOT the felt symptom.
+
+THE MISDIAGNOSIS, CORRECTED (honest record): I first built a floating-origin world-rebase (world_origin.gd + m1_8 gate + wired into dem view) thinking "world not centered / reach the edge" = camera coords growing. The rebase WORKS (live probe: abs camera 591 cells out, Godot camera bounded <2 cells) but the user flew it: "still the same, and performance is bad." Per systematic-debugging I STOPPED and MEASURED instead of stacking fixes.
+
+THE REAL ROOT CAUSE (A/B measured, not guessed): the DEM-grounded prototype had THROWN AWAY the M2.6 perf-passed config. It ran ring_radius 5 / num_levels 7 / max_eager 128. Burst A/B (same turbo+jump pattern as m2_6_burst):
+  DEM laggy (r5/7lvl/eager128):  median 13.3 | median-of-maxes 85.7ms | 198/720 over | 1100 resident
+  Production (r3/8lvl/eager8):   median  7.6 | median-of-maxes 13.2ms |   1/720 over
+  DEM restored (r3/8lvl/eager8): median  6.3 | median-of-maxes  9.2ms |   0/720 over | 366 resident
+KEY LESSON (mechanism, now proven by measurement): REACH comes from num_levels (2^L per level), NOT ring_radius (pages scale QUADRATICALLY for only linear reach). So 8 levels gave MORE reach (195km vs 162km) for FAR fewer pages than the old r5/7lvl. The prior session had raised the expensive knob and LOWERED reach. FIX: restore the production streaming config (num_levels 8, ring_radius 3, evict_margin 1, max_new 4, max_eager 8) to dem_grounded_world_view.gd. Human PASS: "performance is good ... good enough for now."
+
+THE 120fps-DIP MICRO-PASS (user: "wonder if there's perf fixes we're missing"). ATTRIBUTION PROBE (per-system breakdown on worst frames) found the dip is NOT GPU/streaming (produce_us = 0 even while producing 4 pages/frame — M2.6 GPU-resident did its job) but the VIEW'S PER-FRAME GDSCRIPT: it re-scanned all (2r+1)^2 ring cells for EVERY level EVERY frame (string-formatting keys + dict lookups) just to find the usually-zero missing pages — 1.6ms even STATIONARY, 6ms at the dip.
+  STEP A (committed) — SKIP-WHEN-UNCHANGED: a level's ring scan only runs when its integer cell-center moved OR production was capped (dirty). Measured: stationary 2.09->1.32ms; dip total 8.31->6.94ms (~120->144fps). m1_8 still PASS, scene clean.
+  STILL TO DO — STEP B: the dip's remaining cost is the OTHER two full-resident scans (per-frame pin pass + _update_annulus_visibility, the latter doing ~366x4 "%d:%d:%d" string formats). Kill string keys (Vector3i/int keys) + make pin/visibility incremental (only on change). Then PORT the whole perf pass (config + A + B) to production world_view.gd (same hot loop). Re-measure + human gate.
+
+FLOATING ORIGIN (kept, proven-neutral): world_origin.gd module (committed bf49649) + wired into dem view. NOT the felt fix but real value (true-infinite coords + float precision at distance); zero perf cost (it's in all the numbers above); m1_8 proves terrain bit-identical across rebase. Decision: KEEP (user didn't ask to revert; harmless + correct). Will port to production with Step B.
+CODEBASE STATE: dem-grounded branch. dem_grounded_world_view.gd = restored config + floating-origin wiring + Step A skip. Production world_view.gd = fog fix only so far (perf pass not yet ported).
+
 ## [2026-06-07] - POP-IN ROOT CAUSE FOUND: fog was OFF (fog_density=0); fog FIX shipped - PARKED FOR VISUAL
 TYPE: ROOT-CAUSE FOUND + FIX (GDScript-only, no rebuild) -> PARKED-FOR-VISUAL
 RESOLVES (partly) the [2026-06-07] "streaming POP-IN / CENTERING - UNRESOLVED" entry below: the POP-IN half now has a proven root cause and a fix; CENTERING ("reach the end in turbo" / "not centered") is a SEPARATE structural problem (floating-origin) still open, sequenced next.

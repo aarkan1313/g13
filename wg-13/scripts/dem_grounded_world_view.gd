@@ -33,16 +33,22 @@ const AABB_HALF_HEIGHT := 6000.0
 # M1.6: 6 levels @ base span 508m, radius 3 -> coarsest reaches ~49km (30km goal
 # with margin). Each coarser level doubles per-page span, so reach is exponential
 # for linear page cost. (level span = base_span * 2^level.)
-@export var num_levels: int = 7            # 7 levels @ base span 508m, radius 3 -> reach ~97.5 km (~100km target); 8=195km, 6=49km
-@export var ring_radius: int = 5           # pages each side, per level (3->5: 49->121 pages/level, more buffer so the edge sits farther out)
-@export var evict_margin: int = 2          # hysteresis: keep_radius = ring_radius + margin (raised with ring_radius)
-@export var max_new_per_frame: int = 32
-# M1.9.3b: mid-coarse eager pages produced per frame (coarsest level exempt =
-# never-black floor). Spreads the fast-motion burst across frames. Tune live.
-# Pushed HARD (24->128) to test whether throughput is the bottleneck: build the
-# leading edge far faster. If frames hitch, we back off; if fill-in is still slow
-# even stationary, the bottleneck is elsewhere (not the per-frame budget).
-@export var max_eager_per_frame: int = 128
+# STREAMING CONFIG = the M2.6 perf-passed production values (world_view.gd).
+# RESTORED 2026-06-07 after measuring that this prototype's earlier "push harder"
+# config (r5, 7lvl, eager 128) was the "performance is bad": burst median-of-maxes
+# 85.7ms, 198/720 frames over budget, 1100 resident pages -- vs production's r3/8lvl/
+# eager8 at 13.2ms, 1/720. Reach comes from num_levels (2^L), NOT ring_radius
+# (which costs pages QUADRATICALLY for only linear reach), so 8 levels gives MORE
+# reach (~195km) than the old 7-level/r5 (~162km) for FAR fewer pages. (A/B measured.)
+@export var num_levels: int = 8            # 8 levels @ base span 508m, radius 3 -> reach ~195km (render-forever P1). reach doubles per level for ~one ring's worth of cheap coarse pages.
+@export var ring_radius: int = 3           # pages each side, per level. NOT the reach lever -- raising it scales pages quadratically (r5 = 1100 resident, the lag). Reach = num_levels.
+@export var evict_margin: int = 1          # hysteresis: keep_radius = ring_radius + margin
+@export var max_new_per_frame: int = 4
+# Mid-coarse eager pages produced per frame (coarsest level exempt = never-black
+# floor). SPREADS the burst across frames -- the whole point of M2.6. eager 128 let
+# a single frame dump up to 128 dispatches (the 83ms spikes). 8 is the production
+# value: enough to fill ahead, low enough that no frame hitches.
+@export var max_eager_per_frame: int = 8
 @export var show_page_tint: bool = false   # debug checkerboard marking page edges (off = clean look)
 @export var review_mesh_lod_bias: int = 2   # visual review only: keep coarse DEM pages from faceting at altitude
 @export var review_mesh_min_subdiv: int = 96
@@ -56,6 +62,12 @@ const AABB_HALF_HEIGHT := 6000.0
 
 var _pool: RefCounted
 var _ring_shader: Resource
+# Floating origin (engine module). Keeps the camera near the Godot origin by
+# rebasing the displayed world in whole fine-cells, so the world stays CENTERED on
+# you (no "reach the outside edge") and float precision holds at distance. Terrain
+# is computed in ABSOLUTE coords via _origin.to_absolute(); the rebase is whole-cell
+# so generation is unchanged (proven by m1_8_origin_rebase_check). See world_origin.gd.
+var _origin: RefCounted
 # View mode: 0 = normal height shading, 1 = temperature, 2 = moisture (M2.1),
 # 3 = biome (M2.2). Cycled by V; pushed to every page material so the field's
 # climate/biome outputs are visible ON the terrain you're flying (the same render
@@ -65,6 +77,15 @@ const VIEW_MODE_NAMES := ["normal", "temperature", "moisture", "biome"]
 var _instances := {}                       # "L:gx:gz" -> MeshInstance3D
 var _inst_meta := {}                        # "L:gx:gz" -> Vector3i(level,gx,gz) — parsed once, so
 											# the per-frame loops never re-split the string key (M1.9.3c)
+# PERF (2026-06-07): the request loop scanned all (2r+1)^2 ring cells for EVERY
+# level EVERY frame just to discover the few (usually zero) missing pages — the
+# measured 120fps dip (process ~6ms; 1.6ms even stationary). New pages can only
+# appear at a level when that level's integer cell-center MOVES, OR when last
+# frame's per-frame budget capped production so some candidates went unbuilt. Track
+# both: skip a level's scan when its center is unchanged AND it isn't dirty.
+var _last_ccx := PackedInt32Array()         # per-level last cell-center x (INT_MIN = force first scan)
+var _last_ccz := PackedInt32Array()
+var _level_dirty := []                      # per-level: true if production was capped last scan -> rescan next frame
 var _cam: Camera3D
 # Smoothed travel direction (world XZ), used to bias page production toward where
 # you're flying so the leading edge loads before you reach it (anti-pop-in).
@@ -110,6 +131,12 @@ func _ready() -> void:
 		_pool.set_cpu_readback_enabled(false)
 	_pool.set_max_eager_per_frame(max_eager_per_frame)
 	_ring_shader = load(RING)
+	# Floating origin: rebase quantum = the level-0 page span (one fine cell).
+	_origin = load("res://scripts/world_origin.gd").new(_pool.page_span())
+	# PERF: per-level scan-skip state. INT_MIN forces a scan on the first frame.
+	_last_ccx.resize(num_levels); _last_ccx.fill(-2147483648)
+	_last_ccz.resize(num_levels); _last_ccz.fill(-2147483648)
+	_level_dirty.resize(num_levels); _level_dirty.fill(true)
 	_spawn_camera()
 	_track = _cam            # default: stream/collide around the fly camera (WALK overrides)
 	var span: float = _pool.page_span()
@@ -130,8 +157,26 @@ func _process(_dt: float) -> void:
 	# leave the collision zone and fall through (M2.3-fix). Guard against a freed
 	# target by falling back to the camera.
 	var tracker: Node3D = _track if (_track != null and is_instance_valid(_track)) else _cam
-	var cam_x: float = tracker.global_position.x
-	var cam_z: float = tracker.global_position.z
+
+	# FLOATING ORIGIN: before streaming, pull the displayed world back toward the
+	# Godot origin if the camera has drifted >= one fine cell. Moving THIS node
+	# (View) shifts every page instance, collision body, and the fly camera in one
+	# op (they're all children); the Player (sibling) is shifted separately. The
+	# rebase is whole-cell so the absolute grid index is unchanged -> terrain
+	# bit-identical (m1_8). This is what keeps the world centered on you and the far
+	# edge far, and holds float precision at distance.
+	var shift: Vector3 = _origin.maybe_rebase(tracker.global_position)
+	if shift != Vector3.ZERO:
+		position -= shift                                   # View + all children (pages, collision, fly cam)
+		if _track != null and _track != _cam and is_instance_valid(_track):
+			_track.global_position -= shift                # the Player capsule (a sibling, not under View)
+
+	# Stream/collide around the ABSOLUTE camera position so the field's grid index
+	# (floor(abs/span)) is unchanged by the rebase. tracker.global_position is in the
+	# now-shifted Godot space; to_absolute() adds the accumulated offset back.
+	var abs_track: Vector3 = _origin.to_absolute(tracker.global_position)
+	var cam_x: float = abs_track.x
+	var cam_z: float = abs_track.z
 
 	# TEMP DEBUG: is the streaming center actually following the camera? Prints ~1/s.
 	# Smoothed travel direction (XZ) for direction-biased production. When moving,
@@ -159,6 +204,15 @@ func _process(_dt: float) -> void:
 		var span: float = base_span * pow(2.0, level)
 		var ccx: int = int(floor(cam_x / span))
 		var ccz: int = int(floor(cam_z / span))
+		# PERF SKIP: new pages can only appear at this level when its integer
+		# cell-center moved, or when last frame's budget capped production (dirty).
+		# Otherwise the whole 49-cell scan below would build the same string keys and
+		# dict lookups only to find nothing missing — the measured 120fps dip. Skip it.
+		if ccx == _last_ccx[level] and ccz == _last_ccz[level] and not _level_dirty[level]:
+			continue
+		_last_ccx[level] = ccx
+		_last_ccz[level] = ccz
+		var capped := false                  # set true if any candidate went unbuilt (over budget)
 		# NEAREST-FIRST: collect the missing pages in this level's ring, then sort by
 		# distance to the camera so the bounded per-frame budget is spent on the pages
 		# about to enter view (in the direction you're flying) instead of raw grid
@@ -195,9 +249,13 @@ func _process(_dt: float) -> void:
 			else:
 				tex = _pool.request_page(level, gx, gz)                # fine
 			if tex == null:
-				continue                  # over budget; coarser blanket covers it
+				capped = true             # over budget; coarser blanket covers it — rescan next frame
+				continue
 			_instances[key] = _make_page_instance(tex, level, gx, gz, span)
 			_inst_meta[key] = Vector3i(level, gx, gz)   # parse the key ONCE, here
+		# If the budget capped this level, keep it dirty so the unbuilt pages are
+		# retried next frame (don't skip until the ring is fully built).
+		_level_dirty[level] = capped
 
 	# Per-level camera page-center, precomputed once (was recomputed per instance).
 	var lvl_ccx := PackedInt32Array(); lvl_ccx.resize(num_levels)
@@ -271,6 +329,14 @@ func set_track_target(target: Node3D) -> void:
 # physics query); the render/collision paths don't depend on this.
 func page_terrain_height(wx: float, wz: float) -> float:
 	var span: float = page_span_value()
+	# The caller passes GODOT-space XZ (e.g. the fly cam / player position). Pages are
+	# keyed by ABSOLUTE grid index, so convert through the floating origin first —
+	# otherwise after a rebase we'd look up the wrong page and the player would spawn
+	# on the wrong column of terrain.
+	if _origin != null:
+		var a: Vector3 = _origin.to_absolute(Vector3(wx, 0.0, wz))
+		wx = a.x
+		wz = a.z
 	var gx: int = int(floor(wx / span))
 	var gz: int = int(floor(wz / span))
 	var heights: PackedFloat32Array = _pool.get_page_heights(0, gx, gz)
