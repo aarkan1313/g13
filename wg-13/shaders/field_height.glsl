@@ -207,7 +207,7 @@ float arch_alpine(vec2 p, uint seed) {
     vec2 w = domain_warp(p, seed, 1800.0, 0.00005);
     float ridges = ridged_fbm(w * 0.00045, seed ^ 0x414c5049u, 6u, 2.03, 0.55);
     float massif = value_fbm(p * 0.00009, seed ^ 0x6d617373u, 2u, 2.0, 0.5);
-    return ridges * mix(900.0, 2600.0, massif) + value_fbm(p*0.0018, seed^0x64746c21u,3u,2.0,0.5)*80.0;
+    return ridges * mix(1100.0, 3400.0, massif) + value_fbm(p*0.0018, seed^0x64746c21u,3u,2.0,0.5)*80.0;
 }
 float arch_swamp(vec2 p, uint seed) {
     float bumps = (value_fbm(p * 0.0009, seed ^ 0x53574d50u, 3u, 2.0, 0.5) - 0.5) * 2.0 * 45.0;
@@ -242,8 +242,8 @@ float lone_peaks(vec2 p, uint seed) {
             float jy = float((hsd >> 16) & 0xffu) / 255.0;
             vec2 center = (c + vec2(jx, jy)) * TILE;
             float dist = length(p - center);
-            float radius = mix(3500.0, 7000.0, float((hsd >> 24) & 0xffu) / 255.0);
-            float peak = mix(1800.0, 3400.0, jx);
+            float radius = mix(4200.0, 8500.0, float((hsd >> 24) & 0xffu) / 255.0);
+            float peak = mix(2800.0, 5200.0, jx);   // M2.5c tune: taller singular peaks (user)
             float cone = max(0.0, 1.0 - dist / radius);
             cone = cone * cone * (3.0 - 2.0 * cone);
             float rough = ridged_fbm(p * 0.0008, seed ^ 0x70656b21u, 4u, 2.03, 0.5);
@@ -286,7 +286,7 @@ float composition_height(vec2 world_xz, uint seed) {
     float ms = clamp(1.0 + meso_mod * 0.30, 0.50, 1.50);   // swamp: gentle
     float mp = clamp(1.0 + meso_mod * 0.35, 0.45, 1.55);   // plains: gentle
 
-    float h = macro_base + (
+    float relief = (
           w_alpine   * arch_alpine(world_xz, seed)     * ma
         + w_highland * arch_highlands(world_xz, seed)  * mh
         + w_forest   * arch_forest_hills(world_xz, seed) * mf
@@ -294,6 +294,18 @@ float composition_height(vec2 world_xz, uint seed) {
         + w_swamp    * arch_swamp(world_xz, seed)      * ms
         + w_plains   * arch_plains(world_xz, seed)     * mp
     ) / wsum;
+
+    float h = macro_base + relief;
+
+    // M2.5c: MESO-DRIVEN VALLEYS (user: "didn't see valleys"). Where the meso field
+    // dips (meso_mod < 0), carve the sub-region DOWN — proper low ground between the
+    // raised sub-ranges, not just gentler hills. Scaled by local relief so valleys cut
+    // into mountainous terrain (deep) and barely touch flat plains (no abyss in the
+    // lowlands). A second, higher-freq carve channel adds narrower incised valleys.
+    float carve = max(0.0, -meso_mod);                       // [0,1], only the dip side
+    float carve2 = max(0.0, -meso_field(world_xz, seed, MESO_FREQ * 2.3).x);
+    float relief_amt = clamp(relief / 1200.0, 0.0, 1.0);     // more relief -> deeper valleys
+    h -= (carve * 520.0 + carve2 * 240.0) * relief_amt;
 
     h += lone_peaks(world_xz, seed);
     return h;
