@@ -155,6 +155,24 @@ vec2 domain_warp(vec2 p, uint seed, float amount, float freq) {
     return p + amount * 2.0 * vec2(wx, wz);
 }
 
+// --- M2.5c meso layer: the MIDDLE frequency tier (sub-region variation) --------
+// Returns two DECORRELATED channels off a mid-frequency field (~1/several-km), in
+// world space, pure function of (world_xz, seed) so it is seam-free + has no
+// circular dependency (own hashed seeds, never reads detailed height):
+//   .x = meso_mod  in ~[-1,1]  -> how this sub-region nudges the parent's shape
+//   .y = meso_dev  in ~[0,1]   -> deviation noise (RESERVED for 2d feature stamps;
+//                                  plumbed now, UNUSED in 2a)
+// meso_freq is the sub-region scale: smaller => larger sub-regions. Default
+// 0.00012 (~1/8.3km wavelength) gives single-digit-km sub-regions (spec §4).
+vec2 meso_field(vec2 world_xz, uint seed, float meso_freq) {
+    uint mod_seed = hash_u(seed ^ 0x4d45534fu);   // "MESO"
+    uint dev_seed = hash_u(seed ^ 0x44455621u);    // "DEV!"
+    // Two octaves of smooth fBM, centered to [-1,1] for mod / kept [0,1] for dev.
+    float m = value_fbm(world_xz * meso_freq, mod_seed, 2u, 2.0, 0.5);
+    float d = value_fbm(world_xz * meso_freq * 1.7, dev_seed, 2u, 2.0, 0.5);
+    return vec2(m * 2.0 - 1.0, d);
+}
+
 // ============================================================================
 // M2.5b: regional-archetype terrain. The world is a JOURNEY through distinct
 // regions, each with its own landform character (plains / forest hills / alpine
