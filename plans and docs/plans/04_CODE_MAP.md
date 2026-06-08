@@ -49,6 +49,12 @@ wg-13/                          (the Godot project, res://)
                                 landform (NOT detailed height) so biomes stay
                                 contiguous at every LOD. Biome centroids pushed as a
                                 uniform table (binding 2). Source of truth (00 §2.1).
+                                M2.5b: composition_height = 6 regional archetypes
+                                blended by macro climate + lone_peaks. M2.5c-2a: +
+                                meso_field() — the MIDDLE frequency tier; each
+                                archetype's contribution varied by a ~1/8.3km
+                                sub-region field (meso_mod), seam-free (pure world
+                                math). meso_dev channel reserved for 2d features.
     ring_displace.gdshader       PRESENTS a height page: displaces a plane, shades.
                                 view_mode uniform: 0 normal / 1 temperature /
                                 2 moisture / 3 BIOME. Tints by climate_tex (RG32F:
@@ -116,6 +122,7 @@ wg-13/                          (the Godot project, res://)
     m2_1_climate_check.gd       (M2.1) climate determinism + range [0,1] + low-freq smoothness (anti-confetti) + latitude gradient, on the real GPU readback
     m2_2_biome_check.gd         (M2.2) biome determinism + valid ids [0,N) + contiguity (low adjacent-differ, no confetti) + global variety + seed sensitivity
     m2_3_composition_check.gd   (M2.3) composition-machine guardrail: determinism + structure-not-uniform relief spread + no-cliff max step
+    m2_5c_meso_check.gd         (M2.5c-2a) meso layer guardrail: determinism + meso variation (sub-region mean-height range along an in-region line) + no-cliff + isolated per-step timing
     hud_smoke_check.gd          (smoke) perf HUD loads, finds the view, all sections show sane values matching the pool, toggles work
     tour_smoke_check.gd         (smoke) auto-tour starts OFF, drives the real fly-cam, advances steps, pause restores control, resume works
   captures/                     SCREENSHOT TOOLS (evidence, not gates).
@@ -169,3 +176,4 @@ Fly the live world: `.\run.ps1` (agent launches a windowed instance on the user'
 | m2_1_climate_check.gd | M2.1 | climate determinism (same page+seed → bit-identical); range [0,1]; low-freq/smooth (anti-confetti); latitude gradient real |
 | m2_2_biome_check.gd | M2.2 | biome determinism; valid integer ids [0,N); contiguity (low adjacent-differ); global variety; seed sensitivity |
 | m2_3_composition_check.gd | M2.3 | composition-machine determinism; relief spread proves lowlands+ranges are not uniform; no-cliff max step guardrail |
+| m2_5c_meso_check.gd | M2.5c-2a | meso layer determinism; meso variation (sub-region mean-height range along an in-region line proves the middle tier); no-cliff; isolated per-step timing (us/page) |

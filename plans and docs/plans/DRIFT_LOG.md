@@ -4,6 +4,32 @@ The human reads this FIRST every session. The agent appends here whenever it blo
 
 ---
 
+## [2026-06-07] - M2.5c-2a MESO LAYER shipped -> PARKED FOR VISUAL
+TYPE: PARKED-FOR-VISUAL (test gates self-certified; the LOOK awaits the human — 02_WORKFLOW §2)
+WHAT: added the MIDDLE frequency tier (spec 2a, first rung of the M2.5c diversity/scale ladder).
+meso_field(world_xz, seed, freq) returns meso_mod (~[-1,1], nudges each archetype's contribution)
++ meso_dev (reserved for 2d feature stamps, plumbed but UNUSED). Wired into composition_height:
+each archetype's contribution scaled by (1 + meso_mod*strength), clamped so sub-regions vary but
+never invert (alpine 0.65 strongest .. swamp/plains ~0.3 gentle). Pure (world_xz, seed) function
+-> seam-free + no circular dependency BY CONSTRUCTION (own hashed seeds, never reads detailed
+height). Also: N-key jumps straight to biome view; new gate m2_5c_meso_check with isolated timing.
+TEST GATES (self-certified, this machine = RTX 5090 Laptop, not the 3070 min target): m1_4 seam
+PASS, m2_3 structure PASS (spread 0.93->0.94, meso ADDED variation), m2_1/m2_2 climate+biome PASS
+(height-only change), m1_7a/m1_7c height/collision contract PASS (channels 0-3 unchanged),
+m2_5c_meso_check PASS (meso_range 725.4m over a 44km in-region line, no-cliff 19.1m, timing
+389.4us/page), m2_6_burst 10.32ms median-of-maxes 0/720 over the 16.6 budget (perf TOP-RISK HELD;
+M2.5b baseline was 9.27ms -> the meso 5x/cell math cost ~1ms, absorbed by the GPU-resident foundation).
+VISUAL GATE — BELIEVE SATISFIED, AWAITING HUMAN: fly the dem scene. (1) Does the land now resolve
+into distinct SUB-REGIONS as you travel within one macro region — sub-ranges, saddles, basins —
+instead of vast sameness? (2) Press N to check biome color still matches shape. (3) Any seam/popping
+at sub-region boundaries (should be NONE — smooth meso). NOTE the gate's meso_range is a big 725m,
+so the effect is STRONG — if it reads as TOO MUCH (busy/noisy), raise MESO_FREQ or lower the
+per-archetype strengths (all in composition_height; shader-only, hot); if too subtle, the opposite.
+Region SIZE lever = MESO_FREQ (lower = bigger sub-regions). DID NOT start 2b (data-row refactor) —
+it begins only after this visual gate PASSES.
+CODEBASE STATE: dem-grounded, green. composition_height has the meso tier; framework intact.
+Commits 86fb5f5 (meso_field) / 833cc12 (modulation) / 317236c (gate) / dafae4f (N-key).
+
 ## [2026-06-07] - M2.5b REGIONAL-ARCHETYPE terrain shipped as a BASELINE (architecture proven; diversity/scale is the long work ahead)
 TYPE: ARCHITECTURE LANDED + checkpoint (human verdict: "not terrible" -- a working framework, NOT the finished world)
 WHAT SHIPPED (committed, gates green, independently re-verified): composition_height in field_height.glsl REWRITTEN from the binary "mountains-or-plains" M2.5a machine to REGIONAL ARCHETYPES blended by MACRO climate -- arch_plains/forest_hills/alpine/swamp/mesa/highlands, each its own shape recipe, soft-blended by gaussian band() weights over (macro_altitude, macro temp, macro moisture); + a sparse lone_peaks() landmark layer. Biome COLOR now matches shape via dominant_biome() (alpine->snow/rock, swamp->wet-green, mesa->desert, etc.; Option A, no Rust). Old uplift_field/valley_carve deleted (no dead code). Circular dependency broken (archetype reads SMOOTH macro climate, not detailed height). Framework KEPT (streaming, classifier, M2.4 seam-free analytic normal, M1.7 collision). Commits 1a9d78b (port) + 8c560a6 (color). PERF HELD: m2_6_burst median-of-maxes 9.27ms, 0/720 over budget -- the 6-archetype sum was free on the Rust GPU-resident foundation (the named top risk did NOT bite). Gates: m1_4 seam PASS, m2_3 spread 0.93 / max-step 12.7 no-cliff PASS, m2_1/m2_2/m1_7a/m1_7c PASS.
