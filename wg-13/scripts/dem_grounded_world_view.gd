@@ -244,6 +244,14 @@ func _unhandled_input(event: InputEvent) -> void:
 		_view_mode = (_view_mode + 1) % VIEW_MODE_NAMES.size()
 		_apply_view_mode()
 		print("view mode: %s" % VIEW_MODE_NAMES[_view_mode])
+	# M2.5c: N jumps straight to BIOME view (index 3) — the shape<->color check used
+	# constantly while tuning diversity. Press again from biome returns to normal (0).
+	if event is InputEventKey and event.pressed and not event.echo \
+			and event.keycode == KEY_N:
+		var biome_idx := VIEW_MODE_NAMES.find("biome")
+		_view_mode = 0 if _view_mode == biome_idx else biome_idx
+		_apply_view_mode()
+		print("view mode: %s" % VIEW_MODE_NAMES[_view_mode])
 
 # Push the current view mode to all displayed page materials AND the recycled
 # free-list (so a recycled instance starts in the right mode before its per-page
