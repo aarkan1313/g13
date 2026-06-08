@@ -27,7 +27,7 @@ const AABB_HALF_HEIGHT := 4000.0
 # M1.6: 6 levels @ base span 508m, radius 3 -> coarsest reaches ~49km (30km goal
 # with margin). Each coarser level doubles per-page span, so reach is exponential
 # for linear page cost. (level span = base_span * 2^level.)
-@export var num_levels: int = 10           # fine (0) + coarse blankets. 10 levels @ base span 508m, radius 3 -> reach ~780km (was 8=195km). Reach DOUBLES per level for ~one ring of cheap tapered coarse pages (the Rust streaming + perf headroom absorbs it); far horizon you can't outrun in turbo. Coarsest stays the unbounded never-black floor.
+@export var num_levels: int = 7            # 7 levels @ base span 508m, radius 3 -> reach ~98km (~100km). LESSON (2026-06-07, proven by vista captures): perceived "view distance" is NOT reach/fog -- 49km vs 779km rendered PIXEL-IDENTICAL. The real limit is TERRAIN COMPOSITION: the world is ~95% flat lowland with rare isolated ranges, so there are no distant mountains to see ("Skyrim view" = a terrain-shape milestone, not streaming). 100km reach is plenty to show whatever terrain we generate.
 @export var ring_radius: int = 3           # pages each side, per level, around camera
 @export var evict_margin: int = 1          # hysteresis: keep_radius = ring_radius + margin
 @export var max_new_per_frame: int = 4
@@ -430,7 +430,7 @@ func _spawn_camera() -> void:
 	var reach: float = ring_radius * span * pow(2.0, num_levels - 1)
 	var terrain_y := amplitude * 1.2
 	var cam := Camera3D.new()
-	cam.far = reach * 0.95                      # just past fog_depth_end (0.92): nothing renders in clear air beyond the haze wall, so the frontier is never visible (was 1.3 -> a ~48km clear band past the fog re-exposed the frontier)
+	cam.far = reach * 0.99                      # just past fog_depth_end (0.96): fog reaches full opacity before the far plane, so the frontier is hidden in haze and nothing renders in clear air beyond it
 	cam.set_script(load(FLY))
 	add_child(cam)
 	cam.global_position = Vector3(0.0, terrain_y + span * 0.5, span * 0.8)
@@ -469,8 +469,13 @@ func _spawn_camera() -> void:
 	e.fog_enabled = true
 	e.fog_mode = Environment.FOG_MODE_DEPTH
 	e.fog_light_color = Color(0.62, 0.70, 0.80)  # match sky so it reads as haze->horizon
-	e.fog_depth_begin = reach * 0.55
-	e.fog_depth_end = reach * 0.92
+	# THINNED (2026-06-07): fog is a FRACTION of reach, so it controls PERCEIVED
+	# distance (not num_levels). Pushed begin out to 0.78 so the vast majority of the
+	# loaded world renders CLEAR/crisp; only a thin haze band (0.78->0.96) hides the
+	# frontier. This is what makes the world read "far" -- clear terrain to the
+	# horizon, not a proportional wall of haze. (Was 0.55/0.92 = too much haze.)
+	e.fog_depth_begin = reach * 0.78
+	e.fog_depth_end = reach * 0.96
 	e.fog_density = 1.0                          # ON switch: max obscuration at fog_depth_end
 	env.environment = e
 	add_child(env)
