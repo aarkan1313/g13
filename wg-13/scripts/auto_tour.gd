@@ -63,7 +63,7 @@ func _input(event: InputEvent) -> void:
 
 func _is_manual_input(event: InputEvent) -> bool:
 	# Only deliberate MOVEMENT counts as "take control". Looking around does NOT:
-	# passive mouse motion AND right-click-drag (the look/aim control) are allowed
+	# passive mouse motion AND left-click-drag (the look/aim control) are allowed
 	# while the tour drives, so you can inspect the view hands-free without pausing.
 	# Mouse wheel (speed adjust) is also allowed. Taking over = a movement key.
 	if event is InputEventKey and event.pressed and not event.echo:
@@ -77,7 +77,7 @@ func _start() -> void:
 	_active = true
 	enabled = true
 	# The tour owns POSITION (disable the fly-cam's _process movement), but LOOK
-	# stays live (keep _unhandled_input) so you can right-drag to aim the camera
+	# stays live (keep _unhandled_input) so you can left-drag to aim the camera
 	# and inspect the view while the tour flies. On orbit steps the tour sets the
 	# rotation itself (look-at the centre); on straight steps your look coexists
 	# with the tour's translation.

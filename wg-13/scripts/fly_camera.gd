@@ -1,8 +1,8 @@
 extends Camera3D
 # Reusable free-fly inspection camera for WG13 review scenes.
-# WASD = move, Q/E = down/up, right-mouse drag (or just move mouse) = look,
-# Shift = boost, mouse wheel = adjust speed. This is the standard rig so every
-# visual gate is "launch the project and fly" — no scene wiring needed.
+# WASD = move, Q/E = down/up, LEFT-mouse drag = look, Shift = boost,
+# mouse wheel = adjust speed. This is the standard rig so every visual gate is
+# "launch the project and fly" — no scene wiring needed.
 
 @export var speed: float = 600.0          # world units/sec (terrain is ~km-scale)
 @export var boost_mult: float = 4.0
@@ -25,7 +25,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		_turbo = not _turbo            # CapsLock = toggle TURBO fly (cover ground fast)
 		print("FLY turbo %s (x%.0f)" % ["ON" if _turbo else "OFF", turbo_mult])
 	if event is InputEventMouseButton:
-		if event.button_index == MOUSE_BUTTON_RIGHT:
+		if event.button_index == MOUSE_BUTTON_LEFT:
 			_captured = event.pressed
 			Input.mouse_mode = Input.MOUSE_MODE_CAPTURED if _captured else Input.MOUSE_MODE_VISIBLE
 		elif event.button_index == MOUSE_BUTTON_WHEEL_UP:
