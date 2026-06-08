@@ -118,12 +118,10 @@ float value_noise(vec2 p, uint seed) {
     return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
 }
 
-// --- M2.3 composition machine: shared terrain primitives --------------------
-// Layered composition: relief is PLACED by a low-frequency UPLIFT field (where
-// terrain stands up into hills/ranges vs stays flat lowland), carrying ridge
-// texture, with inter-range basins carved down. This is what a global octave-sum
-// cannot do (no "a range stands HERE") -> it makes uniform texture. World-space,
-// deterministic (00 §5). Character constants are hand-set here; DEM-tuned in M2.4.
+// --- shared terrain primitives ----------------------------------------------
+// fBM / ridged-fBM / domain-warp building blocks used by the M2.5b archetype
+// recipes below. World-space, deterministic (00 §5). No per-page state, so the
+// composition stays a pure continuous world function (the seam-fix invariant).
 
 // Smooth fBM normalized to ~[0,1] (rolling undulation / continental base).
 float value_fbm(vec2 p, uint seed, uint oct, float lacunarity, float gain) {
@@ -157,57 +155,114 @@ vec2 domain_warp(vec2 p, uint seed, float amount, float freq) {
     return p + amount * 2.0 * vec2(wx, wz);
 }
 
-// Uplift field: a blurred LOW-frequency mask in [0,1] — WHERE terrain stands up
-// (ranges/uplands) vs stays low (lowlands). Two low octaves (big regions + sub-
-// regions). smoothstep with a window so MOST of the world is lowland (real worlds
-// are mostly flat) and uplift rises in bands. This is the STRUCTURE PLACER.
-float uplift_field(vec2 p, uint seed, float freq, float lo, float hi) {
-    float a0 = value_noise(p * freq, seed ^ 0x55504c54u);        // "UPLT"
-    float a1 = value_noise(p * freq * 2.03, seed ^ 0x73756272u); // "subr"
-    float u = clamp(a0 * 0.7 + a1 * 0.3, 0.0, 1.0);
-    return smoothstep(lo, hi, u);
+// ============================================================================
+// M2.5b: regional-archetype terrain. The world is a JOURNEY through distinct
+// regions, each with its own landform character (plains / forest hills / alpine
+// range / swamp / mesa / highlands), plus rare one-off landmark peaks. Region
+// character is chosen from MACRO climate (macro_altitude + macro temp/moisture)
+// -> NOT from detailed height, so there is no circular dependency.
+// ============================================================================
+
+float macro_altitude(vec2 world_xz, uint seed);   // forward decl (defined below)
+
+// Macro climate from MACRO altitude (smooth, continental) -> safe to drive terrain.
+vec2 macro_climate(vec2 world_xz, uint seed, float macro_alt) {
+    uint temp_seed  = hash_u(seed ^ 0x54454d50u);
+    uint moist_seed = hash_u(seed ^ 0x4d4f4953u);
+    float lat = abs(fract(world_xz.y / (2.0 * climate_lat_scale)) * 2.0 - 1.0);
+    float lat_temp = mix(0.30, 1.0, smoothstep(0.0, 1.0, lat));
+    float wobble = (value_noise(world_xz * climate_temp_freq, temp_seed) - 0.5) * 2.0 * climate_temp_noise;
+    float temp  = clamp(lat_temp + wobble - macro_alt * 0.5, 0.0, 1.0);
+    float moist = clamp(value_noise(world_xz * climate_moist_freq, moist_seed), 0.0, 1.0);
+    return vec2(temp, moist);
 }
 
-// Valley carve: press DOWN inter-range lowlands. Where uplift is low, subtract up
-// to depth; on a range (uplift high) subtract nothing. (1-uplift)^2 keeps range
-// flanks from being over-carved.
-float valley_carve(float uplift, float depth) {
-    float v = 1.0 - uplift;
-    return depth * v * v;
+// --- ARCHETYPE SHAPE RECIPES (each returns world-height meters) ---------------
+float arch_plains(vec2 p, uint seed) {
+    return value_fbm(p * 0.00015, seed ^ 0x504c4149u, 2u, 2.0, 0.5) * 120.0;
+}
+float arch_forest_hills(vec2 p, uint seed) {
+    float h = value_fbm(p * 0.00045, seed ^ 0x464f5253u, 4u, 2.0, 0.5) * 520.0;
+    return h + value_fbm(p * 0.0016, seed ^ 0x68696c6cu, 3u, 2.0, 0.5) * 70.0;
+}
+float arch_alpine(vec2 p, uint seed) {
+    vec2 w = domain_warp(p, seed, 1800.0, 0.00005);
+    float ridges = ridged_fbm(w * 0.00045, seed ^ 0x414c5049u, 6u, 2.03, 0.55);
+    float massif = value_fbm(p * 0.00009, seed ^ 0x6d617373u, 2u, 2.0, 0.5);
+    return ridges * mix(900.0, 2600.0, massif) + value_fbm(p*0.0018, seed^0x64746c21u,3u,2.0,0.5)*80.0;
+}
+float arch_swamp(vec2 p, uint seed) {
+    float bumps = (value_fbm(p * 0.0009, seed ^ 0x53574d50u, 3u, 2.0, 0.5) - 0.5) * 2.0 * 45.0;
+    return -120.0 + bumps;
+}
+float arch_mesa(vec2 p, uint seed) {
+    float b = value_fbm(p * 0.00035, seed ^ 0x4d455341u, 4u, 2.0, 0.5);
+    float stepped = floor(b * 5.0) / 5.0;
+    float smooth_t = mix(stepped, b, 0.35);
+    return smooth_t * 900.0 + value_fbm(p*0.002, seed^0x62616421u,2u,2.0,0.5)*40.0;
+}
+float arch_highlands(vec2 p, uint seed) {
+    float roll = value_fbm(p * 0.0003, seed ^ 0x48494748u, 4u, 2.0, 0.5) * 700.0;
+    float rock = ridged_fbm(p * 0.0009, seed ^ 0x726f636bu, 4u, 2.03, 0.5) * 260.0;
+    return roll + rock;
+}
+float band(float x, float center, float width) {
+    float d = (x - center) / width;
+    return exp(-d * d);
+}
+// Sparse LONE-PEAK landmarks (deterministic rare giant cones, climate-independent).
+float lone_peaks(vec2 p, uint seed) {
+    const float TILE = 22000.0;
+    vec2 cell = floor(p / TILE);
+    float h = 0.0;
+    for (int dy = -1; dy <= 1; dy++) for (int dx = -1; dx <= 1; dx++) {
+        vec2 c = cell + vec2(float(dx), float(dy));
+        uint hsd = hash_u(uint(int(c.x)) * 0x9e3779b9u ^ hash_u(uint(int(c.y)) ^ seed));
+        float present = float(hsd & 0xffu) / 255.0;
+        if (present > 0.82) {
+            float jx = float((hsd >> 8) & 0xffu) / 255.0;
+            float jy = float((hsd >> 16) & 0xffu) / 255.0;
+            vec2 center = (c + vec2(jx, jy)) * TILE;
+            float dist = length(p - center);
+            float radius = mix(3500.0, 7000.0, float((hsd >> 24) & 0xffu) / 255.0);
+            float peak = mix(1800.0, 3400.0, jx);
+            float cone = max(0.0, 1.0 - dist / radius);
+            cone = cone * cone * (3.0 - 2.0 * cone);
+            float rough = ridged_fbm(p * 0.0008, seed ^ 0x70656b21u, 4u, 2.03, 0.5);
+            h = max(h, cone * peak * mix(0.7, 1.0, rough));
+        }
+    }
+    return h;
 }
 
-// M2.3 general terrain: ONE composition machine for the whole world. Structure
-// from uplift; character HAND-SET here (DEM-tuned in M2.4). Most of the world is
-// gentle lowland (base + small detail); ranges stand where uplift is high.
+// M2.5b composition: blend archetypes by MACRO climate, add lone-peak landmarks.
 float composition_height(vec2 world_xz, uint seed) {
-    // --- hand-set character knobs (M2.3 tuning; DEM-driven in M2.4) ---
-    const float WARP_AMOUNT  = 2200.0;   // world units of coord bend
-    const float WARP_FREQ    = 0.00004;  // warp's own low freq (~25 km)
-    const float UPLIFT_FREQ  = 0.000075; // M2.5a range placement ~13km regions, was ~40km
-    const float UPLIFT_LO    = 0.25;     // M2.5a much more land stands up
-    const float UPLIFT_HI    = 0.59;     // M2.5a narrower flat gap, ranges everywhere w/ valleys
-    const uint  RIDGE_OCT    = 6u;
-    const float RIDGE_LAC    = 2.03;
-    const float RIDGE_GAIN   = 0.55;
-    const float RIDGE_SCALE  = 0.0004;   // ridgeline scale (~2.5 km)
-    const float RELIEF_AMP   = 1975.0;   // M2.5a taller peaks (was 1600)
-    const float CARVE_DEPTH  = 0.4;      // fraction of relief pressed into valleys
-    const float BASE_FREQ    = 0.00012;  // continental base undulation (~8 km)
-    const uint  BASE_OCT     = 3u;
-    const float BASE_AMP     = 300.0;    // M2.5a more rolling everywhere, even lowland (was 180)
-    const float DETAIL_FREQ  = 0.0016;
-    const uint  DETAIL_OCT   = 4u;
-    const float DETAIL_AMP   = 70.0;     // fine surface roughness
+    vec2 rp = domain_warp(world_xz, seed ^ 0x52454749u, 3000.0, 0.00003);
+    float macro_alt = macro_altitude(rp, seed);
+    vec2  mc = macro_climate(rp, seed, macro_alt);
+    float temp = mc.x, moist = mc.y;
 
-    vec2 warp    = domain_warp(world_xz, seed, WARP_AMOUNT, WARP_FREQ);
-    float uplift = uplift_field(warp, seed, UPLIFT_FREQ, UPLIFT_LO, UPLIFT_HI);
-    float base   = value_fbm(world_xz * BASE_FREQ, seed ^ 0x42415345u, BASE_OCT, 2.0, 0.5) * BASE_AMP;
-    float ridges = ridged_fbm(warp * RIDGE_SCALE, seed, RIDGE_OCT, RIDGE_LAC, RIDGE_GAIN);
-    float relief = uplift * ridges * RELIEF_AMP;
-    float carve  = valley_carve(uplift, CARVE_DEPTH * RELIEF_AMP);
-    float detail = (value_fbm(world_xz * DETAIL_FREQ, seed ^ 0x44455421u, DETAIL_OCT, 2.0, 0.5) - 0.5)
-                   * 2.0 * DETAIL_AMP;
-    return base + relief - carve + detail;
+    float macro_base = (macro_alt - 0.35) * 1400.0;
+
+    float w_alpine   = band(macro_alt, 0.85, 0.16);
+    float w_highland = band(macro_alt, 0.62, 0.14);
+    float w_forest   = band(macro_alt, 0.45, 0.16) * band(moist, 0.6, 0.35);
+    float w_mesa     = band(macro_alt, 0.5, 0.2) * band(moist, 0.15, 0.18) * band(temp, 0.8, 0.3);
+    float w_swamp    = band(macro_alt, 0.28, 0.12) * band(moist, 0.85, 0.25);
+    float w_plains   = band(macro_alt, 0.32, 0.18);
+    float wsum = w_alpine + w_highland + w_forest + w_mesa + w_swamp + w_plains + 1e-4;
+
+    float h = macro_base + (
+          w_alpine   * arch_alpine(world_xz, seed)
+        + w_highland * arch_highlands(world_xz, seed)
+        + w_forest   * arch_forest_hills(world_xz, seed)
+        + w_mesa     * arch_mesa(world_xz, seed)
+        + w_swamp    * arch_swamp(world_xz, seed)
+        + w_plains   * arch_plains(world_xz, seed)
+    ) / wsum;
+
+    h += lone_peaks(world_xz, seed);
+    return h;
 }
 
 // --- M2.1 climate (world-space, low-frequency, deterministic) ----------------
@@ -298,9 +353,10 @@ void main() {
     }
     // absolute world position of this cell (00 §5)
     vec2 world_xz = vec2(origin_x, origin_z) + vec2(cell) * spacing;
-    // M2.3: general terrain from the composition machine (uplift places structure,
-    // hand-set character). Replaces the flat M1 fbm. Climate/biome unchanged below
-    // (height never feeds biome — biome uses macro_altitude; no circularity).
+    // M2.5b: regional-archetype terrain (archetypes blended by MACRO climate plus
+    // lone-peak landmarks). Replaces the M2.3 uplift composition. Climate/biome
+    // unchanged below (height never feeds biome — biome uses macro_altitude; no
+    // circularity).
     float h = composition_height(world_xz, uint(seed));
     vec2 c = climate(world_xz, h, uint(seed));
 
