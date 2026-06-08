@@ -34,7 +34,7 @@ func _height_at(wx: float, wz: float) -> float:
 func _init() -> void:
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(OUT_DIR))
 	_fc = ClassDB.instantiate("FieldCompute")
-	if _fc == null or not _fc.initialize("res://shaders/field_height_probe.glsl"):
+	if _fc == null or not _fc.initialize("res://shaders/field_height.glsl"):
 		print("init failed (need vulkan)"); quit(1); return
 	_root = Node3D.new()
 	_root.set_script(VIEW)
