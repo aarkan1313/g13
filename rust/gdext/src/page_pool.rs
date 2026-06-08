@@ -158,8 +158,16 @@ pub struct PagePool {
     /// begin_frame (instead of a blocking readback per page). (key, params).
     pending_collision: Vec<(PageKey, PageParams)>,
     /// Pages currently displayed — must NOT be evicted out from under the mesh
-    /// (00 §3 never-black discipline). Rebuilt each frame by the view.
+    /// (00 §3 never-black discipline). Rebuilt each frame by the view (or, since
+    /// the streaming-policy migration, by update_streaming).
     pinned: std::collections::HashSet<PageKey>,
+    /// Streaming-policy migration (00 §4): the pool now owns the per-frame ring
+    /// scan / pin / evict / annulus visibility (was GDScript). `displayed` is the
+    /// pool's authoritative view-state: which pages have a mesh in the view and
+    /// their last-known visible flag. update_streaming diffs against this so the
+    /// view only does node work for CHANGES (add/remove/show/hide), never a full
+    /// per-frame scan. Key present = the view has an instance for it.
+    displayed: HashMap<PageKey, bool>,   // key -> visible
     /// Bounded production: at most this many NEW FINE pages produced per frame.
     /// (Coarse/eager production is intentionally unbounded — see request().)
     max_new_per_frame: i32,
@@ -197,6 +205,7 @@ impl IRefCounted for PagePool {
             cache: HashMap::new(),
             pending_collision: Vec::new(),
             pinned: std::collections::HashSet::new(),
+            displayed: HashMap::new(),
             max_new_per_frame: 4,
             produced_this_frame: 0,
             eager_this_frame: 0,
@@ -372,6 +381,200 @@ impl PagePool {
         }
         self.evicted += removed;
         removed
+    }
+
+    /// STREAMING POLICY (00 §4) — the per-frame ring scan + pin + evict + annulus
+    /// visibility, owned by Rust (was the GDScript `_process` loop). Given the
+    /// ABSOLUTE camera XZ (the floating origin converts Godot->absolute before
+    /// calling, so the grid index is rebase-invariant — m1_8) and the ring params,
+    /// this:
+    ///   1. for each level coarsest..0, collects the missing pages in the ring,
+    ///      orders them nearest-first with a travel-direction bias (pages AHEAD
+    ///      built first), and produces what the per-frame budget allows (coarsest
+    ///      unbounded = never-black floor; mid-coarse bounded eager; fine bounded);
+    ///   2. pins every kept page and evicts those outside keep_radius (per level);
+    ///   3. computes annulus visibility (a coarse page is hidden iff its full 2x2
+    ///      finer footprint is resident — never-black);
+    ///   4. DIFFS against `self.displayed` and returns only the CHANGES, so the view
+    ///      does node work only for add/remove/show/hide (no full per-frame scan,
+    ///      no per-page pin FFI). Flat PackedInt32Array [level,gx,gz, ...] each.
+    ///
+    /// The view binds textures for "added" via the existing get_page_*_tex getters
+    /// (cache hits). Field/collision paths are untouched (this is index-only policy).
+    #[func]
+    fn update_streaming(
+        &mut self,
+        cam_abs_x: f32,
+        cam_abs_z: f32,
+        ring_radius: i64,
+        evict_margin: i64,
+        num_levels: i64,
+        travel_x: f32,
+        travel_z: f32,
+    ) -> VarDictionary {
+        let r = ring_radius as i32;
+        let keep = (ring_radius + evict_margin) as i32;
+        let coarsest = (num_levels - 1) as i32;
+        let base_span = self.page_span();
+        let travel_len = (travel_x * travel_x + travel_z * travel_z).sqrt();
+        let (tnx, tnz) = if travel_len > 0.001 {
+            (travel_x / travel_len, travel_z / travel_len)
+        } else {
+            (0.0, 0.0)
+        };
+
+        // begin_frame() already reset the per-frame caps + cleared `pinned`. We
+        // re-pin everything kept below.
+        let mut added: Vec<i32> = Vec::new();
+
+        // 1. PRODUCE — coarsest first (the never-black floor), then finer.
+        let mut level = coarsest;
+        while level >= 0 {
+            let span = base_span * (2.0_f32).powi(level);
+            let ccx = (cam_abs_x / span).floor() as i32;
+            let ccz = (cam_abs_z / span).floor() as i32;
+            let cam_cell_x = cam_abs_x / span;   // fractional cell position
+            let cam_cell_z = cam_abs_z / span;
+
+            // Collect missing pages in the ring with their nearest-first+ahead score.
+            let mut cands: Vec<(f32, i32, i32)> = Vec::new();   // (score, gx, gz)
+            for gz in (ccz - r)..=(ccz + r) {
+                for gx in (ccx - r)..=(ccx + r) {
+                    let key = PageKey { level, gx, gz };
+                    if self.cache.contains_key(&key) {
+                        continue;   // already resident
+                    }
+                    let dx = (gx as f32 + 0.5) - cam_cell_x;
+                    let dz = (gz as f32 + 0.5) - cam_cell_z;
+                    let d2 = dx * dx + dz * dz;
+                    let mut score = d2;
+                    if (tnx != 0.0 || tnz != 0.0) && d2 > 0.0001 {
+                        let inv = 1.0 / d2.sqrt();
+                        let ahead = (dx * inv) * tnx + (dz * inv) * tnz;   // dot in [-1,1]
+                        score = d2 * (1.0 - 0.5 * ahead);   // ahead halves cost
+                    }
+                    cands.push((score, gx, gz));
+                }
+            }
+            cands.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+
+            for (_score, gx, gz) in cands {
+                let mode = if level == coarsest {
+                    RequestMode::EagerUnbounded
+                } else if level > 0 {
+                    RequestMode::EagerBounded
+                } else {
+                    RequestMode::Fine
+                };
+                if self.request(level as i64, gx as i64, gz as i64, mode).is_some() {
+                    added.push(level);
+                    added.push(gx);
+                    added.push(gz);
+                }
+                // over budget -> skip; coarser blanket covers it (never-black)
+            }
+            level -= 1;
+        }
+
+        // 2. PIN kept pages + EVICT stale ones. Iterate the cache once: a page is
+        // kept iff within `keep` Chebyshev of ITS level's camera cell-center.
+        // (pinned was cleared in begin_frame; re-pin all kept here.)
+        let mut to_evict: Vec<PageKey> = Vec::new();
+        // Precompute per-level cell-centers.
+        let mut lvl_ccx = vec![0i32; num_levels as usize];
+        let mut lvl_ccz = vec![0i32; num_levels as usize];
+        for l in 0..num_levels as usize {
+            let span = base_span * (2.0_f32).powi(l as i32);
+            lvl_ccx[l] = (cam_abs_x / span).floor() as i32;
+            lvl_ccz[l] = (cam_abs_z / span).floor() as i32;
+        }
+        for key in self.cache.keys().copied().collect::<Vec<_>>() {
+            let l = key.level as usize;
+            if l >= num_levels as usize {
+                to_evict.push(key);   // level no longer in range (e.g. num_levels lowered)
+                continue;
+            }
+            let cheb = (key.gx - lvl_ccx[l]).abs().max((key.gz - lvl_ccz[l]).abs());
+            if cheb > keep {
+                to_evict.push(key);
+            } else {
+                self.pinned.insert(key);   // kept -> pin (can't be evicted)
+            }
+        }
+        // Evict per level (evict_outside refuses pinned). We pass keep so its
+        // Chebyshev test matches the pin test above.
+        for l in 0..num_levels {
+            self.evict_outside(l, lvl_ccx[l as usize] as i64, lvl_ccz[l as usize] as i64, keep as i64);
+        }
+
+        // 3. ANNULUS VISIBILITY — a coarse page is hidden iff its full 2x2 finer
+        // footprint is resident (else it's the blanket filling a hole -> show).
+        // Compute the desired visible flag for every resident page.
+        let resident: std::collections::HashSet<PageKey> =
+            self.cache.keys().copied().collect();
+        let mut want_visible: HashMap<PageKey, bool> = HashMap::new();
+        for key in resident.iter().copied() {
+            if key.level == 0 {
+                want_visible.insert(key, true);   // finest always shown
+                continue;
+            }
+            let fl = key.level - 1;
+            let bx = 2 * key.gx;
+            let bz = 2 * key.gz;
+            let finer_covers = resident.contains(&PageKey { level: fl, gx: bx, gz: bz })
+                && resident.contains(&PageKey { level: fl, gx: bx + 1, gz: bz })
+                && resident.contains(&PageKey { level: fl, gx: bx, gz: bz + 1 })
+                && resident.contains(&PageKey { level: fl, gx: bx + 1, gz: bz + 1 });
+            want_visible.insert(key, !finer_covers);
+        }
+
+        // 4. DIFF against self.displayed -> emit add/remove/show/hide.
+        // `added` (just produced) are new instances the view must create. Some
+        // produced pages might already be in `displayed` if produced earlier and
+        // never removed — but request() only returns a "produced now" via our
+        // contains_key guard, so `added` are genuinely new. Removed = was displayed,
+        // now not resident. show/hide = resident, displayed, visibility changed.
+        let mut removed: Vec<i32> = Vec::new();
+        let mut show: Vec<i32> = Vec::new();
+        let mut hide: Vec<i32> = Vec::new();
+
+        // Removed: in displayed but no longer resident.
+        let displayed_keys: Vec<PageKey> = self.displayed.keys().copied().collect();
+        for key in displayed_keys {
+            if !resident.contains(&key) {
+                removed.push(key.level);
+                removed.push(key.gx);
+                removed.push(key.gz);
+                self.displayed.remove(&key);
+            }
+        }
+        // Added become displayed at their desired visibility; emit show/hide for the
+        // rest whose visibility changed.
+        for key in resident.iter().copied() {
+            let vis = *want_visible.get(&key).unwrap_or(&true);
+            match self.displayed.get(&key).copied() {
+                None => {
+                    // New instance (must be in `added`). Record + set its visibility
+                    // via show/hide so the view applies the right flag on create.
+                    self.displayed.insert(key, vis);
+                    if vis { show.push(key.level); show.push(key.gx); show.push(key.gz); }
+                    else   { hide.push(key.level); hide.push(key.gx); hide.push(key.gz); }
+                }
+                Some(prev) if prev != vis => {
+                    self.displayed.insert(key, vis);
+                    if vis { show.push(key.level); show.push(key.gx); show.push(key.gz); }
+                    else   { hide.push(key.level); hide.push(key.gx); hide.push(key.gz); }
+                }
+                Some(_) => {}   // unchanged
+            }
+        }
+
+        let mut dict = VarDictionary::new();
+        dict.set("added", &PackedInt32Array::from(added.as_slice()));
+        dict.set("removed", &PackedInt32Array::from(removed.as_slice()));
+        dict.set("show", &PackedInt32Array::from(show.as_slice()));
+        dict.set("hide", &PackedInt32Array::from(hide.as_slice()));
+        dict
     }
 
     /// Request a page, BOUNDED by the per-frame budget. Returns its texture if
