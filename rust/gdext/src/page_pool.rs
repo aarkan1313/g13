@@ -660,6 +660,17 @@ impl PagePool {
         }
     }
 
+    /// The HEIGHT texture (R32F, GPU-resident Texture2DRD) of a RESIDENT page —
+    /// the displaced-surface source the ring_displace shader samples. Null if not
+    /// resident. Since the streaming-policy migration, update_streaming produces the
+    /// page internally and the view fetches its textures via these getters (cache
+    /// hits) for the "added" diff entries, instead of request() returning the tex.
+    #[func]
+    fn get_page_height_tex(&self, level: i64, gx: i64, gz: i64) -> Option<Gd<Texture2Drd>> {
+        let key = PageKey { level: level as i32, gx: gx as i32, gz: gz as i32 };
+        self.cache.get(&key).map(|p| p.texture.clone())
+    }
+
     /// M2.1: the climate texture (RG32F, R=temperature G=moisture) of a RESIDENT
     /// page — the SAME production behind that page's height texture (one source
     /// of truth). Null if the page isn't resident. The view binds it for the

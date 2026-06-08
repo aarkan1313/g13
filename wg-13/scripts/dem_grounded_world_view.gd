@@ -77,15 +77,8 @@ const VIEW_MODE_NAMES := ["normal", "temperature", "moisture", "biome"]
 var _instances := {}                       # "L:gx:gz" -> MeshInstance3D
 var _inst_meta := {}                        # "L:gx:gz" -> Vector3i(level,gx,gz) — parsed once, so
 											# the per-frame loops never re-split the string key (M1.9.3c)
-# PERF (2026-06-07): the request loop scanned all (2r+1)^2 ring cells for EVERY
-# level EVERY frame just to discover the few (usually zero) missing pages — the
-# measured 120fps dip (process ~6ms; 1.6ms even stationary). New pages can only
-# appear at a level when that level's integer cell-center MOVES, OR when last
-# frame's per-frame budget capped production so some candidates went unbuilt. Track
-# both: skip a level's scan when its center is unchanged AND it isn't dirty.
-var _last_ccx := PackedInt32Array()         # per-level last cell-center x (INT_MIN = force first scan)
-var _last_ccz := PackedInt32Array()
-var _level_dirty := []                      # per-level: true if production was capped last scan -> rescan next frame
+# (The GDScript per-level scan-skip state was removed when the streaming policy
+# moved to Rust update_streaming, 00 §4 — Rust owns the scan now.)
 var _cam: Camera3D
 # Smoothed travel direction (world XZ), used to bias page production toward where
 # you're flying so the leading edge loads before you reach it (anti-pop-in).
@@ -133,10 +126,6 @@ func _ready() -> void:
 	_ring_shader = load(RING)
 	# Floating origin: rebase quantum = the level-0 page span (one fine cell).
 	_origin = load("res://scripts/world_origin.gd").new(_pool.page_span())
-	# PERF: per-level scan-skip state. INT_MIN forces a scan on the first frame.
-	_last_ccx.resize(num_levels); _last_ccx.fill(-2147483648)
-	_last_ccz.resize(num_levels); _last_ccz.fill(-2147483648)
-	_level_dirty.resize(num_levels); _level_dirty.fill(true)
 	_spawn_camera()
 	_track = _cam            # default: stream/collide around the fly camera (WALK overrides)
 	var span: float = _pool.page_span()
@@ -151,7 +140,6 @@ func _process(_dt: float) -> void:
 	_mesh_us_accum = 0
 	_pool.begin_frame()
 	var base_span: float = _pool.page_span()
-	var keep: int = ring_radius + evict_margin
 	# Stream + collide around the ACTIVE controller (the capsule in WALK mode, else
 	# the fly camera). Reading the frozen fly-cam here is what let a walking player
 	# leave the collision zone and fall through (M2.3-fix). Guard against a freed
@@ -193,100 +181,60 @@ func _process(_dt: float) -> void:
 	var dir_len: float = _travel_dir.length()
 	var travel_n := (_travel_dir / dir_len) if dir_len > 0.001 else Vector2.ZERO
 
-	# Request coarsest first. Three production modes (M1.9.3b):
-	#  - COARSEST level: unbounded eager — the never-black FLOOR, always complete.
-	#  - MID-coarse (0 < level < coarsest): bounded eager — spread over frames;
-	#    a missing one falls back to the coarser blanket beneath (never black),
-	#    which kills the fast-motion burst (was up to 28 coarse pages in 1 frame).
-	#  - FINE (0): bounded — the expensive detail, capped per frame as before.
-	var coarsest := num_levels - 1
-	for level in range(coarsest, -1, -1):
-		var span: float = base_span * pow(2.0, level)
-		var ccx: int = int(floor(cam_x / span))
-		var ccz: int = int(floor(cam_z / span))
-		# PERF SKIP: new pages can only appear at this level when its integer
-		# cell-center moved, or when last frame's budget capped production (dirty).
-		# Otherwise the whole 49-cell scan below would build the same string keys and
-		# dict lookups only to find nothing missing — the measured 120fps dip. Skip it.
-		if ccx == _last_ccx[level] and ccz == _last_ccz[level] and not _level_dirty[level]:
-			continue
-		_last_ccx[level] = ccx
-		_last_ccz[level] = ccz
-		var capped := false                  # set true if any candidate went unbuilt (over budget)
-		# NEAREST-FIRST: collect the missing pages in this level's ring, then sort by
-		# distance to the camera so the bounded per-frame budget is spent on the pages
-		# about to enter view (in the direction you're flying) instead of raw grid
-		# order. This is the fix for "terrain only loads when you get close": grid-order
-		# scanning spent the budget on side/behind pages while the leading edge waited.
-		var cands: Array = []
-		for gz in range(ccz - ring_radius, ccz + ring_radius + 1):
-			for gx in range(ccx - ring_radius, ccx + ring_radius + 1):
-				var key := "%d:%d:%d" % [level, gx, gz]
-				if _instances.has(key):
-					continue
-				# page-center offset (in page units) from the camera's fractional cell
-				var dx: float = (float(gx) + 0.5) - (cam_x / span)
-				var dz: float = (float(gz) + 0.5) - (cam_z / span)
-				var d2: float = dx * dx + dz * dz
-				# Direction bias: pages AHEAD (aligned with travel) score lower (built
-				# first) than equidistant pages to the side/behind, so the leading edge
-				# loads before you reach it. ahead = dot(offset_dir, travel_dir) in [-1,1].
-				var score: float = d2
-				if travel_n != Vector2.ZERO and d2 > 0.0001:
-					var ahead: float = (Vector2(dx, dz) / sqrt(d2)).dot(travel_n)
-					score = d2 * (1.0 - 0.5 * ahead)   # ahead halves the cost, behind raises it
-				cands.append([score, gx, gz, key])
-		cands.sort_custom(func(a, b): return a[0] < b[0])
-		for c in cands:
-			var gx: int = c[1]
-			var gz: int = c[2]
-			var key: String = c[3]
-			var tex
-			if level == coarsest:
-				tex = _pool.request_page_eager(level, gx, gz)          # floor
-			elif level > 0:
-				tex = _pool.request_page_eager_bounded(level, gx, gz)  # spread
-			else:
-				tex = _pool.request_page(level, gx, gz)                # fine
-			if tex == null:
-				capped = true             # over budget; coarser blanket covers it — rescan next frame
-				continue
-			_instances[key] = _make_page_instance(tex, level, gx, gz, span)
-			_inst_meta[key] = Vector3i(level, gx, gz)   # parse the key ONCE, here
-		# If the budget capped this level, keep it dirty so the unbuilt pages are
-		# retried next frame (don't skip until the ring is fully built).
-		_level_dirty[level] = capped
+	# STREAMING POLICY IS NOW IN RUST (00 §4). One call does the whole per-frame ring
+	# scan + nearest-first/dir-bias ordering + 3-mode bounded production + pin + evict
+	# + annulus visibility, on the absolute grid, and returns a DIFF. The view only
+	# does node work for the changes (create/recycle/show/hide) — no per-frame scan,
+	# no per-page pin FFI. (Migrated from the old GDScript loop; gate m1_5d.)
+	var diff: Dictionary = _pool.update_streaming(
+		cam_x, cam_z, ring_radius, evict_margin, num_levels, travel_n.x, travel_n.y)
+	_apply_stream_diff(diff)
 
-	# Per-level camera page-center, precomputed once (was recomputed per instance).
-	var lvl_ccx := PackedInt32Array(); lvl_ccx.resize(num_levels)
-	var lvl_ccz := PackedInt32Array(); lvl_ccz.resize(num_levels)
-	for level in range(num_levels):
-		var span: float = base_span * pow(2.0, level)
-		lvl_ccx[level] = int(floor(cam_x / span))
-		lvl_ccz[level] = int(floor(cam_z / span))
-
-	# ONE pass over instances (no per-level re-iteration, no string parsing):
-	# drop stale -> recycle; pin the rest. (Drop before pin so a stale page isn't
-	# pinned then evicted.) Reads coords from _inst_meta (parsed at creation).
-	for key in _instances.keys():
-		var m: Vector3i = _inst_meta[key]
-		var cheb: int = maxi(absi(m.y - lvl_ccx[m.x]), absi(m.z - lvl_ccz[m.x]))
-		if cheb > keep:
-			_recycle_instance(_instances[key])
-			_instances.erase(key)
-			_inst_meta.erase(key)
-		else:
-			_pool.pin_page(m.x, m.y, m.z)             # still displayed -> pin
-	# Evict pool pages outside keep radius, per level (cheap; bounded level count).
-	for level in range(num_levels):
-		_pool.evict_outside(level, lvl_ccx[level], lvl_ccz[level], keep)
-
-	_update_annulus_visibility()
 	_update_collision(cam_x, cam_z, base_span)
 
 	# M1.9 profiling: record this frame's view-side cost for the HUD.
 	prof_mesh_us = _mesh_us_accum
 	prof_process_us = Time.get_ticks_usec() - _t_start
+
+# Apply the Rust streaming DIFF: create instances for ADDED pages (binding their
+# resident textures via the pool getters — cache hits), recycle REMOVED ones, and
+# set visibility for SHOW/HIDE. Flat PackedInt32Array [level,gx,gz, ...] strided by
+# 3. A newly-added page appears in ADDED (create) and in SHOW/HIDE (its visibility),
+# so create first, then the show/hide loops set the flag. This replaces the old
+# per-frame GDScript ring scan / pin / evict / annulus passes (now Rust, 00 §4).
+func _apply_stream_diff(diff: Dictionary) -> void:
+	var base_span: float = _pool.page_span()
+	var added: PackedInt32Array = diff["added"]
+	for i in range(0, added.size(), 3):
+		var level: int = added[i]
+		var gx: int = added[i + 1]
+		var gz: int = added[i + 2]
+		var key := "%d:%d:%d" % [level, gx, gz]
+		if _instances.has(key):
+			continue                          # already have a node (guard)
+		var span: float = base_span * pow(2.0, level)
+		var tex = _pool.get_page_height_tex(level, gx, gz)
+		if tex == null:
+			continue                          # produced-but-not-fetchable (shouldn't happen)
+		_instances[key] = _make_page_instance(tex, level, gx, gz, span)
+		_inst_meta[key] = Vector3i(level, gx, gz)
+	var removed: PackedInt32Array = diff["removed"]
+	for i in range(0, removed.size(), 3):
+		var rkey := "%d:%d:%d" % [removed[i], removed[i + 1], removed[i + 2]]
+		if _instances.has(rkey):
+			_recycle_instance(_instances[rkey])
+			_instances.erase(rkey)
+			_inst_meta.erase(rkey)
+	var show: PackedInt32Array = diff["show"]
+	for i in range(0, show.size(), 3):
+		var skey := "%d:%d:%d" % [show[i], show[i + 1], show[i + 2]]
+		if _instances.has(skey):
+			_instances[skey].visible = true
+	var hide: PackedInt32Array = diff["hide"]
+	for i in range(0, hide.size(), 3):
+		var hkey := "%d:%d:%d" % [hide[i], hide[i + 1], hide[i + 2]]
+		if _instances.has(hkey):
+			_instances[hkey].visible = false
 
 # M2.1 — V cycles the view mode (normal -> temperature -> moisture -> normal) and
 # pushes it to every live page material so the climate fields show on the terrain.
@@ -428,44 +376,9 @@ func _attach_collision_body(key: String, body: StaticBody3D) -> void:
 	else:
 		body.queue_free()                      # already built (shouldn't happen, but no double-add)
 
-# Annulus rule (no overlap -> no z-fighting): a coarse page is VISIBLE only where
-# the finer level does NOT fully cover it. A coarse page (L, cgx, cgz) covers the
-# 2x2 footprint of level L-1 pages (2cgx..+1, 2cgz..+1); if ALL of those finer
-# pages are currently displayed, hide the coarse page (fine has it); otherwise
-# show it (it's the blanket filling a not-yet-loaded hole -> never black).
-func _update_annulus_visibility() -> void:
-	# PERF (2026-06-07): the old version rebuilt a redundant `displayed` dict (every
-	# instance IS displayed) and did 4 "%d:%d:%d"-string-format lookups per coarse
-	# page — ~366x4 string allocs/frame, a measured chunk of the 120fps dip. Now:
-	# build ONE integer-keyed set of resident (level,gx,gz) from _inst_meta (no
-	# strings), and the footprint check is integer hashes. Same annulus logic.
-	var resident := {}                         # packed int -> true (no string keys)
-	for key in _instances.keys():
-		var m: Vector3i = _inst_meta[key]
-		resident[_pack_key(m.x, m.y, m.z)] = true
-	for key in _instances.keys():
-		var m: Vector3i = _inst_meta[key]      # parsed at creation, not here (M1.9.3c)
-		var level := m.x
-		if level == 0:
-			_instances[key].visible = true     # finest is always shown
-			continue
-		var cgx := m.y
-		var cgz := m.z
-		# Is the entire finer (level-1) footprint displayed? (2x2 child footprint)
-		var fl := level - 1
-		var bx := 2 * cgx
-		var bz := 2 * cgz
-		var finer_covers: bool = resident.has(_pack_key(fl, bx, bz)) \
-			and resident.has(_pack_key(fl, bx + 1, bz)) \
-			and resident.has(_pack_key(fl, bx, bz + 1)) \
-			and resident.has(_pack_key(fl, bx + 1, bz + 1))
-		_instances[key].visible = not finer_covers
-
-# Pack (level,gx,gz) into one int64 key for hot-loop dict lookups (no string
-# formatting). gx/gz fit in 24 bits each here (|coord| << 8M cells even at the
-# coarsest reach); level in the top bits. Used by the annulus pass.
-func _pack_key(level: int, gx: int, gz: int) -> int:
-	return (level << 56) | ((gx & 0xFFFFFF) << 28) | (gz & 0xFFFFFF)
+# (Annulus visibility + the per-frame ring scan / pin / evict are now owned by Rust
+# PagePool.update_streaming (00 §4); the view applies its diff in _apply_stream_diff.
+# The old GDScript _update_annulus_visibility / _pack_key were removed in that migration.)
 
 # Shared PlaneMesh for a level — identical geometry for every page at that level,
 # so it's built once and referenced by all (no per-page mesh alloc). Cached.
