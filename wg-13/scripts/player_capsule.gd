@@ -22,7 +22,10 @@ extends CharacterBody3D
 @export var move_speed: float = 12.0
 @export var sprint_mult: float = 3.0       # Shift = sprint
 @export var turbo_mult: float = 60.0       # CapsLock = TURBO toggle (cover ground fast on foot)
-@export var jump_speed: float = 16.0       # Space = jump (initial upward velocity)
+@export var jump_speed: float = 28.0       # Space = jump (initial upward velocity). ~13m
+                                           # hop at gravity 30 -> clearly visible on the
+                                           # km-scale terrain (16 gave a ~4m hop you
+                                           # couldn't see against the mountains).
 @export var gravity: float = 30.0
 # Momentum: accelerate toward target velocity instead of snapping (weighty feel).
 # Units ~ 1/sec multiplier on speed; ground is snappy, air is light (air control).
@@ -214,7 +217,12 @@ func _physics_process(delta: float) -> void:
 	# body always overlaps terrain between substeps. Keeps the proven move_and_slide
 	# path (floor snap, is_on_floor(), m1_7c gate); calls it N times at 1/N velocity
 	# so total distance is unchanged. N=1 at normal speed (no cost). One body -> cheap.
-	var frame_dist: float = velocity.length() * delta
+	# M2.7 fix: base the substep count on HORIZONTAL distance ONLY. Using total
+	# velocity made a JUMP (high vy) trigger substepping, which divided velocity.y and
+	# let move_and_slide cancel the jump impulse against the floor -> bigger jump_speed
+	# produced a SMALLER hop. Tunneling is a horizontal-traverse problem (turbo), so
+	# the vertical jump must not be sliced.
+	var frame_dist: float = Vector2(velocity.x, velocity.z).length() * delta
 	var max_step: float = max(capsule_radius * 0.5, 0.05)
 	var substeps: int = clampi(int(ceil(frame_dist / max_step)), 1, 64)
 	if substeps <= 1:
