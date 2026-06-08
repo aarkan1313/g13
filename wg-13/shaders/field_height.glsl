@@ -183,18 +183,18 @@ float composition_height(vec2 world_xz, uint seed) {
     // --- hand-set character knobs (M2.3 tuning; DEM-driven in M2.4) ---
     const float WARP_AMOUNT  = 2200.0;   // world units of coord bend
     const float WARP_FREQ    = 0.00004;  // warp's own low freq (~25 km)
-    const float UPLIFT_FREQ  = 0.000025; // range placement (~40 km regions)
-    const float UPLIFT_LO    = 0.45;     // below -> lowland (uplift 0)
-    const float UPLIFT_HI    = 0.70;     // above -> full range (uplift 1); wide gap -> mostly lowland
+    const float UPLIFT_FREQ  = 0.000075; // M2.5a range placement ~13km regions, was ~40km
+    const float UPLIFT_LO    = 0.25;     // M2.5a much more land stands up
+    const float UPLIFT_HI    = 0.59;     // M2.5a narrower flat gap, ranges everywhere w/ valleys
     const uint  RIDGE_OCT    = 6u;
     const float RIDGE_LAC    = 2.03;
     const float RIDGE_GAIN   = 0.55;
     const float RIDGE_SCALE  = 0.0004;   // ridgeline scale (~2.5 km)
-    const float RELIEF_AMP   = 1600.0;   // peak range relief (m)
+    const float RELIEF_AMP   = 1975.0;   // M2.5a taller peaks (was 1600)
     const float CARVE_DEPTH  = 0.4;      // fraction of relief pressed into valleys
     const float BASE_FREQ    = 0.00012;  // continental base undulation (~8 km)
     const uint  BASE_OCT     = 3u;
-    const float BASE_AMP     = 180.0;    // gentle lowland relief everywhere
+    const float BASE_AMP     = 300.0;    // M2.5a more rolling everywhere, even lowland (was 180)
     const float DETAIL_FREQ  = 0.0016;
     const uint  DETAIL_OCT   = 4u;
     const float DETAIL_AMP   = 70.0;     // fine surface roughness
