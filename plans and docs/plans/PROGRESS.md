@@ -105,4 +105,26 @@ M2.5b [~] REGIONAL-ARCHETYPE terrain BASELINE. composition_height rewritten: 6 a
 Layered diversity: macro FAMILIES x meso FEATURES, data-driven over a fixed GPU primitive vocabulary (new game = data rows + assets, not core GLSL); per-region deviation knob; shape+color deviate together. Gated ladder: 2a meso layer -> 2b data-row refactor -> 2c 5-family spine -> 2d features+deviation -> 2e+ grow.
 M2.5c-2a [~] MESO LAYER (sub-region modulation) — the missing MIDDLE tier. meso_field (2 channels: meso_mod nudges each archetype's contribution, meso_dev reserved for 2d) wired into composition_height; each archetype meso-responds (alpine strong .. plains/swamp gentle, clamped so sub-regions vary but never invert). + N-key->biome view, + gate m2_5c_meso_check (determinism, meso variation 725.4m/44km in-region, no-cliff 19.1m, isolated timing 389.4us/page). Perf HELD (burst median-of-maxes 10.32ms, 0/720). Gates green (m1_4/m2_3 spread 0.94/m2_1/m2_2/m1_7a/m1_7c/m2_5c). PARKED for human visual: does the land resolve into new sub-regions as you travel (scale/sameness fixed)? Plan: docs/superpowers/plans/2026-06-07-m2-5c-2a-meso-layer.md. (commits 86fb5f5/833cc12/317236c/dafae4f)
 
+## M2.LOD — CLIPMAP VISUAL STABILIZATION LOCKED (2026-06-08)
+M2.LOD [x] ACCEPTED live fix for cross-LOD visual pop / texture-ring / lighting shift. Display-only:
+`world_view.gd` now binds next-coarser parent page textures for height, normal, climate, and biome;
+`ring_displace.gdshader` blends height, normals, temp, moisture, and biome COLOR through one LOD alpha
+(categorical biome ids are not interpolated). Parent bindings refresh only for changed parent footprints,
+not every page. Parent normals use `parent_cell_spacing` before blending, fixing the shadow/lighting
+shift. Perf recovered with `lod_mesh_min_subdiv = 96`: L0 full density, coarser pages high-floor tapered.
+Human live gate after relaunch: "I think we got it." Gates green: m1_4, m1_5c, m1_5d, m1_6, m2_6_burst
+(latest burst p99 10.38ms, p99.9 14.14ms, 0/720 over 16.6ms with live window open). REVIEW NEXT: fly
+the locked build and confirm no residual lighting/ring shift before moving back to terrain diversity/scale.
+
+## M2.7-M2.13 — EXPLORED then REWOUND (2026-06-08; historical)
+After M2.5c, work continued through M2.7 (taller mountains, valleys, walk-physics; FIRST geomorph) and
+M2.8-M2.13 (a ~40-recipe hunt for a persistent cross-LOD "pop"). On 2026-06-08 the branch was hard-reset
+to b4c7684 (this M2.5c-era state, before any geomorph) — the user chose a clean pre-geomorph
+baseline. ALL of M2.7-late..M2.13 is therefore NO LONGER in this branch (preserved in tag
+backup-lod-popin-saga-2026-06-08). The pop was diagnosed first: it is LOD TEXTURE-RESOLUTION TRUNCATION
+(coarse pages stretch a 128^2 texture over 2^L x the ground; handoffs jump up to ~10m) — the SAME family as
+the M2.4 terrain-shape problem. That entry is history; the current accepted mitigation is the M2.LOD
+renderer-side stabilization above. A true producer mip pyramid remains the future structural answer if
+later terrain detail makes the mitigation insufficient.
+
 ## Beyond: see ROADMAP.md (headers only, by design)

@@ -48,7 +48,7 @@ Late feature. Because the field is camera-agnostic data, supporting top-down is 
 
 ## Things deliberately NOT scheduled
 These are real wants you mentioned, parked on purpose so they don't cause scope creep. They get scheduled only when their prerequisites are solid:
-- Advanced LOD geomorphing (smooth, zero-pop transitions) — polish pass, fits anywhere after M1.
+- ~~Advanced LOD geomorphing (smooth, zero-pop transitions)~~ — **ACCEPTED 2026-06-08** as renderer-side parent-surface morph + visual-channel blend + normal-scale fix. Future producer-level mip/reduction pages remain an option only if richer terrain reintroduces visible handoff artifacts.
 - ~~Far-from-origin floating-point precision strategy (origin rebasing)~~ — **DONE 2026-06-07** (`wg-13/scripts/world_origin.gd`, gate `m1_8`): whole-cell camera-relative rebase keeps the camera near origin (precision held) + world centered; terrain bit-identical across rebase. Built early during the render-forever work.
 - Save/load of edited/visited chunks — trivial once M8 exists (store diffs only).
 - Multiplayer determinism — the seeding rules in `00_ARCHITECTURE.md §5` already keep this door open; no work needed until you want it.

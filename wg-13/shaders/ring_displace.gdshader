@@ -14,19 +14,26 @@ render_mode cull_back, diffuse_burley;
 
 // The height page as an R32F texture (one height per texel).
 uniform sampler2D height_tex : filter_linear, repeat_disable;
+// Optional next-coarser parent page. Fine pages blend from this parent surface
+// near the outer ring, so a page handoff adds detail gradually instead of swapping
+// one mountain silhouette for another.
+uniform sampler2D parent_height_tex : filter_linear, repeat_disable;
 // M2.1 climate page (RG32F): R = temperature, G = moisture. One texture for both
 // channels, bound per page alongside height_tex.
 uniform sampler2D climate_tex : filter_linear, repeat_disable;
+uniform sampler2D parent_climate_tex : filter_linear, repeat_disable;
 // M2.2 biome-id page (R32F, float-encoded int). NEAREST filter: biome id is a
 // category, not a value — linear filtering between two ids would invent a wrong
 // in-between id at borders. (Hard borders here are expected; M2.4 blends them.)
 uniform sampler2D biome_tex : filter_nearest, repeat_disable;
+uniform sampler2D parent_biome_tex : filter_nearest, repeat_disable;
 // M2.4 analytic normal page (RG32F): R = normal_x = -(hr-hl), G = normal_z = -(hu-hd),
 // the surface gradient computed in the field compute from the CONTINUOUS height
 // function at world neighbors. Reading this (instead of finite-differencing the
 // clamped height texture) gives a normal that AGREES across page edges -> no
 // per-chunk shading seam. linear filter for smooth per-pixel shading.
 uniform sampler2D normal_tex : filter_linear, repeat_disable;
+uniform sampler2D parent_normal_tex : filter_linear, repeat_disable;
 // View mode: 0 = normal height shading, 1 = temperature, 2 = moisture, 3 = biome.
 uniform int view_mode = 0;
 // World extent the page covers (page_res * spacing), so UVs map to the plane.
@@ -35,19 +42,52 @@ uniform float page_world_size = 256.0;
 uniform float height_scale = 1.0;
 // Spacing between cells in world units (for finite-difference normals).
 uniform float cell_spacing = 4.0;
+uniform float parent_cell_spacing = 8.0;
+// Parent morph controls. lod_morph_near/far are camera-to-vertex distances in
+// world metres: <= near is full page detail, >= far matches the parent surface.
+uniform int has_parent = 0;
+uniform vec2 parent_uv_offset = vec2(0.0);
+uniform float lod_morph_near = 0.0;
+uniform float lod_morph_far = 0.0;
 
 varying float v_height;
+varying vec2 v_parent_uv;
+varying float v_lod_fine_alpha;
 
 // Sample height at a UV (clamped to [0,1]).
 float sample_h(vec2 uv) {
 	return texture(height_tex, clamp(uv, vec2(0.0), vec2(1.0))).r * height_scale;
 }
 
+vec3 normal_from_grad(vec2 grad, float spacing_m) {
+	return normalize(vec3(grad.x, 2.0 * spacing_m, grad.y));
+}
+
 void vertex() {
 	// PlaneMesh lies in XZ with VERTEX.xz in [-size/2, size/2]. Map to UV [0,1].
 	vec2 uv = (VERTEX.xz / page_world_size) + vec2(0.5);
 	UV = uv;
-	float h = sample_h(uv);
+	v_parent_uv = clamp(parent_uv_offset + uv * 0.5, vec2(0.0), vec2(1.0));
+
+	float fine_alpha = 1.0;
+	if (has_parent != 0 && lod_morph_far > lod_morph_near) {
+		vec3 world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+		float dist_xz = distance(world_pos.xz, CAMERA_POSITION_WORLD.xz);
+		fine_alpha = 1.0 - smoothstep(lod_morph_near, lod_morph_far, dist_xz);
+	}
+	v_lod_fine_alpha = fine_alpha;
+
+	float h;
+	if (has_parent != 0 && fine_alpha <= 0.001) {
+		h = texture(parent_height_tex, v_parent_uv).r * height_scale;
+	} else {
+		float h_full = sample_h(uv);
+		h = h_full;
+		if (has_parent != 0 && fine_alpha < 0.999) {
+			float h_parent = texture(parent_height_tex, v_parent_uv).r * height_scale;
+			h = mix(h_parent, h_full, fine_alpha);
+		}
+	}
 	v_height = h;
 	VERTEX.y = h;
 
@@ -57,8 +97,19 @@ void vertex() {
 	// normalize(vec3(nx, 2*cell_spacing, nz)) — identical convention to the old
 	// finite difference, but the values AGREE across page edges (computed from the
 	// continuous field at true world neighbors), so there's no per-chunk seam.
-	vec2 grad = texture(normal_tex, clamp(uv, vec2(0.0), vec2(1.0))).rg;
-	NORMAL = normalize(vec3(grad.x, 2.0 * cell_spacing, grad.y));
+	vec3 n;
+	if (has_parent != 0 && fine_alpha <= 0.001) {
+		n = normal_from_grad(texture(parent_normal_tex, v_parent_uv).rg, parent_cell_spacing);
+	} else {
+		vec2 grad_full = texture(normal_tex, clamp(uv, vec2(0.0), vec2(1.0))).rg;
+		n = normal_from_grad(grad_full, cell_spacing);
+		if (has_parent != 0 && fine_alpha < 0.999) {
+			vec2 grad_parent = texture(parent_normal_tex, v_parent_uv).rg;
+			vec3 n_parent = normal_from_grad(grad_parent, parent_cell_spacing);
+			n = normalize(mix(n_parent, n, fine_alpha));
+		}
+	}
+	NORMAL = n;
 }
 
 uniform float height_lo = 60.0;   // approx low end of the page's height range
@@ -132,22 +183,65 @@ vec3 biome_color(float id_f) {
 void fragment() {
 	// Use the field's analytic normal per pixel. Vertex displacement still needs
 	// mesh geometry, but lighting should not expose coarse clipmap triangles.
-	vec2 grad = texture(normal_tex, clamp(UV, vec2(0.0), vec2(1.0))).rg;
-	NORMAL = normalize(vec3(grad.x, 2.0 * cell_spacing, grad.y));
+	vec2 uv = clamp(UV, vec2(0.0), vec2(1.0));
+	vec3 n;
+	if (has_parent != 0 && v_lod_fine_alpha <= 0.001) {
+		n = normal_from_grad(texture(parent_normal_tex, v_parent_uv).rg, parent_cell_spacing);
+	} else {
+		vec2 grad_full = texture(normal_tex, uv).rg;
+		n = normal_from_grad(grad_full, cell_spacing);
+		if (has_parent != 0 && v_lod_fine_alpha < 0.999) {
+			vec2 grad_parent = texture(parent_normal_tex, v_parent_uv).rg;
+			vec3 n_parent = normal_from_grad(grad_parent, parent_cell_spacing);
+			n = normalize(mix(n_parent, n, v_lod_fine_alpha));
+		}
+	}
+	NORMAL = n;
 
 	if (view_mode == 1) {
 		// Temperature view: tint by the climate texture's R channel.
-		float tv = texture(climate_tex, clamp(UV, vec2(0.0), vec2(1.0))).r;
+		float tv;
+		if (has_parent != 0 && v_lod_fine_alpha <= 0.001) {
+			tv = texture(parent_climate_tex, v_parent_uv).r;
+		} else {
+			float tv_full = texture(climate_tex, uv).r;
+			tv = tv_full;
+			if (has_parent != 0 && v_lod_fine_alpha < 0.999) {
+				float tv_parent = texture(parent_climate_tex, v_parent_uv).r;
+				tv = mix(tv_parent, tv_full, v_lod_fine_alpha);
+			}
+		}
 		ALBEDO = temp_color(tv) * page_tint;
 		ROUGHNESS = 0.95;
 	} else if (view_mode == 3) {
-		// Biome view: flat per-biome debug color (the M2.2 gate's visual).
-		float bid = texture(biome_tex, clamp(UV, vec2(0.0), vec2(1.0))).r;
-		ALBEDO = biome_color(bid) * page_tint;
+		// Biome view: blend colors, not ids, across LODs. The biome texture is
+		// categorical, so interpolating ids would invent fake categories.
+		vec3 biome;
+		if (has_parent != 0 && v_lod_fine_alpha <= 0.001) {
+			biome = biome_color(texture(parent_biome_tex, v_parent_uv).r);
+		} else {
+			vec3 biome_full = biome_color(texture(biome_tex, uv).r);
+			biome = biome_full;
+			if (has_parent != 0 && v_lod_fine_alpha < 0.999) {
+				vec3 biome_parent = biome_color(texture(parent_biome_tex, v_parent_uv).r);
+				biome = mix(biome_parent, biome_full, v_lod_fine_alpha);
+			}
+		}
+		ALBEDO = biome * page_tint;
 		ROUGHNESS = 0.95;
 	} else if (view_mode == 2) {
 		// Moisture view: tint by the climate texture's G channel.
-		float mv = texture(climate_tex, clamp(UV, vec2(0.0), vec2(1.0))).g;
+		float mv;
+		if (has_parent != 0 && v_lod_fine_alpha <= 0.001) {
+			mv = texture(parent_climate_tex, v_parent_uv).g;
+		} else {
+			float mv_full = texture(climate_tex, uv).g;
+			mv = mv_full;
+			if (has_parent != 0 && v_lod_fine_alpha < 0.999) {
+				float mv_parent = texture(parent_climate_tex, v_parent_uv).g;
+				mv = mix(mv_parent, mv_full, v_lod_fine_alpha);
+			}
+		}
 		ALBEDO = moist_color(mv) * page_tint;
 		ROUGHNESS = 0.95;
 	} else {

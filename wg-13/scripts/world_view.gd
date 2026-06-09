@@ -35,6 +35,9 @@ const AABB_HALF_HEIGHT := 4000.0
 # never-black floor). Spreads the fast-motion burst across frames. Tune live.
 @export var max_eager_per_frame: int = 8
 @export var show_page_tint: bool = false   # debug checkerboard marking page edges (off = clean look)
+@export var lod_morph_near_pages: float = 1.6
+@export var lod_morph_far_pages: float = 2.85
+@export var lod_mesh_min_subdiv: int = 96
 # M1.7: collision for NEAR fine (level-0) pages only — you stand on the fine
 # surface, not the coarse horizon blanket. radius 1 = the 3x3 fine block around
 # the camera, so the page you're on plus every neighbor you could step onto is
@@ -199,6 +202,10 @@ func _apply_stream_diff(diff: Dictionary) -> void:
 		var hkey := "%d:%d:%d" % [hide[i], hide[i + 1], hide[i + 2]]
 		if _instances.has(hkey):
 			_instances[hkey].visible = false
+	if added.size() > 0:
+		_refresh_lod_child_bindings_for_changes(added)
+	if removed.size() > 0:
+		_refresh_lod_child_bindings_for_changes(removed)
 
 # M2.1 — V cycles the view mode (normal -> temperature -> moisture -> normal) and
 # pushes it to every live page material so the climate fields show on the terrain.
@@ -337,20 +344,17 @@ func _attach_collision_body(key: String, body: StaticBody3D) -> void:
 
 # Shared PlaneMesh for a level — identical geometry for every page at that level,
 # so it's built once and referenced by all (no per-page mesh alloc). Cached.
-# M2.6 perf: subdivision DECREASES with level. A coarse (distant) page covers huge
-# ground; at the altitude/range it's seen, its vertices are near/sub-pixel, so the
-# fine 127x127 grid is wasted triangles (the profiled cost: ~6.5M tris/frame, most
-# on coarse pages). Level 0 keeps full detail (you stand on it); each coarser level
-# halves the subdivision, floored so the surface still reads smooth at its range.
-# This is the standard clipmap density taper — big triangle cut, no visible change.
+# Keep level 0 matched to the height texture, but use a high subdivision floor for
+# coarse pages. The old 16-subdiv taper made silhouettes visibly change at LOD
+# handoff; a 96 floor keeps the macro surface close while cutting far-page triangles.
 func _level_plane_mesh(level: int, span: float) -> PlaneMesh:
 	if _level_mesh.has(level):
 		return _level_mesh[level]
 	var plane := PlaneMesh.new()
 	plane.size = Vector2(span, span)
 	var full: int = mini(page_res - 1, 160)
-	# Halve per coarser level, floor at 16 (a 16x16 page still reads smooth far off).
-	var subdiv: int = maxi(full >> level, 16)
+	var floor_subdiv: int = clampi(lod_mesh_min_subdiv, 1, full)
+	var subdiv: int = full if level == 0 else maxi(full >> level, floor_subdiv)
 	plane.subdivide_width = subdiv
 	plane.subdivide_depth = subdiv
 	_level_mesh[level] = plane
@@ -392,9 +396,14 @@ func _make_page_instance(tex, level: int, gx: int, gz: int, span: float) -> Mesh
 	mat.set_shader_parameter("view_mode", _view_mode)       # current mode (recycled mats too)
 	mat.set_shader_parameter("page_world_size", span)       # span differs by level on reuse
 	mat.set_shader_parameter("cell_spacing", spacing * pow(2.0, level))
+	_bind_lod_parent(mat, level, gx, gz, span)
 	mat.set_shader_parameter("page_tint",
 		(1.0 if (gx + gz) % 2 == 0 else 0.82) if show_page_tint else 1.0)
-	mi.position = Vector3(gx * span + span * 0.5, 0.0, gz * span + span * 0.5)
+	mat.render_priority = -level
+	# Coarse fallback pages overlap finer pages until the full finer footprint is
+	# resident. Keep them a hair below finer pages so near-identical surfaces do not
+	# z-fight during that partial-overlap window.
+	mi.position = Vector3(gx * span + span * 0.5, -0.25 * float(level), gz * span + span * 0.5)
 	# Custom AABB: the mesh is a FLAT plane displaced in the VERTEX SHADER, so Godot
 	# can't auto-compute the displaced bounds — we must declare them or frustum
 	# culling uses the flat (y~0) box and CULLS the page when you look up/tilt,
@@ -406,6 +415,66 @@ func _make_page_instance(tex, level: int, gx: int, gz: int, span: float) -> Mesh
 		Vector3(2.0 * span, 2.0 * AABB_HALF_HEIGHT, 2.0 * span))
 	_mesh_us_accum += Time.get_ticks_usec() - _t            # M1.9 profiling: per-frame mesh-build cost
 	return mi
+
+func _bind_lod_parent(mat: ShaderMaterial, level: int, gx: int, gz: int, span: float) -> void:
+	var parent_level: int = level + 1
+	if parent_level >= num_levels:
+		mat.set_shader_parameter("has_parent", 0)
+		mat.set_shader_parameter("parent_height_tex", null)
+		mat.set_shader_parameter("parent_normal_tex", null)
+		mat.set_shader_parameter("parent_climate_tex", null)
+		mat.set_shader_parameter("parent_biome_tex", null)
+		mat.set_shader_parameter("parent_cell_spacing", spacing * pow(2.0, level))
+		return
+
+	var pgx: int = int(floor(float(gx) / 2.0))
+	var pgz: int = int(floor(float(gz) / 2.0))
+	var parent_height = _pool.get_page_height_tex(parent_level, pgx, pgz)
+	var parent_normal = _pool.get_page_normal_tex(parent_level, pgx, pgz)
+	var parent_climate = _pool.get_page_climate_tex(parent_level, pgx, pgz)
+	var parent_biome = _pool.get_page_biome_tex(parent_level, pgx, pgz)
+	if parent_height == null or parent_normal == null or parent_climate == null or parent_biome == null:
+		mat.set_shader_parameter("has_parent", 0)
+		mat.set_shader_parameter("parent_height_tex", null)
+		mat.set_shader_parameter("parent_normal_tex", null)
+		mat.set_shader_parameter("parent_climate_tex", null)
+		mat.set_shader_parameter("parent_biome_tex", null)
+		mat.set_shader_parameter("parent_cell_spacing", spacing * pow(2.0, level))
+		return
+
+	var qx: int = gx - pgx * 2
+	var qz: int = gz - pgz * 2
+	mat.set_shader_parameter("parent_height_tex", parent_height)
+	mat.set_shader_parameter("parent_normal_tex", parent_normal)
+	mat.set_shader_parameter("parent_climate_tex", parent_climate)
+	mat.set_shader_parameter("parent_biome_tex", parent_biome)
+	mat.set_shader_parameter("parent_uv_offset", Vector2(float(qx) * 0.5, float(qz) * 0.5))
+	mat.set_shader_parameter("parent_cell_spacing", spacing * pow(2.0, parent_level))
+	mat.set_shader_parameter("lod_morph_near", maxf(0.0, lod_morph_near_pages * span))
+	mat.set_shader_parameter("lod_morph_far", maxf(lod_morph_near_pages * span + 1.0, lod_morph_far_pages * span))
+	mat.set_shader_parameter("has_parent", 1)
+
+func _refresh_lod_child_bindings_for_changes(changed: PackedInt32Array) -> void:
+	var base_span: float = _pool.page_span()
+	for i in range(0, changed.size(), 3):
+		var parent_level: int = changed[i]
+		if parent_level <= 0:
+			continue
+		var child_level: int = parent_level - 1
+		var parent_gx: int = changed[i + 1]
+		var parent_gz: int = changed[i + 2]
+		var child_span: float = base_span * pow(2.0, child_level)
+		for dz in range(2):
+			for dx in range(2):
+				var child_gx: int = parent_gx * 2 + dx
+				var child_gz: int = parent_gz * 2 + dz
+				var key := "%d:%d:%d" % [child_level, child_gx, child_gz]
+				if not _instances.has(key):
+					continue
+				var mat: ShaderMaterial = _instances[key].material_override
+				if mat == null:
+					continue
+				_bind_lod_parent(mat, child_level, child_gx, child_gz, child_span)
 
 # Return an evicted instance to the free-list instead of freeing it (no churn):
 # hide it and keep it parented for reuse next time a page spawns.
@@ -422,6 +491,12 @@ func _recycle_instance(mi: MeshInstance3D) -> void:
 		mat.set_shader_parameter("climate_tex", null)
 		mat.set_shader_parameter("biome_tex", null)
 		mat.set_shader_parameter("normal_tex", null)
+		mat.set_shader_parameter("parent_height_tex", null)
+		mat.set_shader_parameter("parent_normal_tex", null)
+		mat.set_shader_parameter("parent_climate_tex", null)
+		mat.set_shader_parameter("parent_biome_tex", null)
+		mat.set_shader_parameter("parent_cell_spacing", spacing)
+		mat.set_shader_parameter("has_parent", 0)
 	_free_instances.push_back(mi)
 
 func _spawn_camera() -> void:

@@ -4,6 +4,79 @@ The human reads this FIRST every session. The agent appends here whenever it blo
 
 ---
 
+## [2026-06-08] - LOD VISUAL STABILIZATION LOCKED (parent morph + visual-channel blend + normal-scale fix)
+TYPE: ACCEPTED-FOR-NOW + PERF-LOCK
+WHAT: After the rewind entry below, the live production path was rebuilt around a smaller, display-only
+LOD stabilization pass in `world_view.gd` + `ring_displace.gdshader`. User flew the result and reported
+"I think we got it" after the final lighting fix. This does NOT redesign the producer or terrain field;
+it stabilizes what the renderer presents as clipmap pages hand off.
+FIXES LANDED:
+  - Child pages bind their next-coarser parent page textures: height, normal, climate, and biome.
+  - The vertex shader blends child height toward the parent surface in a world-distance band, so geometry
+    detail appears gradually instead of hard-swapping when clipmap coverage changes.
+  - Fragment/vertex normal, temperature, moisture, and biome color follow the same parent/child alpha.
+    Biome mode blends biome COLORS, not ids, so categorical ids are never interpolated into fake biomes.
+  - Parent bindings refresh only for the 2x2 child footprint affected by a parent add/remove. A broad
+    refresh-all pass was tried and rejected because it regressed burst perf.
+  - Parent normals are converted with `parent_cell_spacing` before blending with child normals. This fixed
+    the shadow/lighting shift that made the stabilized terrain hard to judge.
+  - Performance headroom recovered with a conservative mesh-density floor: level 0 remains full density;
+    coarse pages use `lod_mesh_min_subdiv = 96` instead of the old 16-subdiv taper that visibly changed
+    silhouettes.
+EVIDENCE:
+  - Human live gate: "I think we got it" on the relaunched patched scene.
+  - m1_4_seam_check PASS (same-level edge equality still holds).
+  - m1_5c_overlap_check PASS (annulus no-overlap still holds).
+  - m1_5d_rust_streaming_check PASS (diff/residency still reconciles).
+  - m1_6_frametime_check PASS (latest with live window open: p99 2.50ms; clean earlier runs ~1.4-1.9ms).
+  - m2_6_burst_perf_check PASS (latest with live window open: p99 10.38ms, p99.9 14.14ms, 0/720 over 16.6ms).
+KNOWN LIMIT: This is a renderer-side stabilization of current clipmap pages, not the final producer-level
+mip pyramid. If future terrain gains higher-frequency detail or sharper silhouettes, revisit true
+LOD-consistent mip/reduction pages. For now, do not mark the old "morph cannot fix it" warning as current
+truth for this branch; the accepted lock-in is the parent-surface morph + visual blend + normal-scale fix.
+
+## [2026-06-08] - CROSS-LOD POP SAGA (M2.7-late..M2.13) DIAGNOSED then REWOUND to b4c7684 (historical; superseded by lock-in above)
+TYPE: DEVIATION-AVERTED + HISTORY-REWIND (the branch was hard-reset; this entry is the only in-tree record of what happened, since the commits are gone)
+WHAT: A persistent cross-LOD "pop" (terrain height/detail snaps at a camera-locked crossing, reverts
+on fly-back) drove ~40 recipes across M2.8-M2.13 (geomorph / page_fade / real-parent coarse /
+constant-density / keep_coarse_drawn / depth-bias / wg4 donut-hole). This session diagnosed it
+PROPERLY with measurement instead of eyeballing, and the user chose a CLEAN SLATE.
+ROOT CAUSE (measured, not guessed):
+  - tests/lod_field_mismatch_probe.gd: fine surface vs the parent covering it AGREE to <2m at every
+    shared world XZ (continental fBM is low-freq). So the whole "blend fine->coarse" morph family was
+    blending two near-identical surfaces = solving a NON-PROBLEM. That is why 40 recipes converged on nothing.
+  - tests/lod_pop_sweep_probe.gd: the camera-distance geomorph moves fixed ground only <=1.34m (invisible);
+    turning all morph OFF did not kill the pop. The consult prompt's "annulus swap" theory was also already
+    falsified (keep_coarse_drawn was already default-on, yet it still popped).
+  - tests/lod_mesh_truncation_probe.gd (THE real metric): each LOD level draws a 128^2 height texture
+    STRETCHED over 2^L x the ground -> coarse texels are 2/4/8x coarser; bilinear-stretching them yields a
+    measurably different (smoother/truncated) surface. Drawn-surface diff between consecutive levels: L0->L1
+    max 7.9m, L2->L3 9.2m, L3->L4 10.6m. When you MOVE and streaming swaps which level is drawn over a spot
+    (grid-position dependent, NOT camera distance, NOT altitude — user confirmed "doesn't matter if high or
+    low, same mountain"), the silhouette JUMPS up to ~10m. THAT is the pop. SAME artifact as the M2.4
+    terrain-shape problem ("macro-resolution x LOD x viewing-scale"): coarse pages lack texel resolution ->
+    blocky AND popping. Morph CANNOT fix it (the coarse target IS the truncated surface).
+TWO FIXES TRIED THIS SESSION, BOTH FAILED (don't retry without reading why):
+  (1) per-level independent MAX-envelope of the coarse height: probe FIRED — made it WORSE (L3->L4 max
+      7.57->32.97m). Max-pool is not consistent across levels (coarser window >= finer window, always) ->
+      a built-in upward step at every handoff. Reverted clean.
+  (2) per-level denser RENDER textures (tex_res decoupled from grid, raise tex_res+mesh on L1..L2):
+      compiled + smoke-gated PASS, but in flight the GROUND DISAPPEARED / world broke hard. Bug not
+      diagnosed before the rewind.
+DECISION: user chose `git reset --hard b4c7684` (M2.7-quickfix, BEFORE any geomorph). Dropped 46 commits
+— ALL recipe machinery + this session's tex_res + the M2.7 taller-mountains/valleys work (user accepted
+that loss for a genuinely pop-free, pre-geomorph baseline). The 46 commits are SAFE in tag
+backup-lod-popin-saga-2026-06-08 (-> caa5bfd); recover with `git checkout backup-lod-popin-saga-2026-06-08`.
+Dll rebuilt from the reverted source; world renders clean (7-level clipmap, reach ~97.5km, no errors).
+KEEPERS (untracked, survived the reset): the three probe .gd files above + scripts/lod_recipe_review.gd
++ scenes/lod_recipe_review.tscn + tests/lod_recipe_review_smoke_check.gd. At rewind time, the pop was a
+KNOWN, MEASURED, still-open problem; the accepted current mitigation is now the renderer-side lock-in above.
+A TRUE MIP PYRAMID (coarse = reduction of the SAME L0 texels, consistent by construction) remains the
+future structural option if richer terrain reintroduces the issue. Full analysis lives in agent memory
+g13-lod-pop-rootcause.
+NOTE: this branch is dem-grounded. PROGRESS.md / docs below are at their pre-geomorph state and do NOT
+mention M2.8+; that is expected (those commits no longer exist).
+
 ## [2026-06-07] - M2.5c-2a MESO LAYER shipped -> PARKED FOR VISUAL
 TYPE: PARKED-FOR-VISUAL (test gates self-certified; the LOOK awaits the human — 02_WORKFLOW §2)
 WHAT: added the MIDDLE frequency tier (spec 2a, first rung of the M2.5c diversity/scale ladder).
